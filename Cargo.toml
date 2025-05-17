@@ -31,6 +31,7 @@ ndarray-linalg = { version = "0.17.0", features = [
   "openblas-system",
   "openblas-static",
 ] }
+log = "0.4.27"
 
 [dev-dependencies]
 tempfile = "3.20.0"
