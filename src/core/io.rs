@@ -67,11 +67,54 @@ pub enum AudioError {
 ///
 /// Stores interleaved 32-bit float samples with associated sample rate and channel count.
 /// Optimized for in-memory processing and compatibility with `signal_processing` operations.
+/// Validates sample rate and channel count at construction to ensure correctness.
 ///
 /// # Fields
-/// - `samples`: Interleaved `f32` sample buffer (e.g., `[L1, R1, L2, R2...]` for stereo)
-/// - `sample_rate`: Samples per second (Hz)
-/// - `channels`: Number of channels (1 = mono, 2 = stereo)
+/// - `samples`: Interleaved `f32` sample buffer (e.g., `[L1, R1, L2, R2...]` for stereo).
+/// - `sample_rate`: Samples per second (Hz), must be positive.
+/// - `channels`: Number of channels (1 = mono, 2 = stereo), must be positive.
+///
+/// # Notes
+/// - Samples are stored in interleaved format: for stereo, `[L1, R1, L2, R2, ...]`.
+/// - Empty `samples` vectors are allowed, but operations in `ops.rs` may reject them.
+/// - Use utility methods like `to_mono`, `split_channels`, `duration`, or `frame_count`
+///   for common tasks.
+/// - For `librosa`-like raw access, use `to_raw` to get samples, sample rate, and channels.
+///
+/// # Examples
+/// ```
+/// use dasp_rs::core::{AudioData, AudioError};
+/// // Create mono audio
+/// let audio = AudioData::new(vec![0.5, -0.3, 0.8], 44100, 1)?;
+/// assert_eq!(audio.samples.len(), 3);
+/// assert_eq!(audio.sample_rate, 44100);
+/// assert_eq!(audio.channels, 1);
+///
+/// // Create stereo audio and convert to mono
+/// let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2)?;
+/// let mono = stereo.to_mono();
+/// assert_eq!(mono.samples, vec![0.15, 0.35]);
+/// assert_eq!(mono.channels, 1);
+///
+/// // Get duration
+/// assert_eq!(mono.duration(), 2.0 / 44100.0);
+///
+/// // Split channels
+/// let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2)?;
+/// let channels = stereo.split_channels()?;
+/// assert_eq!(channels, vec![vec![0.1, 0.3], vec![0.2, 0.4]]);
+///
+/// // Raw access
+/// let (samples, sr, ch) = stereo.to_raw();
+/// assert_eq!(samples, &[0.1, 0.2, 0.3, 0.4]);
+/// assert_eq!(sr, 44100);
+/// assert_eq!(ch, 2);
+///
+/// // Invalid construction
+/// let result = AudioData::new(vec![0.1], 0, 1);
+/// assert!(matches!(result, Err(AudioError::InvalidInput(_))));
+/// # Ok::<(), AudioError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct AudioData {
     pub samples: Vec<f32>,
@@ -80,34 +123,161 @@ pub struct AudioData {
 }
 
 impl AudioData {
-    /// Constructs an `AudioData` instance from raw components.
+    /// Constructs an `AudioData` instance from raw components with validation.
     ///
     /// # Parameters
-    /// - `samples`: Interleaved `f32` sample buffer
-    /// - `sample_rate`: Sample rate in Hz
-    /// - `channels`: Channel count
+    /// - `samples`: Interleaved `f32` sample buffer (may be empty).
+    /// - `sample_rate`: Sample rate in Hz (must be positive).
+    /// - `channels`: Channel count (must be positive).
     ///
     /// # Returns
-    /// Initialized `AudioData` instance
+    /// - `Ok(AudioData)`: Initialized instance.
+    /// - `Err(AudioError)`: If `sample_rate` or `channels` is zero.
+    ///
+    /// # Example
+    /// ```
+    /// use dasp_rs::core::{AudioData, AudioError};
+    /// let audio = AudioData::new(vec![0.5, -0.3], 44100, 1)?;
+    /// assert_eq!(audio.samples.len(), 2);
+    /// assert_eq!(audio.sample_rate, 44100);
+    /// assert_eq!(audio.channels, 1);
+    /// # Ok::<(), AudioError>(())
+    /// ```
+    pub fn new(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Self, AudioError> {
+        if sample_rate == 0 {
+            return Err(AudioError::InvalidInput(
+                "Sample rate must be positive".into(),
+            ));
+        }
+        if channels == 0 {
+            return Err(AudioError::InvalidInput(
+                "Channel count must be positive".into(),
+            ));
+        }
+        Ok(Self {
+            samples,
+            sample_rate,
+            channels,
+        })
+    }
+
+    /// Converts multi-channel audio to mono by averaging channels.
+    ///
+    /// Uses `signal_processing::to_mono` to compute the mean of samples across channels
+    /// for each frame. Returns a new `AudioData` with `channels = 1`.
+    ///
+    /// # Returns
+    /// New `AudioData` instance with mono samples.
     ///
     /// # Example
     /// ```
     /// use dasp_rs::core::AudioData;
-    /// let audio = AudioData::new(
-    ///     vec![0.5, -0.3, 0.8], // 3 mono samples
-    ///     44100,                // 44.1 kHz
-    ///     1                     // Mono
-    /// );
-    /// assert_eq!(audio.samples.len(), 3);
-    /// assert_eq!(audio.sample_rate, 44100);
-    /// assert_eq!(audio.channels, 1);
+    /// let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2)?;
+    /// let mono = stereo.to_mono();
+    /// assert_eq!(mono.samples, vec![0.15, 0.35]);
+    /// assert_eq!(mono.channels, 1);
+    /// # Ok::<(), dasp_rs::core::AudioError>(())
     /// ```
-    pub fn new(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Self {
+    pub fn to_mono(&self) -> Self {
+        let samples = if self.channels > 1 {
+            to_mono(&self.samples, self.channels as usize)
+        } else {
+            self.samples.clone()
+        };
         Self {
             samples,
-            sample_rate,
-            channels,
+            sample_rate: self.sample_rate,
+            channels: 1,
         }
+    }
+
+    /// Splits interleaved samples into separate channel vectors.
+    ///
+    /// De-interleaves the `samples` buffer into a vector of per-channel sample vectors.
+    /// For example, stereo `[L1, R1, L2, R2]` becomes `[vec![L1, L2], vec![R1, R2]]`.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<Vec<f32>>)`: Vector of channel sample vectors.
+    /// - `Err(AudioError)`: If `samples` length is not a multiple of `channels`.
+    ///
+    /// # Example
+    /// ```
+    /// use dasp_rs::core::{AudioData, AudioError};
+    /// let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2)?;
+    /// let channels = stereo.split_channels()?;
+    /// assert_eq!(channels, vec![vec![0.1, 0.3], vec![0.2, 0.4]]);
+    /// # Ok::<(), AudioError>(())
+    /// ```
+    pub fn split_channels(&self) -> Result<Vec<Vec<f32>>, AudioError> {
+        if self.samples.len() % self.channels as usize != 0 {
+            return Err(AudioError::InvalidInput(
+                "Sample length must be a multiple of channels".into(),
+            ));
+        }
+        let frame_count = self.samples.len() / self.channels as usize;
+        let mut channels = vec![Vec::with_capacity(frame_count); self.channels as usize];
+        for (i, &sample) in self.samples.iter().enumerate() {
+            let channel_idx = i % self.channels as usize;
+            channels[channel_idx].push(sample);
+        }
+        Ok(channels)
+    }
+
+    /// Returns the duration of the audio in seconds.
+    ///
+    /// Computed as `samples.len() / (channels * sample_rate)`.
+    ///
+    /// # Returns
+    /// Duration in seconds as `f32`.
+    ///
+    /// # Example
+    /// ```
+    /// use dasp_rs::core::AudioData;
+    /// let audio = AudioData::new(vec![0.1, 0.2], 44100, 1)?;
+    /// assert_eq!(audio.duration(), 2.0 / 44100.0);
+    /// # Ok::<(), dasp_rs::core::AudioError>(())
+    /// ```
+    pub fn duration(&self) -> f32 {
+        self.samples.len() as f32 / (self.channels as f32 * self.sample_rate as f32)
+    }
+
+    /// Returns the number of frames (samples per channel).
+    ///
+    /// Computed as `samples.len() / channels`.
+    ///
+    /// # Returns
+    /// Number of frames as `usize`.
+    ///
+    /// # Example
+    /// ```
+    /// use dasp_rs::core::AudioData;
+    /// let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2)?;
+    /// assert_eq!(stereo.frame_count(), 2);
+    /// # Ok::<(), dasp_rs::core::AudioError>(())
+    /// ```
+    pub fn frame_count(&self) -> usize {
+        self.samples.len() / self.channels as usize
+    }
+
+    /// Returns raw samples, sample rate, and channels for `librosa`-like access.
+    ///
+    /// Provides a tuple of `(&[f32], u32, u16)` for users who prefer raw data access.
+    ///
+    /// # Returns
+    /// Tuple of `(samples, sample_rate, channels)`.
+    ///
+    /// # Example
+    /// ```
+    /// use dasp_rs::core::AudioData;
+    /// let audio = AudioData::new(vec![0.1, 0.2], 44100, 1)?;
+    /// let (samples, sr, ch) = audio.to_raw();
+    /// assert_eq!(samples, &[0.1, 0.2]);
+    /// assert_eq!(sr, 44100);
+    /// assert_eq!(ch, 1);
+    /// # Ok::<(), dasp_rs::core::AudioError>(())
+    /// ```
+    pub fn to_raw(&self) -> (&[f32], u32, u16) {
+        (&self.samples, self.sample_rate, self.channels)
     }
 }
 
@@ -117,25 +287,25 @@ impl AudioData {
 /// Applies resampling, mono conversion, and sample trimming as specified.
 ///
 /// # Parameters
-/// - `path`: WAV file path (`AsRef<Path>`)
-/// - `sr`: Target sample rate (Hz); `None` retains source rate
-/// - `mono`: Convert to mono if `Some(true)`; `None` retains source channels
-/// - `offset`: Start time (seconds); `None` defaults to 0.0
-/// - `duration`: Segment length (seconds); `None` takes full length
+/// - `path`: WAV file path (`AsRef<Path>`).
+/// - `sr`: Target sample rate (Hz); `None` retains source rate.
+/// - `mono`: Convert to mono if `Some(true)`; `None` retains source channels.
+/// - `offset`: Start time (seconds); `None` defaults to 0.0.
+/// - `duration`: Segment length (seconds); `None` takes full length.
 ///
 /// # Returns
-/// - `Ok(AudioData)`: Processed audio data
-/// - `Err(AudioError)`: Failure due to I/O, format, or parameter errors
+/// - `Ok(AudioData)`: Processed audio data.
+/// - `Err(AudioError)`: Failure due to I/O, format, or parameter errors.
 ///
 /// # Errors
-/// - `AudioError::FileNotFound`: The specified file does not exist
-/// - `AudioError::OpenError`: Invalid WAV file or corrupted header
-/// - `AudioError::InvalidRange`: Offset/duration exceeds file length
-/// - `AudioError::UnsupportedFormat`: Unsupported sample format
-/// - `AudioError::HoundError`: Error reading samples
-/// - `AudioError::ResampleError`: Resampling failed
-/// - `AudioError::InvalidInput`: Invalid parameters (e.g., negative offset, zero sample rate)
-/// - `AudioError::InsufficientData`: Empty or insufficient samples
+/// - `AudioError::FileNotFound`: The specified file does not exist.
+/// - `AudioError::OpenError`: Invalid WAV file or corrupted header.
+/// - `AudioError::InvalidRange`: Offset/duration exceeds file length.
+/// - `AudioError::UnsupportedFormat`: Unsupported sample format.
+/// - `AudioError::HoundError`: Error reading samples.
+/// - `AudioError::ResampleError`: Resampling failed.
+/// - `AudioError::InvalidInput`: Invalid parameters (e.g., negative offset, zero sample rate, zero channels).
+/// - `AudioError::InsufficientData`: Empty or insufficient samples.
 ///
 /// # Examples
 /// ```
@@ -145,6 +315,12 @@ impl AudioData {
 ///
 /// // Load 5-second mono segment starting at 2 seconds, resampled to 16kHz
 /// let segment = load("audio.wav", Some(16000), Some(true), Some(2.0), Some(5.0))?;
+///
+/// // Process stereo audio
+/// let stereo = load("stereo.wav", None, None, None, None)?;
+/// let channels = stereo.split_channels()?;
+/// let mono = stereo.to_mono();
+/// assert_eq!(mono.channels, 1);
 /// # Ok::<(), dasp_rs::core::AudioError>(())
 /// ```
 pub fn load<P: AsRef<Path>>(
@@ -243,7 +419,7 @@ pub fn load<P: AsRef<Path>>(
         samples
     };
 
-    Ok(AudioData::new(
+    AudioData::new(
         final_samples,
         sr.unwrap_or(sample_rate),
         if mono.unwrap_or(false) {
@@ -251,7 +427,7 @@ pub fn load<P: AsRef<Path>>(
         } else {
             spec.channels
         },
-    ))
+    )
 }
 
 /// Exports `AudioData` to a WAV file using in-memory buffering.
@@ -260,22 +436,22 @@ pub fn load<P: AsRef<Path>>(
 /// Automatically clamps samples to `[-1.0, 1.0]` range.
 ///
 /// # Parameters
-/// - `path`: Output WAV file path (`AsRef<Path>`)
-/// - `audio_data`: Source `AudioData` reference
+/// - `path`: Output WAV file path (`AsRef<Path>`).
+/// - `audio_data`: Source `AudioData` reference.
 ///
 /// # Returns
-/// - `Ok(())`: Successful write
-/// - `Err(AudioError)`: I/O or format error
+/// - `Ok(())`: Successful write.
+/// - `Err(AudioError)`: I/O or format error.
 ///
 /// # Errors
-/// - `AudioError::IoError`: Failed to write to filesystem
-/// - `AudioError::HoundError`: WAV format encoding error
-/// - `AudioError::InvalidInput`: Invalid audio data parameters (e.g., zero channels)
+/// - `AudioError::IoError`: Failed to write to filesystem.
+/// - `AudioError::HoundError`: WAV format encoding error.
+/// - `AudioError::InvalidInput`: Invalid audio data parameters (e.g., zero channels, zero sample rate).
 ///
 /// # Example
 /// ```
 /// use dasp_rs::core::{AudioData, export};
-/// let audio = AudioData::new(vec![0.1, 0.2, 0.3], 44100, 1);
+/// let audio = AudioData::new(vec![0.1, 0.2, 0.3], 44100, 1)?;
 /// export("output.wav", &audio)?;
 /// # Ok::<(), dasp_rs::core::AudioError>(())
 /// ```
@@ -325,12 +501,12 @@ pub fn export<P: AsRef<Path>>(path: P, audio_data: &AudioData) -> Result<(), Aud
 /// - `Err(AudioError)`: I/O or format error.
 ///
 /// # Errors
-/// - `AudioError::FileNotFound`: The specified file does not exist
-/// - `AudioError::OpenError`: Invalid WAV file or corrupted header
-/// - `AudioError::HoundError`: Error reading samples
-/// - `AudioError::UnsupportedFormat`: Unsupported sample format
-/// - `AudioError::InvalidInput`: Invalid parameters (e.g., zero frame length)
-/// - `AudioError::InsufficientData`: Insufficient samples for any blocks
+/// - `AudioError::FileNotFound`: The specified file does not exist.
+/// - `AudioError::OpenError`: Invalid WAV file or corrupted header.
+/// - `AudioError::HoundError`: Error reading samples.
+/// - `AudioError::UnsupportedFormat`: Unsupported sample format.
+/// - `AudioError::InvalidInput`: Invalid parameters (e.g., zero frame length).
+/// - `AudioError::InsufficientData`: Insufficient samples for any blocks.
 ///
 /// # Example
 /// ```
@@ -344,8 +520,8 @@ pub fn export<P: AsRef<Path>>(path: P, audio_data: &AudioData) -> Result<(), Aud
 /// ```
 ///
 /// # Performance
-/// - Uses `rayon` for parallel processing only for large workloads (>1M samples)
-/// - Streams data from disk, suitable for large files
+/// - Uses `rayon` for parallel processing only for large workloads (>1M samples).
+/// - Streams data from disk, suitable for large files.
 pub fn stream<P: AsRef<Path>>(
     path: P,
     block_length: usize,
@@ -449,13 +625,13 @@ pub fn stream<P: AsRef<Path>>(
 /// - `Err(AudioError)`: I/O or streaming error.
 ///
 /// # Errors
-/// - `AudioError::FileNotFound`: The specified file does not exist
-/// - `AudioError::OpenError`: Invalid WAV file or corrupted header
-/// - `AudioError::HoundError`: Error reading samples
-/// - `AudioError::UnsupportedFormat`: Unsupported sample format
-/// - `AudioError::InvalidInput`: Invalid parameters (e.g., zero frame length)
-/// - `AudioError::StreamError`: Channel communication failure or thread failure
-/// - `AudioError::InsufficientData`: Insufficient samples for any blocks
+/// - `AudioError::FileNotFound`: The specified file does not exist.
+/// - `AudioError::OpenError`: Invalid WAV file or corrupted header.
+/// - `AudioError::HoundError`: Error reading samples.
+/// - `AudioError::UnsupportedFormat`: Unsupported sample format.
+/// - `AudioError::InvalidInput`: Invalid parameters (e.g., zero frame length).
+/// - `AudioError::StreamError`: Channel communication failure or thread failure.
+/// - `AudioError::InsufficientData`: Insufficient samples for any blocks.
 ///
 /// # Example
 /// ```
@@ -469,9 +645,9 @@ pub fn stream<P: AsRef<Path>>(
 /// ```
 ///
 /// # Performance
-/// - Background thread for file reading
-/// - Memory-efficient for files >1GB
-/// - Parallel block processing for large chunks
+/// - Background thread for file reading.
+/// - Memory-efficient for files >1GB.
+/// - Parallel block processing for large chunks.
 pub fn stream_lazy<P: AsRef<Path>>(
     path: P,
     block_length: usize,
@@ -604,7 +780,72 @@ mod tests {
     use tempfile::NamedTempFile;
 
     fn create_test_wav() -> AudioData {
-        AudioData::new(vec![0.0, 0.1, 0.2, 0.3, 0.4, 0.5], 44100, 1)
+        AudioData::new(vec![0.0, 0.1, 0.2, 0.3, 0.4, 0.5], 44100, 1).unwrap()
+    }
+
+    #[test]
+    fn test_audio_data_new_valid() {
+        let audio = AudioData::new(vec![0.1, 0.2], 44100, 1).unwrap();
+        assert_eq!(audio.samples, vec![0.1, 0.2]);
+        assert_eq!(audio.sample_rate, 44100);
+        assert_eq!(audio.channels, 1);
+    }
+
+    #[test]
+    fn test_audio_data_new_invalid_sample_rate() {
+        let result = AudioData::new(vec![0.1], 0, 1);
+        assert!(matches!(result, Err(AudioError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_audio_data_new_invalid_channels() {
+        let result = AudioData::new(vec![0.1], 44100, 0);
+        assert!(matches!(result, Err(AudioError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_audio_data_to_mono() {
+        let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2).unwrap();
+        let mono = stereo.to_mono();
+        assert_eq!(mono.channels, 1);
+        for (actual, expected) in mono.samples.iter().zip(vec![0.15, 0.35]) {
+            assert!((actual - expected).abs() < 1e-6, "Expected {}, got {}", expected, actual);
+        }
+    }
+
+    #[test]
+    fn test_audio_data_split_channels() {
+        let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2).unwrap();
+        let channels = stereo.split_channels().unwrap();
+        assert_eq!(channels, vec![vec![0.1, 0.3], vec![0.2, 0.4]]);
+    }
+
+    #[test]
+    fn test_audio_data_split_channels_invalid() {
+        let invalid = AudioData::new(vec![0.1, 0.2, 0.3], 44100, 2).unwrap();
+        let result = invalid.split_channels();
+        assert!(matches!(result, Err(AudioError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_audio_data_duration() {
+        let audio = AudioData::new(vec![0.1, 0.2], 44100, 1).unwrap();
+        assert_eq!(audio.duration(), 2.0 / 44100.0);
+    }
+
+    #[test]
+    fn test_audio_data_frame_count() {
+        let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2).unwrap();
+        assert_eq!(stereo.frame_count(), 2);
+    }
+
+    #[test]
+    fn test_audio_data_to_raw() {
+        let audio = AudioData::new(vec![0.1, 0.2], 44100, 1).unwrap();
+        let (samples, sr, ch) = audio.to_raw();
+        assert_eq!(samples, &[0.1, 0.2]);
+        assert_eq!(sr, 44100);
+        assert_eq!(ch, 1);
     }
 
     #[test]
@@ -784,9 +1025,9 @@ mod tests {
     #[test]
     fn test_export_invalid_channels() {
         let audio = AudioData::new(vec![0.1, 0.2], 44100, 0);
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-        let result = export(path, &audio);
-        assert!(matches!(result.unwrap_err(), AudioError::InvalidInput(_)));
+        assert!(
+            matches!(audio, Err(AudioError::InvalidInput(_))),
+            "AudioData::new should fail with zero channels"
+        );
     }
 }
