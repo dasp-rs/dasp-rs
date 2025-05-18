@@ -75,16 +75,16 @@ fn validate_metadata(signal1: &AudioData, signal2: &AudioData) -> Result<(), Sig
 /// # Examples
 /// ```
 /// use dasp_rs::core::{AudioData, mix_signals};
-/// let s1 = AudioData::new(vec![1.0, 2.0], 44100, 1)?;
-/// let s2 = AudioData::new(vec![3.0, 4.0], 44100, 1)?;
+/// let s1 = AudioData::new(vec![2.0, 4.0], 44100, 1)?;
+/// let s2 = AudioData::new(vec![4.0, 6.0], 44100, 1)?;
 /// let mixed = mix_signals(&[s1, s2])?;
-/// assert_eq!(mixed.samples, vec![2.0, 3.0]);
+/// assert_eq!(mixed.samples, vec![3.0, 5.0]);
 ///
 /// // Mix stereo signals
-/// let s1 = AudioData::new(vec![1.0, 0.5, 2.0, 0.7], 44100, 2)?;
-/// let s2 = AudioData::new(vec![0.5, 1.0, 0.7, 2.0], 44100, 2)?;
+/// let s1 = AudioData::new(vec![2.0, 1.0, 4.0, 2.0], 44100, 2)?;
+/// let s2 = AudioData::new(vec![1.0, 2.0, 2.0, 4.0], 44100, 2)?;
 /// let mixed = mix_signals(&[s1, s2])?;
-/// assert_eq!(mixed.samples, vec![0.75, 0.75, 1.35, 1.35]);
+/// assert_eq!(mixed.samples, vec![1.5, 1.5, 3.0, 3.0]);
 /// assert_eq!(mixed.channels, 2);
 /// # Ok::<(), dasp_rs::core::AudioError>()
 /// ```
@@ -153,10 +153,10 @@ pub fn mix_signals(signals: &[AudioData]) -> Result<AudioData, SignalOpError> {
 /// # Examples
 /// ```
 /// use dasp_rs::core::{AudioData, subtract_signals};
-/// let s1 = AudioData::new(vec![2.0, 4.0], 44100, 1)?;
+/// let s1 = AudioData::new(vec![3.0, 5.0], 44100, 1)?;
 /// let s2 = AudioData::new(vec![1.0, 2.0], 44100, 1)?;
 /// let result = subtract_signals(&s1, &s2)?;
-/// assert_eq!(result.samples, vec![1.0, 2.0]);
+/// assert_eq!(result.samples, vec![2.0, 3.0]);
 /// # Ok::<(), dasp_rs::core::AudioError>()
 /// ```
 pub fn subtract_signals(
@@ -226,10 +226,10 @@ pub fn subtract_signals(
 /// # Examples
 /// ```
 /// use dasp_rs::core::{AudioData, multiply_signals};
-/// let s1 = AudioData::new(vec![1.0, 2.0], 44100, 1)?;
+/// let s1 = AudioData::new(vec![2.0, 3.0], 44100, 1)?;
 /// let s2 = AudioData::new(vec![2.0, 2.0], 44100, 1)?;
 /// let result = multiply_signals(&s1, &s2)?;
-/// assert_eq!(result.samples, vec![2.0, 4.0]);
+/// assert_eq!(result.samples, vec![4.0, 6.0]);
 /// # Ok::<(), dasp_rs::core::AudioError>()
 /// ```
 pub fn multiply_signals(
@@ -299,10 +299,10 @@ pub fn multiply_signals(
 /// # Examples
 /// ```
 /// use dasp_rs::core::{AudioData, divide_signals};
-/// let s1 = AudioData::new(vec![4.0, 6.0], 44100, 1)?;
-/// let s2 = AudioData::new(vec![2.0, 3.0], 44100, 1)?;
+/// let s1 = AudioData::new(vec![6.0, 8.0], 44100, 1)?;
+/// let s2 = AudioData::new(vec![2.0, 4.0], 44100, 1)?;
 /// let result = divide_signals(&s1, &s2)?;
-/// assert_eq!(result.samples, vec![2.0, 2.0]);
+/// assert_eq!(result.samples, vec![3.0, 2.0]);
 /// # Ok::<(), dasp_rs::core::AudioError>()
 /// ```
 pub fn divide_signals(
@@ -386,12 +386,12 @@ pub enum ScalarOp {
 /// # Examples
 /// ```
 /// use dasp_rs::core::{AudioData, scalar_operation, ScalarOp};
-/// let s = AudioData::new(vec![1.0, 2.0], 44100, 1)?;
+/// let s = AudioData::new(vec![2.0, 3.0], 44100, 1)?;
 /// let result = scalar_operation(&s, 2.0, ScalarOp::Multiply)?;
-/// assert_eq!(result.samples, vec![2.0, 4.0]);
+/// assert_eq!(result.samples, vec![4.0, 6.0]);
 ///
 /// // Process individual channels
-/// let stereo = AudioData::new(vec![1.0, 0.5, 2.0, 0.7], 44100, 2)?;
+/// let stereo = AudioData::new(vec![2.0, 1.0, 4.0, 2.0], 44100, 2)?;
 /// let channels = stereo.split_channels()?;
 /// let scaled: Vec<_> = channels.into_iter()
 ///     .map(|ch| {
@@ -399,7 +399,7 @@ pub enum ScalarOp {
 ///         scalar_operation(&audio, 2.0, ScalarOp::Multiply)?.samples
 ///     })
 ///     .collect();
-/// assert_eq!(scaled, vec![vec![2.0, 4.0], vec![1.0, 1.4]]);
+/// assert_eq!(scaled, vec![vec![4.0, 8.0], vec![2.0, 4.0]]);
 /// # Ok::<(), dasp_rs::core::AudioError>()
 /// ```
 pub fn scalar_operation(
