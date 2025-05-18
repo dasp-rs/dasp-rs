@@ -85,28 +85,27 @@ pub enum AudioError {
 /// ```
 /// use dasp_rs::core::{AudioData, AudioError};
 /// // Create mono audio
-/// let audio = AudioData::new(vec![0.5, -0.3, 0.8], 44100, 1)?;
+/// let audio = AudioData::new(vec![0.5, -0.5, 0.5], 44100, 1)?;
 /// assert_eq!(audio.samples.len(), 3);
 /// assert_eq!(audio.sample_rate, 44100);
 /// assert_eq!(audio.channels, 1);
 ///
 /// // Create stereo audio and convert to mono
-/// let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2)?;
+/// let stereo = AudioData::new(vec![0.2, 0.4, 0.6, 0.8], 44100, 2)?;
 /// let mono = stereo.to_mono();
-/// assert_eq!(mono.samples, vec![0.15, 0.35]);
+/// assert_eq!(mono.samples, vec![0.3, 0.7]);
 /// assert_eq!(mono.channels, 1);
 ///
 /// // Get duration
 /// assert_eq!(mono.duration(), 2.0 / 44100.0);
 ///
 /// // Split channels
-/// let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2)?;
 /// let channels = stereo.split_channels()?;
-/// assert_eq!(channels, vec![vec![0.1, 0.3], vec![0.2, 0.4]]);
+/// assert_eq!(channels, vec![vec![0.2, 0.6], vec![0.4, 0.8]]);
 ///
 /// // Raw access
 /// let (samples, sr, ch) = stereo.to_raw();
-/// assert_eq!(samples, &[0.1, 0.2, 0.3, 0.4]);
+/// assert_eq!(samples, &[0.2, 0.4, 0.6, 0.8]);
 /// assert_eq!(sr, 44100);
 /// assert_eq!(ch, 2);
 ///
@@ -137,7 +136,7 @@ impl AudioData {
     /// # Example
     /// ```
     /// use dasp_rs::core::{AudioData, AudioError};
-    /// let audio = AudioData::new(vec![0.5, -0.3], 44100, 1)?;
+    /// let audio = AudioData::new(vec![0.5, -0.5], 44100, 1)?;
     /// assert_eq!(audio.samples.len(), 2);
     /// assert_eq!(audio.sample_rate, 44100);
     /// assert_eq!(audio.channels, 1);
@@ -172,9 +171,9 @@ impl AudioData {
     /// # Example
     /// ```
     /// use dasp_rs::core::AudioData;
-    /// let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2)?;
+    /// let stereo = AudioData::new(vec![0.2, 0.4, 0.6, 0.8], 44100, 2)?;
     /// let mono = stereo.to_mono();
-    /// assert_eq!(mono.samples, vec![0.15, 0.35]);
+    /// assert_eq!(mono.samples, vec![0.3, 0.7]);
     /// assert_eq!(mono.channels, 1);
     /// # Ok::<(), dasp_rs::core::AudioError>(())
     /// ```
@@ -203,9 +202,9 @@ impl AudioData {
     /// # Example
     /// ```
     /// use dasp_rs::core::{AudioData, AudioError};
-    /// let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2)?;
+    /// let stereo = AudioData::new(vec![0.2, 0.4, 0.6, 0.8], 44100, 2)?;
     /// let channels = stereo.split_channels()?;
-    /// assert_eq!(channels, vec![vec![0.1, 0.3], vec![0.2, 0.4]]);
+    /// assert_eq!(channels, vec![vec![0.2, 0.6], vec![0.4, 0.8]]);
     /// # Ok::<(), AudioError>(())
     /// ```
     pub fn split_channels(&self) -> Result<Vec<Vec<f32>>, AudioError> {
@@ -233,7 +232,7 @@ impl AudioData {
     /// # Example
     /// ```
     /// use dasp_rs::core::AudioData;
-    /// let audio = AudioData::new(vec![0.1, 0.2], 44100, 1)?;
+    /// let audio = AudioData::new(vec![0.2, 0.4], 44100, 1)?;
     /// assert_eq!(audio.duration(), 2.0 / 44100.0);
     /// # Ok::<(), dasp_rs::core::AudioError>(())
     /// ```
@@ -251,7 +250,7 @@ impl AudioData {
     /// # Example
     /// ```
     /// use dasp_rs::core::AudioData;
-    /// let stereo = AudioData::new(vec![0.1, 0.2, 0.3, 0.4], 44100, 2)?;
+    /// let stereo = AudioData::new(vec![0.2, 0.4, 0.6, 0.8], 44100, 2)?;
     /// assert_eq!(stereo.frame_count(), 2);
     /// # Ok::<(), dasp_rs::core::AudioError>(())
     /// ```
@@ -269,9 +268,9 @@ impl AudioData {
     /// # Example
     /// ```
     /// use dasp_rs::core::AudioData;
-    /// let audio = AudioData::new(vec![0.1, 0.2], 44100, 1)?;
+    /// let audio = AudioData::new(vec![0.2, 0.4], 44100, 1)?;
     /// let (samples, sr, ch) = audio.to_raw();
-    /// assert_eq!(samples, &[0.1, 0.2]);
+    /// assert_eq!(samples, &[0.2, 0.4]);
     /// assert_eq!(sr, 44100);
     /// assert_eq!(ch, 1);
     /// # Ok::<(), dasp_rs::core::AudioError>(())
@@ -451,7 +450,7 @@ pub fn load<P: AsRef<Path>>(
 /// # Example
 /// ```
 /// use dasp_rs::core::{AudioData, export};
-/// let audio = AudioData::new(vec![0.1, 0.2, 0.3], 44100, 1)?;
+/// let audio = AudioData::new(vec![0.2, 0.4, 0.6], 44100, 1)?;
 /// export("output.wav", &audio)?;
 /// # Ok::<(), dasp_rs::core::AudioError>(())
 /// ```
