@@ -20,4 +20,13 @@ rubato = "0.16.1"
 ndarray = { version = "0.16.1", features = ["rayon"] }
 approx = "0.5.1"
 rayon = "1.10.0"
-ndarray-linalg = { version = "0.17.0", features = ["openblas", "openblas-system", "openblas-static"] }
+ndarray-linalg = { version = "0.17.0", features = ["openblas"] }
+
+[features]
+# Propagate selected ndarray-linalg features to this crate so downstream users can
+# enable OpenBLAS backends via our crate features.
+default = ["openblas-system", "openblas-static"]
+# Use system OpenBLAS
+openblas-system = ["ndarray-linalg/openblas-system"]
+# Use static OpenBLAS
+openblas-static = ["ndarray-linalg/openblas-static"]
