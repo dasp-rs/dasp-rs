@@ -162,7 +162,7 @@ pub fn load<P: AsRef<Path>>(
             .collect::<Result<Vec<_>, _>>()
             .map_err(AudioError::HoundError)?,
         SampleFormat::Int => reader
-            .samples::<i16>()
+            .samples::<i32>()
             .map(|r| r.map(|v| v as f32 / 32768.0))
             .collect::<Result<Vec<_>, _>>()
             .map_err(AudioError::HoundError)?,
