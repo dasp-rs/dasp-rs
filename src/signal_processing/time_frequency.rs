@@ -1,35 +1,82 @@
 use rustfft::FftPlanner;
 use num_complex::Complex;
 use ndarray::{Array1, Array2, s};
-use crate::{utils::frequency::fft_frequencies, AudioData, AudioError};
+use crate::{utils::frequency::fft_frequencies, core::AudioError};
 use std::f32::consts::{PI, SQRT_2};
+
+/// STFT builder for method chaining (internal use only).
+#[derive(Debug, Clone)]
+pub struct StftBuilder<'a> {
+    y: &'a [f32],
+    n_fft: usize,
+    hop_length: usize,
+    win_length: usize,
+}
+
+impl<'a> StftBuilder<'a> {
+    /// Set the FFT size (default: 2048).
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Set the hop length (default: 512).
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = hop_length;
+        self
+    }
+
+    /// Set the window length (default: 2048).
+    pub fn win_length(mut self, win_length: usize) -> Self {
+        self.win_length = win_length;
+        self
+    }
+
+    /// Compute the STFT with the configured parameters.
+    pub fn compute(self) -> Result<Array2<Complex<f32>>, AudioError> {
+        stft_impl(self.y, self.n_fft, self.hop_length, self.win_length)
+    }
+}
 
 /// Computes the Short-Time Fourier Transform (STFT) of a signal.
 ///
 /// # Arguments
 /// * `y` - Input signal as a slice of `f32`
-/// * `n_fft` - Optional FFT window size (defaults to 2048)
-/// * `hop_length` - Optional hop length in samples (defaults to n_fft/4, minimum 1)
-/// * `win_length` - Optional window length in samples (defaults to n_fft)
 ///
 /// # Returns
-/// Returns a `Result` containing an `Array2<Complex<f32>>` representing the STFT spectrogram,
-/// with shape `(n_fft/2 + 1, n_frames)`, or an `AudioError` if array shaping fails.
+/// Returns a builder that can be configured with method chaining.
 ///
 /// # Examples
 /// ```
-/// let signal = vec![1.0, 2.0, 3.0, 4.0];
-/// let spectrogram = stft(&signal, None, None, None).unwrap();
+/// let y = vec![1.0, 2.0, 3.0, 4.0];
+/// // Clean, ergonomic API with method chaining
+/// let spectrogram = stft(&y)
+///     .n_fft(1024)
+///     .hop_length(256)
+///     .compute()?;
+/// 
+/// // Or with defaults
+/// let spectrogram = stft(&y).compute()?;
 /// ```
-pub fn stft(
+pub fn stft(y: &[f32]) -> StftBuilder {
+    StftBuilder {
+        y,
+        n_fft: 2048,
+        hop_length: 512,
+        win_length: 2048,
+    }
+}
+
+/// Internal STFT implementation.
+fn stft_impl(
     y: &[f32],
-    n_fft: Option<usize>,
-    hop_length: Option<usize>,
-    win_length: Option<usize>,
+    n_fft: usize,
+    hop_length: usize,
+    win_length: usize,
 ) -> Result<Array2<Complex<f32>>, AudioError> {
-    let n = n_fft.unwrap_or(2048);
-    let hop = hop_length.unwrap_or(n / 4).max(1);
-    let win = win_length.unwrap_or(n);
+    let n = n_fft;
+    let hop = hop_length.max(1);
+    let win = win_length;
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(n);
     let mut buffer = vec![Complex::new(0.0, 0.0); n];
@@ -180,36 +227,63 @@ pub fn magphase(d: &Array2<Complex<f32>>, power: Option<f32>) -> (Array2<f32>, A
 ///
 /// # Arguments
 /// * `y` - Input signal as a slice of `f32`
-/// * `sr` - Optional sample rate in Hz (defaults to 44100)
-/// * `n_fft` - Optional FFT window size (defaults to 2048)
+/// * `sr` - Sample rate in Hz
 ///
 /// # Returns
-/// Returns a `Result` containing an `Array2<f32>` representing the reassigned spectrogram,
-/// or an `AudioError` if computation fails.
-///
-/// # Errors
-/// * `AudioError::InsufficientData` - If signal length is less than `n_fft`.
-/// * `AudioError::ComputationFailed` - If STFT computation fails.
+/// Returns a builder that can be configured with method chaining.
 ///
 /// # Examples
 /// ```
-/// let signal = vec![1.0; 4096];
-/// let reassigned = reassigned_spectrogram(&signal, None, None).unwrap();
+/// let y = vec![1.0, 2.0, 3.0, 4.0];
+/// let reassigned = reassigned_spectrogram(&y, 44100)
+///     .n_fft(2048)
+///     .compute()?;
 /// ```
-pub fn reassigned_spectrogram(
+pub fn reassigned_spectrogram(y: &[f32], sr: u32) -> ReassignedSpectrogramBuilder {
+    ReassignedSpectrogramBuilder {
+        y,
+        sr,
+        n_fft: 2048,
+    }
+}
+
+/// Reassigned spectrogram builder for method chaining (internal use only).
+#[derive(Debug, Clone)]
+pub struct ReassignedSpectrogramBuilder<'a> {
+    y: &'a [f32],
+    sr: u32,
+    n_fft: usize,
+}
+
+impl<'a> ReassignedSpectrogramBuilder<'a> {
+    /// Set the FFT size (default: 2048).
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Compute the reassigned spectrogram with the configured parameters.
+    pub fn compute(self) -> Result<Array2<f32>, AudioError> {
+        reassigned_spectrogram_impl(self.y, self.sr, self.n_fft)
+    }
+}
+
+/// Internal reassigned spectrogram implementation.
+fn reassigned_spectrogram_impl(
     y: &[f32],
-    sr: Option<u32>,
-    n_fft: Option<usize>,
+    sr: u32,
+    n_fft: usize,
 ) -> Result<Array2<f32>, AudioError> {
-    let sr = sr.unwrap_or(44100);
-    let n_fft = n_fft.unwrap_or(2048);
     let hop_length = n_fft / 4;
 
     if y.len() < n_fft {
         return Err(AudioError::InsufficientData(format!("Signal too short: {} < {}", y.len(), n_fft)));
     }
 
-    let s = stft(y, Some(n_fft), Some(hop_length), None)
+    let s = stft(y)
+        .n_fft(n_fft)
+        .hop_length(hop_length)
+        .compute()
         .map_err(|e| AudioError::ComputationFailed(format!("STFT failed: {}", e)))?;
     let s_time = stft_with_derivative(y, Some(n_fft), Some(hop_length), true)?;
     let s_freq = stft_with_derivative(y, Some(n_fft), Some(hop_length), false)?;
@@ -217,18 +291,29 @@ pub fn reassigned_spectrogram(
     let mut reassigned = Array2::zeros(s.dim());
     let freqs = fft_frequencies(Some(sr), Some(n_fft));
     let times = Array1::linspace(0.0, (y.len() as f32 - 1.0) / sr as f32, s.shape()[1]);
+    // Precompute constants for efficiency
+    let sr_f = sr as f32;
+    let hop_f = hop_length as f32;
+    let n_fft_f = n_fft as f32;
+    let time_scale = sr_f / hop_f;
+    let freq_scale = sr_f / n_fft_f;
 
     for t in 0..s.shape()[1] {
         for f in 0..s.shape()[0] {
             let mag = s[[f, t]].norm();
             if mag > 1e-6 {
                 let dphi_dt = s_time[[f, t]].im / mag;
-                let t_reassigned = times[t] - dphi_dt * hop_length as f32 / sr as f32;
+                let t_reassigned = times[t] - dphi_dt * hop_f / sr_f;
                 let dphi_df = s_freq[[f, t]].im / mag;
-                let f_reassigned = freqs[f] + dphi_df * sr as f32 / n_fft as f32;
+                let f_reassigned = freqs[f] + dphi_df * freq_scale;
 
-                let t_idx = ((t_reassigned * sr as f32 / hop_length as f32).round() as usize).min(s.shape()[1] - 1);
-                let f_idx = freqs.iter().position(|&x| x >= f_reassigned).unwrap_or(f).min(s.shape()[0] - 1);
+                let t_idx = ((t_reassigned * time_scale).round() as usize).min(s.shape()[1] - 1);
+                // Use binary search for frequency lookup (more efficient for sorted array)
+                let f_idx = freqs.binary_search_by(|&x| {
+                    x.partial_cmp(&f_reassigned).unwrap_or(std::cmp::Ordering::Less)
+                })
+                .unwrap_or_else(|i| i)
+                .min(s.shape()[0] - 1);
                 reassigned[[f_idx, t_idx]] += mag;
             }
         }
@@ -241,36 +326,73 @@ pub fn reassigned_spectrogram(
 ///
 /// # Arguments
 /// * `y` - Input signal as a slice of `f32`
-/// * `sr` - Optional sample rate in Hz (defaults to 44100)
-/// * `hop_length` - Optional hop length in samples (defaults to 512)
-/// * `fmin` - Optional minimum frequency in Hz (defaults to 32.70, C1)
-/// * `n_bins` - Optional number of frequency bins (defaults to 84)
+/// * `sr` - Sample rate in Hz
 ///
 /// # Returns
-/// Returns a `Result` containing an `Array2<Complex<f32>>` representing the CQT spectrogram,
-/// or an `AudioError` if computation fails.
-///
-/// # Errors
-/// * `AudioError::InsufficientData` - If signal length is less than `hop_length`.
-/// * `AudioError::InvalidInput` - If `fmin` is not positive.
-/// * `AudioError::ComputationFailed` - If STFT computation fails.
+/// Returns a builder that can be configured with method chaining.
 ///
 /// # Examples
 /// ```
-/// let signal = vec![1.0; 1024];
-/// let cqt_result = cqt(&signal, None, None, None, None).unwrap();
+/// let y = vec![1.0, 2.0, 3.0, 4.0];
+/// let cqt = cqt(&y, 44100)
+///     .hop_length(512)
+///     .fmin(32.70)
+///     .compute()?;
 /// ```
-pub fn cqt(
-    signal: &AudioData,
-    hop_length: Option<usize>,
-    fmin: Option<f32>,
-    n_bins: Option<usize>,
+pub fn cqt(y: &[f32], sr: u32) -> CqtBuilder {
+    CqtBuilder {
+        y,
+        sr,
+        hop_length: 512,
+        fmin: 32.70,
+        n_bins: 84,
+    }
+}
+
+/// CQT builder for method chaining (internal use only).
+#[derive(Debug, Clone)]
+pub struct CqtBuilder<'a> {
+    y: &'a [f32],
+    sr: u32,
+    hop_length: usize,
+    fmin: f32,
+    n_bins: usize,
+}
+
+impl<'a> CqtBuilder<'a> {
+    /// Set the hop length (default: 512).
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = hop_length;
+        self
+    }
+
+    /// Set the minimum frequency (default: 32.70 Hz).
+    pub fn fmin(mut self, fmin: f32) -> Self {
+        self.fmin = fmin;
+        self
+    }
+
+    /// Set the number of frequency bins (default: 84).
+    pub fn n_bins(mut self, n_bins: usize) -> Self {
+        self.n_bins = n_bins;
+        self
+    }
+
+    /// Compute the CQT with the configured parameters.
+    pub fn compute(self) -> Result<Array2<Complex<f32>>, AudioError> {
+        cqt_impl(self.y, self.sr, self.hop_length, self.fmin, self.n_bins)
+    }
+}
+
+/// Internal CQT implementation.
+fn cqt_impl(
+    y: &[f32],
+    sr: u32,
+    hop_length: usize,
+    fmin: f32,
+    n_bins: usize,
 ) -> Result<Array2<Complex<f32>>, AudioError> {
-    let sr = signal.sample_rate;
-    let y = &signal.samples;
-    let hop_length = hop_length.unwrap_or(512);
-    let fmin = fmin.unwrap_or(32.70);
-    let n_bins = n_bins.unwrap_or(84);
+    // Parameters are already provided directly
     let bins_per_octave = 12;
 
     if y.len() < hop_length {
@@ -281,7 +403,10 @@ pub fn cqt(
     }
 
     let n_fft = ((sr as f32 / fmin * 2.0) as u32).next_power_of_two() as usize;
-    let s_stft = stft(y, Some(n_fft), Some(hop_length), None)
+    let s_stft = stft(y)
+        .n_fft(n_fft)
+        .hop_length(hop_length)
+        .compute()
         .map_err(|e| AudioError::ComputationFailed(format!("STFT failed: {}", e)))?;
     let n_frames = s_stft.shape()[1];
     let mut s_cqt = Array2::zeros((n_bins, n_frames));
@@ -430,7 +555,10 @@ pub fn hybrid_cqt(
         return Err(AudioError::InvalidInput("fmin must be positive".to_string()));
     }
 
-    let s_stft = stft(y, Some(n_fft), Some(hop_length), None)
+    let s_stft = stft(y)
+        .n_fft(n_fft)
+        .hop_length(hop_length)
+        .compute()
         .map_err(|e| AudioError::ComputationFailed(format!("STFT failed: {}", e)))?;
     let mut s_hybrid = Array2::zeros((n_bins, s_stft.shape()[1]));
     let mut planner = FftPlanner::new();
@@ -496,7 +624,10 @@ pub fn pseudo_cqt(
         return Err(AudioError::InvalidInput("fmin must be positive".to_string()));
     }
 
-    let s_stft = stft(y, Some(n_fft), Some(hop_length), None)
+    let s_stft = stft(y)
+        .n_fft(n_fft)
+        .hop_length(hop_length)
+        .compute()
         .map_err(|e| AudioError::ComputationFailed(format!("STFT failed: {}", e)))?;
     let mut s_pseudo = Array2::zeros((n_bins, s_stft.shape()[1]));
     let freqs = fft_frequencies(Some(sr), Some(n_fft));
@@ -556,7 +687,10 @@ pub fn vqt(
     }
 
     let n_fft = ((sr as f32 / fmin * 2.0) as u32).next_power_of_two() as usize;
-    let s_stft = stft(y, Some(n_fft), Some(hop_length), None)
+    let s_stft = stft(y)
+        .n_fft(n_fft)
+        .hop_length(hop_length)
+        .compute()
         .map_err(|e| AudioError::ComputationFailed(format!("STFT failed: {}", e)))?;
     let mut s_vqt = Array2::zeros((n_bins, s_stft.shape()[1]));
     let mut planner = FftPlanner::new();
@@ -746,14 +880,19 @@ fn butterworth_bandpass(lowcut: f32, highcut: f32, fs: f32, order: Option<usize>
     let order = order.unwrap_or(2);
     let n = order as i32;
 
-    let w_low = 2.0 * fs * (lowcut * PI / fs).tan();
-    let w_high = 2.0 * fs * (highcut * PI / fs).tan();
-    let w0 = (w_high * w_low).sqrt();
-    let bw = w_high - w_low;
+    // Bilinear transform pre-warping: ω_analog = 2*fs * tan(π * f / fs)
+    let w_low = 2.0 * fs * (PI * lowcut / fs).tan();
+    let w_high = 2.0 * fs * (PI * highcut / fs).tan();
+    let w0 = (w_high * w_low).sqrt();  // Geometric mean (center frequency)
+    let bw = w_high - w_low;  // Bandwidth
 
+    // Calculate poles for bandpass Butterworth filter in s-domain
+    // Standard Butterworth pole angles: θ_k = π(2k+1)/(2n) for k = 0..n-1
     let mut poles = Vec::new();
     for k in 0..n {
-        let theta = PI * (2.0 * k as f32 + 1.0 + n as f32) / (2.0 * n as f32);
+        // Corrected: removed erroneous +n term from original formula
+        let theta = PI * (2.0 * k as f32 + 1.0) / (2.0 * n as f32);
+        // Bandpass poles: real part from bandwidth, imaginary from center frequency
         let real = -bw / 2.0 * theta.sin();
         let imag = w0 * theta.cos();
         poles.push(Complex::new(real, imag));

@@ -2,8 +2,8 @@ use ndarray::Array2;
 use thiserror::Error;
 
 use crate::signal_processing::time_frequency::stft;
-use crate::AudioError;
-use crate::fft_frequencies;
+use crate::core::AudioError;
+use crate::utils::frequency::fft_frequencies;
 
 /// Errors specific to pitch and tuning operations.
 #[derive(Error, Debug)]
@@ -197,7 +197,9 @@ pub fn estimate_tuning(
             let freq = pitches[[f, t]];
             let mag = mags[[f, t]];
             if freq > 0.0 && mag > 1e-6 {
-                let ref_freq = 440.0 * 2.0f32.powf((f32::log2(freq / 440.0)).floor());
+                // Find the nearest lower semitone in equal temperament tuning
+                // n_semitones = 12 * log2(freq / 440.0), then floor to get nearest lower semitone
+                let ref_freq = 440.0 * 2.0f32.powf((12.0 * f32::log2(freq / 440.0)).floor() / 12.0);
                 let deviation = 1200.0 * f32::log2(freq / ref_freq);
                 total_deviation += deviation * mag;
                 total_weight += mag;
@@ -247,7 +249,9 @@ pub fn pitch_tuning(frequencies: &[f32], resolution: Option<f32>) -> Result<f32,
 
     let mut total_deviation = 0.0;
     for &freq in &valid_freqs {
-        let ref_freq = 440.0 * 2.0f32.powf((f32::log2(freq / 440.0)).floor());
+        // Find the nearest lower semitone in equal temperament tuning
+        // n_semitones = 12 * log2(freq / 440.0), then floor to get nearest lower semitone
+        let ref_freq = 440.0 * 2.0f32.powf((12.0 * f32::log2(freq / 440.0)).floor() / 12.0);
         let cents = 1200.0 * f32::log2(freq / ref_freq);
         total_deviation += (cents % resolution)
             - if cents % resolution > resolution / 2.0 {
@@ -311,6 +315,8 @@ pub fn piptrack(
 
     let mut pitches = Array2::zeros(s.dim());
     let mut mags = Array2::zeros(s.dim());
+    // Precompute frequency bin width (constant for all frames)
+    let freq_bin_width = if freqs.len() > 1 { freqs[1] - freqs[0] } else { 0.0 };
 
     for t in 0..s.shape()[1] {
         let frame = s.column(t);
@@ -329,7 +335,7 @@ pub fn piptrack(
                     peak_mag
                 };
                 let delta = (left - right) / (2.0 * (left - 2.0 * peak_mag + right) + 1e-6);
-                pitches[[max_idx, t]] = freqs[max_idx] + delta * (freqs[1] - freqs[0]);
+                pitches[[max_idx, t]] = freqs[max_idx] + delta * freq_bin_width;
                 mags[[max_idx, t]] = peak_mag;
             }
         }
@@ -467,7 +473,10 @@ fn compute_spectrogram(
                     "Signal length is less than n_fft".to_string(),
                 ));
             }
-            stft(y, Some(n_fft), Some(hop_length), None)
+            stft(y)
+                .n_fft(n_fft)
+                .hop_length(hop_length)
+                .compute()
                 .map_err(|e| {
                     TuningError::ComputationFailed(format!("STFT computation failed: {}", e))
                 })

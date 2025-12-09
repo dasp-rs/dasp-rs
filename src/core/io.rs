@@ -4,7 +4,7 @@ use ndarray::ShapeError;
 use rayon::prelude::*;
 use std::fs::File;
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 use thiserror::Error;
 
@@ -427,6 +427,80 @@ pub fn load<P: AsRef<Path>>(
             spec.channels
         },
     )
+}
+
+/// Modern audio decoder with builder pattern for clean, readable API.
+///
+/// # Example
+/// ```rust
+/// use dasp_rs::io::Decoder;
+/// 
+/// // Simple loading
+/// let audio = Decoder::from("file.wav").load()?;
+/// 
+/// // With options
+/// let audio = Decoder::from("file.wav")
+///     .sample_rate(22050)
+///     .mono()
+///     .offset(10.0)
+///     .duration(30.0)
+///     .load()?;
+/// ```
+#[derive(Debug, Clone)]
+pub struct Decoder {
+    path: PathBuf,
+    sample_rate: Option<u32>,
+    mono: bool,
+    offset: Option<f32>,
+    duration: Option<f32>,
+}
+
+impl Decoder {
+    /// Create a new audio decoder from a file path.
+    pub fn from<P: AsRef<Path>>(path: P) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            sample_rate: None,
+            mono: false,
+            offset: None,
+            duration: None,
+        }
+    }
+
+    /// Set the target sample rate for resampling.
+    pub fn sample_rate(mut self, rate: u32) -> Self {
+        self.sample_rate = Some(rate);
+        self
+    }
+
+    /// Convert to mono (single channel).
+    pub fn mono(mut self) -> Self {
+        self.mono = true;
+        self
+    }
+
+    /// Set the start offset in seconds.
+    pub fn offset(mut self, seconds: f32) -> Self {
+        self.offset = Some(seconds);
+        self
+    }
+
+    /// Set the duration to load in seconds.
+    pub fn duration(mut self, seconds: f32) -> Self {
+        self.duration = Some(seconds);
+        self
+    }
+
+    /// Load the audio file with the configured options.
+    pub fn load(self) -> Result<AudioData, AudioError> {
+        load(
+            &self.path,
+            self.sample_rate,
+            Some(self.mono),
+            self.offset,
+            self.duration,
+        )
+    }
 }
 
 /// Exports `AudioData` to a WAV file using in-memory buffering.

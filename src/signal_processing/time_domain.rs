@@ -436,12 +436,15 @@ pub fn mu_compress(
         ));
     }
 
+    // Precompute constant: ln(1 + μ) - used for every sample
+    let ln_one_plus_mu = (1.0 + mu_val).ln();
     let compressed = signal
         .samples
         .iter()
         .map(|&v| {
             let sign = if v >= 0.0 { 1.0 } else { -1.0 };
-            let compressed = sign * (1.0 + mu_val.abs() * v.abs()).ln() / mu_val.ln();
+            // Standard μ-law compression: sign * ln(1 + μ|x|) / ln(1 + μ)
+            let compressed = sign * (1.0 + mu_val * v.abs()).ln() / ln_one_plus_mu;
             if quantize.unwrap_or(false) {
                 (compressed * 255.0).round() / 255.0
             } else {
@@ -499,7 +502,8 @@ pub fn mu_expand(
         .iter()
         .map(|&v| {
             let sign = if v >= 0.0 { 1.0 } else { -1.0 };
-            sign * (mu_val.ln() * v.abs()).exp() / mu_val
+            // Standard μ-law expansion: sign * ((1 + μ)^|y| - 1) / μ
+            sign * ((1.0 + mu_val).powf(v.abs()) - 1.0) / mu_val
         })
         .collect();
     Ok(expanded)

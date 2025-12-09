@@ -1,7 +1,7 @@
 use ndarray::{Array1, Array2};
 use thiserror::Error;
 
-use crate::AudioError;
+use crate::core::AudioError;
 
 /// Errors specific to spectrogram scaling and weighting operations.
 #[derive(Error, Debug)]

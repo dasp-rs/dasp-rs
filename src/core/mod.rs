@@ -2,4 +2,5 @@ pub mod io;
 pub mod ops;
 
 pub use io::*;
-pub use ops::*;
+#[allow(unused_imports)]
+pub use ops::*; // Re-exported for public API

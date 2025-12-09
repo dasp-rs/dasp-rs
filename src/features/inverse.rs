@@ -207,7 +207,10 @@ pub fn mel_to_audio(
     }
 
     let s = mel_to_stft(m, Some(sr), Some(n_fft), None)?;
-    let samples = griffinlim(&s, None, Some(hop));
+    let samples = griffinlim(&s)
+        .hop_length(hop)
+        .compute()
+        .map_err(|e| MfccError::ComputationFailed(format!("Griffin-Lim failed: {}", e)))?;
     if samples.is_empty() {
         return Err(MfccError::ComputationFailed(
             "Griffin-Lim returned empty samples".to_string(),

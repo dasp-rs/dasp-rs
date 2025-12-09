@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::io::Cursor;
 
-use crate::{core::AudioData, AudioError};
+use crate::{core::AudioData, core::AudioError};
 use hound::WavReader;
 use ndarray::Array2;
 
