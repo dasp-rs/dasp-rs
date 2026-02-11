@@ -565,3 +565,84 @@ pub fn fourier_tempo_frequencies(sr: Option<u32>) -> Vec<f32> {
     let frame_rate = sr as f32 / hop_length as f32;
     Array1::linspace(0.0, frame_rate / 2.0, n_bins).mapv(|f| f * 60.0).to_vec()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx_eq(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn midi_and_hz_conversions_round_trip() {
+        let notes = vec![60.0, 69.0];
+        let freqs = midi_to_hz(&notes);
+        assert!(approx_eq(freqs[0], 261.62555));
+        assert!(approx_eq(freqs[1], 440.0));
+        let back = hz_to_midi(&freqs);
+        assert!(approx_eq(back[0], 60.0));
+        assert!(approx_eq(back[1], 69.0));
+    }
+
+    #[test]
+    fn note_name_conversions_match_expectations() {
+        let midi = vec![60.0, 61.0, 72.0];
+        let names = midi_to_note(&midi, None, None, None);
+        assert_eq!(names, vec!["C4", "C#4", "C5"]);
+
+        let back = note_to_midi(&["C4", "C#4", "C5"], None);
+        assert_eq!(back, midi);
+
+        let freqs = note_to_hz(&["A4", "C5"]);
+        assert!(approx_eq(freqs[0], 440.0));
+        assert!(freqs[1] > 520.0 && freqs[1] < 525.0);
+    }
+
+    #[test]
+    fn mel_and_hz_conversions_are_inverse() {
+        let hz = vec![0.0, 440.0, 22050.0];
+        let mels = hz_to_mel(&hz, None);
+        let back = mel_to_hz(&mels, None);
+        for (orig, recon) in hz.iter().zip(back.iter()) {
+            assert!(approx_eq(*orig, *recon));
+        }
+    }
+
+    #[test]
+    fn cqt_and_fft_frequencies_generate_expected_bins() {
+        let cqt = cqt_frequencies(3, Some(32.7));
+        assert_eq!(cqt.len(), 3);
+        assert!(approx_eq(cqt[0], 32.7));
+        assert!(cqt[1] > cqt[0]);
+
+        let fft = fft_frequencies(Some(44_100), Some(4));
+        assert_eq!(fft, vec![0.0, 11_025.0, 22_050.0]);
+    }
+
+    #[test]
+    fn tempo_and_fourier_bins_have_expected_scale() {
+        let tempo = tempo_frequencies(3, Some(512), Some(44_100));
+        assert_eq!(tempo.len(), 3);
+        assert!(approx_eq(tempo[0], 0.0));
+        assert!(tempo[2] > tempo[1]);
+
+        let fourier = fourier_tempo_frequencies(Some(44_100));
+        assert_eq!(fourier.len(), 256);
+        assert!(fourier.first().unwrap().abs() < 1e-6);
+        assert!(fourier.last().unwrap() > &5000.0);
+    }
+
+    #[test]
+    fn tuning_and_octave_conversions_match() {
+        let tuning = a4_to_tuning(432.0, None);
+        assert!(tuning < 0.0);
+        let a4 = tuning_to_a4(tuning, None);
+        assert!(approx_eq(a4, 432.0));
+
+        let octs = hz_to_octs(&[440.0], None);
+        assert!(approx_eq(octs[0], 4.0));
+        let freqs = octs_to_hz(&octs, None, None);
+        assert!(approx_eq(freqs[0], 440.0));
+    }
+}

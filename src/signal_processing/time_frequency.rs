@@ -1056,3 +1056,55 @@ fn filter(x: &[f32], b: &[f32], a: &[f32]) -> Vec<f32> {
     }
     y
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::arr2;
+
+    fn approx_eq(a: f32, b: f32, tol: f32) -> bool {
+        (a - b).abs() <= tol
+    }
+
+    #[test]
+    fn stft_and_istft_round_trip_lengths() {
+        let y = vec![1.0, 0.0, -1.0, 0.0];
+        let spec = stft(&y)
+            .n_fft(8)
+            .hop_length(4)
+            .win_length(8)
+            .compute()
+            .expect("stft");
+        assert_eq!(spec.shape(), &[5, 1]); // n_fft/2 + 1 rows, single frame
+
+        let recon = istft(&spec, Some(4), Some(8), Some(y.len()));
+        assert_eq!(recon.len(), y.len());
+        assert!(recon.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn magphase_returns_unit_phase_and_expected_magnitude() {
+        let d = arr2(&[[Complex::new(3.0, 4.0)]]);
+        let (mag, phase) = magphase(&d, None);
+        assert!(approx_eq(mag[[0, 0]], 5.0, 1e-6));
+        let ph = phase[[0, 0]];
+        assert!(approx_eq(ph.norm(), 1.0, 1e-6));
+    }
+
+    #[test]
+    fn reassigned_spectrogram_errors_on_short_signal() {
+        let y = vec![0.0; 4];
+        let result = reassigned_spectrogram(&y, 44_100).n_fft(8).compute();
+        assert!(matches!(result, Err(AudioError::InsufficientData(_))));
+    }
+
+    #[test]
+    fn filter_and_convolution_helpers_behave() {
+        let conv = super::convolve(&[1.0, 2.0], &[3.0, 4.0]);
+        assert_eq!(conv, vec![3.0, 10.0, 8.0]);
+
+        let filtered = filter(&[1.0, 2.0, 3.0], &[1.0, 0.0, 0.0], &[1.0, -0.5, 0.0]);
+        assert_eq!(filtered.len(), 3);
+        assert!(filtered.iter().all(|v| v.is_finite()));
+    }
+}

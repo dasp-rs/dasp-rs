@@ -199,3 +199,47 @@ fn chirp_impl(fmin: f32, fmax: f32, sr: u32, duration: f32) -> Vec<f32> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx_eq(a: f32, b: f32, tol: f32) -> bool {
+        (a - b).abs() <= tol
+    }
+
+    #[test]
+    fn clicks_from_times_and_frames() {
+        let signal = clicks(Some(&[0.0, 0.001]), None, Some(1000), None).unwrap();
+        assert_eq!(signal.len(), 1); // max time 0.001s at 1 kHz => 1 sample
+        assert_eq!(signal, vec![1.0]);
+
+        let frames = clicks(None, Some(&[0, 2]), Some(8000), Some(2)).unwrap();
+        assert_eq!(frames.len(), 4); // max frame 2 with hop 2 -> 4 samples
+        assert_eq!(frames[0], 1.0);
+        assert_eq!(frames[2], 1.0);
+        assert!(frames[1].abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn clicks_rejects_empty_inputs() {
+        assert!(clicks(Some(&[]), None, None, None).is_err());
+        assert!(clicks(None, Some(&[]), None, None).is_err());
+    }
+
+    #[test]
+    fn tone_builder_respects_duration_and_phase() {
+        let samples = tone(440.0, 44_100).duration(0.001).phase(std::f32::consts::FRAC_PI_2).compute();
+        assert_eq!(samples.len(), 44); // 44.1 samples -> 44 truncation
+        // First sample uses phase only.
+        assert!(approx_eq(samples[0], 0.0, 1e-6));
+        assert!(samples.iter().all(|s| s.abs() <= 1.0));
+    }
+
+    #[test]
+    fn chirp_builder_generates_expected_length() {
+        let samples = chirp(100.0, 200.0, 10_000).duration(0.01).compute();
+        assert_eq!(samples.len(), 100); // 0.01 * 10k
+        assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+    }
+}
