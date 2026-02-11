@@ -1,10 +1,10 @@
 [package]
 name = "dasp-rs"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "A crate for digital signal processing, speech processing, music analysis, and phonetics."
 authors = ["Amirhossein Ghanipour amirhosseinghanipour@gmail.com"]
-license = "CC-BY-NC-4.0"
+license = "MIT"
 keywords = [
   "audio",
   "dsp",
@@ -13,7 +13,7 @@ keywords = [
   "music-analysis",
 ]
 repository = "https://github.com/amirhosseinghanipour/dasp-rs"
-documentation = "https://docs.rs/audio_processing/0.1.1"
+documentation = "https://docs.rs/dasp-rs/0.2.0"
 categories = ["multimedia::audio", "algorithms"]
 readme = "README.md"
 
@@ -27,9 +27,7 @@ ndarray = { version = "0.16", features = ["rayon"] }
 approx = "0.5.1"
 rayon = "1.10.0"
 ndarray-linalg = { version = "0.17.0", features = [
-  "openblas",
-  "openblas-system",
-  "openblas-static",
+  "openblas"
 ] }
 log = "0.4.27"
 
