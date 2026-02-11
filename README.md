@@ -24,10 +24,40 @@
 - **Testing**: Unit tests for core functionality to ensure reliability.
 
 ## Installation
+
+### Dependencies
+
+This crate requires **OpenBLAS** and **pkg-config** to be installed on your system *before* building. The build links to your system OpenBLAS and does not download anything when the library is found. If the build attempts to download OpenBLAS, the system library was not detected (install OpenBLAS and pkg-config, or set `PKG_CONFIG_PATH` if installed in a custom location).
+
+**Linux (Arch/Manjaro):**
+```bash
+sudo pacman -S openblas pkg-config
+```
+
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt-get install libopenblas-dev pkg-config
+```
+
+**macOS:**
+```bash
+brew install openblas pkg-config
+```
+
+**Windows:**
+OpenBLAS is typically provided via vcpkg or you can download pre-built binaries.
+
+**Verify:** Before building, ensure `pkg-config` can find OpenBLAS (avoids network download and "Connection refused" errors):
+```bash
+pkg-config --libs openblas
+```
+
+### Cargo
+
 Add `dasp-rs` to your `Cargo.toml`:
 ```toml
 [dependencies]
-dasp-rs = "0.1.1"
+dasp-rs = "0.2.0"
 ```
 
 ## Modules
@@ -52,19 +82,21 @@ dasp-rs = "0.1.1"
 | `utils::notation`        | Music notation conversions (e.g., Hz to MIDI).                              |
 | `utils::time`            | Time-related utilities (e.g., frame-to-time mapping).                       |
 
-Discover more on crates https://crates.io/crates/dasp-rs/ and docs https://docs.rs/dasp-rs/0.1.1.
+Discover more on crates https://crates.io/crates/dasp-rs/ and docs https://docs.rs/dasp-rs/0.2.0.
 
 ## Example
 ```rust
 use dasp_rs::core::io::load;
-use dasp_rs::time_frequency::stft;
+use dasp_rs::signal_processing::time_frequency::stft;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load audio file
     let audio = load("input.wav", Some(44100), Some(true), None, None)?;
     
     // Compute Short-Time Fourier Transform with a 2048-sample window
-    let spectrogram = stft(&audio.samples, Some(2048), None, None)?;
+    let spectrogram = stft(&audio.samples)
+        .n_fft(2048)
+        .compute()?;
     
     // Print the shape of the resulting spectrogram
     println!("Spectrogram shape: {} time frames, {} frequency bins", 

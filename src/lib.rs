@@ -16,65 +16,160 @@
 //! - Utilities: General-purpose functions for audio analysis and conversion.
 //!
 //! ## Usage
-//! To use this library, add it to your `Cargo.toml` and import the desired modules or items:
+//! To use this library, add it to your `Cargo.toml` and import the desired modules:
 //!
 //! ```toml
 //! [dependencies]
-//! dasp-rs = "0.1.0"
+//! dasp-rs = "0.2.0"
 //! ```
 //!
 //! ```rust
-//! use dasp-rs::get_duration;
-//! let audio = dasp-rs::audio_io::load("example.wav", None, None, None, None).unwrap();
+//! // Option 1: Use prelude for convenience
+//! use dasp_rs::prelude::*;
+//! 
+//! let audio = Decoder::from("example.wav")
+//!     .sample_rate(22050)
+//!     .mono()
+//!     .load()?;
+//! 
 //! let duration = get_duration(&audio);
 //! println!("Duration: {} seconds", duration);
 //! ```
 //!
-//! ## Modules
-//! See the individual module documentation for detailed information on available functionality.
+//! ```rust
+//! // Option 2: Explicit imports for clarity
+//! use dasp_rs::{types::AudioData, io::{Decoder, export}, util::get_duration};
+//! 
+//! let audio = Decoder::from("example.wav")
+//!     .sample_rate(22050)
+//!     .mono()
+//!     .load()?;
+//! 
+//! let duration = get_duration(&audio);
+//! println!("Duration: {} seconds", duration);
+//! ```
+//!
+//! ## API Structure
+//! The API is organized by concern for clarity and discoverability:
+//! - `prelude` - Convenient imports for common use cases
+//! - `types` - Core audio data types (AudioData, AudioError)
+//! - `io` - Audio input/output operations
+//! - `proc` - Signal processing algorithms
+//! - `feat` - Audio feature extraction
+//! - `util` - Utility functions
+//! - `pitch` - Pitch detection and conversion
+//! - `mag` - Magnitude spectrum operations
+//! - `generate` - Signal generation
 
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
-/// Audio input/output module.
-///
-/// Provides functions for loading and saving audio files, as well as handling audio data structures.
-pub mod core;
+// Internal modules
+mod core;
+mod signal_processing;
+mod signal_generation;
+mod features;
+mod magnitude;
+mod utils;
+mod pitch_core;
 
-/// Signal processing module.
-///
-/// Contains implementations of signal transformations such as STFT, CQT, and filtering operations.
-pub mod signal_processing;
+/// Core audio data types
+pub mod types {
+    pub use crate::core::{AudioData, AudioError};
+}
 
-/// Signal generation module.
-///
-/// Offers tools for generating synthetic audio signals, including waveforms and noise.
-pub mod signal_generation;
+/// Audio input/output operations
+pub mod io {
+    pub use crate::core::io::{load, export, stream, stream_lazy, Decoder};
+}
 
-/// Feature extraction module.
-///
-/// Includes functions for extracting audio features like pitch, tempo, and spectral characteristics.
-pub mod features;
+/// Signal processing algorithms
+pub mod proc {
+    pub use crate::signal_processing::{
+        mono::*,
+        amplitude::*,
+        mixing::*,
+        panning::*,
+        resampling::*,
+        time_frequency::*,
+        time_domain::*,
+    };
+}
 
-/// Magnitude spectrum module.
-///
-/// Provides utilities for manipulating and analyzing magnitude spectra from audio signals.
-pub mod magnitude;
+/// Audio feature extraction
+pub mod feat {
+    pub use crate::features::{
+        harmonics::*,
+        rhythm::*,
+        manipulation::*,
+        phase_recovery::*,
+        inverse::*,
+    };
+    // Import spectral module items directly
+    pub use crate::features::spectral::*;
+}
 
-/// Utility module.
-///
-/// General-purpose functions and helpers for audio processing and analysis.
-pub mod utils;
+/// Magnitude spectrum operations
+pub mod mag {
+    pub use crate::magnitude::scaling::*;
+}
 
-/// Pitch processing module.
-///
-/// Tools for pitch detection, conversion between frequency/MIDI/notes, and musical notation systems.
-pub mod pitch;
+/// Pitch detection and conversion
+pub mod pitch {
+    pub use crate::pitch_core::*;
+}
 
-// Re-export all public items from the modules for convenient access at the crate root.
-pub use core::*;
-pub use signal_processing::*;
-pub use signal_generation::*;
-pub use features::*;
-pub use magnitude::*;
-pub use utils::*;
-pub use pitch::*;
+/// Utility functions
+pub mod util {
+    pub use crate::utils::{
+        time::*,
+        frequency::*,
+        notation::*,
+    };
+}
+
+/// Signal generation
+pub mod generate {
+    pub use crate::signal_generation::*;
+}
+
+/// Prelude module for convenient imports.
+///
+/// This module re-exports the most commonly used types and functions
+/// to make it easier to use the library without verbose imports.
+///
+/// # Example
+/// ```rust
+/// use dasp_rs::prelude::*;
+/// 
+/// // Now you can use common items directly
+/// let audio = Decoder::from("file.wav").mono().load()?;
+/// let duration = get_duration(&audio);
+/// ```
+pub mod prelude {
+    // Core types
+    pub use crate::core::{AudioData, AudioError};
+    
+    // I/O operations
+    pub use crate::core::io::{Decoder, export};
+    
+    // Utility functions
+    pub use crate::utils::time::get_duration;
+    pub use crate::utils::frequency::{hz_to_midi, midi_to_hz};
+    
+    // Common signal processing
+    pub use crate::signal_processing::{
+        mono::to_mono,
+        resampling::resample,
+        time_frequency::stft,
+    };
+    
+    // Common features
+    pub use crate::features::{
+        harmonics::salience,
+        rhythm::tempo,
+    };
+    pub use crate::features::spectral::spectral_centroid;
+    
+    // Pitch operations
+    pub use crate::pitch_core::*;
+}

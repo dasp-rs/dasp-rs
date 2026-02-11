@@ -1,9 +1,9 @@
+use crate::core::io::AudioData;
+use crate::features::phase_recovery::griffinlim;
+use crate::utils::frequency::{fft_frequencies, mel_frequencies};
 use ndarray::{Array2, Axis};
 use rayon::prelude::*;
 use thiserror::Error;
-use crate::core::io::AudioData;
-use crate::features::phase_recovery::griffinlim;
-use crate::utils::frequency::{mel_frequencies, fft_frequencies};
 
 /// Error conditions for MFCC processing and reconstruction.
 ///
@@ -47,17 +47,26 @@ pub fn compute_delta(
     let axis = axis.unwrap_or(-1);
 
     if width == 0 || width % 2 == 0 {
-        return Err(MfccError::InvalidInput("Width must be a positive odd integer".to_string()));
+        return Err(MfccError::InvalidInput(
+            "Width must be a positive odd integer".to_string(),
+        ));
     }
     let ax = if axis < 0 { 1 } else { 0 };
-    let (n_mfcc, n_frames) = if ax == 1 { mfcc.dim() } else { (mfcc.shape()[1], mfcc.shape()[0]) };
+    let (n_mfcc, n_frames) = if ax == 1 {
+        mfcc.dim()
+    } else {
+        (mfcc.shape()[1], mfcc.shape()[0])
+    };
     if n_frames == 0 || n_mfcc == 0 {
-        return Err(MfccError::InvalidDimensions("MFCC matrix is empty".to_string()));
+        return Err(MfccError::InvalidDimensions(
+            "MFCC matrix is empty".to_string(),
+        ));
     }
     if n_frames < width {
-        return Err(MfccError::InvalidDimensions(
-            format!("Time axis length {} less than width {}", n_frames, width)
-        ));
+        return Err(MfccError::InvalidDimensions(format!(
+            "Time axis length {} less than width {}",
+            n_frames, width
+        )));
     }
 
     let half_width = width / 2;
@@ -66,11 +75,14 @@ pub fn compute_delta(
         .collect();
     let norm = weights.iter().map(|x| x.powi(2)).sum::<f32>();
     if norm == 0.0 {
-        return Err(MfccError::ComputationFailed("Normalization factor is zero".to_string()));
+        return Err(MfccError::ComputationFailed(
+            "Normalization factor is zero".to_string(),
+        ));
     }
 
     let mut delta = Array2::zeros(mfcc.dim());
-    delta.axis_iter_mut(Axis(ax))
+    delta
+        .axis_iter_mut(Axis(ax))
         .into_par_iter()
         .enumerate()
         .for_each(|(i, mut slice)| {
@@ -113,13 +125,19 @@ pub fn mel_to_stft(
     let n_fft = n_fft.unwrap_or(2048);
     let power = power.unwrap_or(2.0);
     if m.is_empty() {
-        return Err(MfccError::InvalidDimensions("Mel spectrogram is empty".to_string()));
+        return Err(MfccError::InvalidDimensions(
+            "Mel spectrogram is empty".to_string(),
+        ));
     }
     if n_fft < 2 {
-        return Err(MfccError::InvalidInput("n_fft must be at least 2".to_string()));
+        return Err(MfccError::InvalidInput(
+            "n_fft must be at least 2".to_string(),
+        ));
     }
     if power <= 0.0 {
-        return Err(MfccError::InvalidInput("Power must be positive".to_string()));
+        return Err(MfccError::InvalidInput(
+            "Power must be positive".to_string(),
+        ));
     }
 
     let n_mels = m.shape()[0];
@@ -146,7 +164,8 @@ pub fn mel_to_stft(
                         }
                     } else {
                         0.0
-                    }.max(0.0);
+                    }
+                    .max(0.0);
                     col[bin] += m[[mel, t]].max(0.0) * weight;
                 }
             }
@@ -182,18 +201,27 @@ pub fn mel_to_audio(
     let hop = hop_length.unwrap_or(n_fft / 4);
     let sr = sr.unwrap_or(44100);
     if hop == 0 {
-        return Err(MfccError::InvalidInput("Hop length must be positive".to_string()));
+        return Err(MfccError::InvalidInput(
+            "Hop length must be positive".to_string(),
+        ));
     }
 
     let s = mel_to_stft(m, Some(sr), Some(n_fft), None)?;
-    let samples = griffinlim(&s, None, Some(hop));
+    let samples = griffinlim(&s)
+        .hop_length(hop)
+        .compute()
+        .map_err(|e| MfccError::ComputationFailed(format!("Griffin-Lim failed: {}", e)))?;
     if samples.is_empty() {
-        return Err(MfccError::ComputationFailed("Griffin-Lim returned empty samples".to_string()));
+        return Err(MfccError::ComputationFailed(
+            "Griffin-Lim returned empty samples".to_string(),
+        ));
     }
     if samples.iter().any(|&x| !x.is_finite()) {
-        return Err(MfccError::ComputationFailed("Non-finite samples in reconstruction".to_string()));
+        return Err(MfccError::ComputationFailed(
+            "Non-finite samples in reconstruction".to_string(),
+        ));
     }
-    Ok(AudioData::new(samples, sr, 1))
+    Ok(AudioData::new(samples, sr, 1).map_err(|e| MfccError::ComputationFailed(e.to_string()))?)
 }
 
 /// Converts MFCCs back to mel spectrogram using inverse DCT.
@@ -219,10 +247,15 @@ pub fn mfcc_to_mel(
     let n_mels = n_mels.unwrap_or(128);
     let dct_type = dct_type.unwrap_or(2);
     if mfcc.is_empty() {
-        return Err(MfccError::InvalidDimensions("MFCC matrix is empty".to_string()));
+        return Err(MfccError::InvalidDimensions(
+            "MFCC matrix is empty".to_string(),
+        ));
     }
     if ![1, 2, 3, 4].contains(&dct_type) {
-        return Err(MfccError::InvalidInput(format!("Unsupported DCT type: {}", dct_type)));
+        return Err(MfccError::InvalidInput(format!(
+            "Unsupported DCT type: {}",
+            dct_type
+        )));
     }
 
     let n_frames = mfcc.shape()[1];
@@ -235,7 +268,11 @@ pub fn mfcc_to_mel(
             for n in 0..n_mels {
                 let mut sum = 0.0;
                 for k in 0..n_mfcc {
-                    let scale = if k == 0 { 1.0 / (n_mels as f32).sqrt() } else { (2.0 / n_mels as f32).sqrt() };
+                    let scale = if k == 0 {
+                        1.0 / (n_mels as f32).sqrt()
+                    } else {
+                        (2.0 / n_mels as f32).sqrt()
+                    };
                     let theta = std::f32::consts::PI * k as f32 * (n as f32 + 0.5) / n_mels as f32;
                     sum += scale * mfcc[[k, t]] * theta.cos();
                 }
@@ -268,4 +305,52 @@ pub fn mfcc_to_audio(
 ) -> Result<AudioData, MfccError> {
     let mel = mfcc_to_mel(mfcc, n_mels, Some(2))?;
     mel_to_audio(&mel, sr, n_fft, hop_length)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn test_compute_delta_invalid_width() {
+        let mfcc = array![[0.1, 0.2], [0.3, 0.4]];
+        let result = compute_delta(&mfcc, Some(2), None); // Invalid even width
+        assert!(matches!(result, Err(MfccError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_compute_delta_empty_input() {
+        let mfcc = array![[]]; // Empty input
+        let result = compute_delta(&mfcc, Some(3), None);
+        assert!(matches!(result, Err(MfccError::InvalidDimensions(_))));
+    }
+
+    #[test]
+    fn test_compute_delta_insufficient_frames() {
+        let mfcc = array![[0.1, 0.2], [0.3, 0.4]]; // Only 2 frames
+        let result = compute_delta(&mfcc, Some(5), None); // Width 5 requires at least 5 frames
+        assert!(matches!(result, Err(MfccError::InvalidDimensions(_))));
+    }
+
+    #[test]
+    fn test_mfcc_to_mel() {
+        let mfcc = array![[0.1, 0.2], [0.3, 0.4]];
+        let mel = mfcc_to_mel(&mfcc, Some(4), None).unwrap();
+        assert_eq!(mel.shape(), &[4, 2]);
+        assert!(mel[[0, 0]] > 0.0);
+    }
+
+    #[test]
+    fn test_invalid_input() {
+        let empty = array![[]];
+        assert!(matches!(
+            compute_delta(&empty, None, None),
+            Err(MfccError::InvalidDimensions(_))
+        ));
+        assert!(matches!(
+            mel_to_stft(&empty, None, None, None),
+            Err(MfccError::InvalidDimensions(_))
+        ));
+    }
 }

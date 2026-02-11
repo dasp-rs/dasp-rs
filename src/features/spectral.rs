@@ -2,12 +2,343 @@ use ndarray::{s, stack, Array1, Array2, Axis};
 use rayon::prelude::*;
 use crate::signal_processing::time_frequency::{stft, cqt};
 use crate::signal_processing::time_domain::{autocorrelate, log_energy};
-use crate::hz_to_midi;
+use crate::utils::frequency::hz_to_midi;
 use ndarray_linalg::{Solve, Eig};
 use num_complex::Complex;
 use thiserror::Error;
 use crate::core::io::{AudioError, AudioData};
-use crate::utils::frequency::fft_frequencies;
+use crate::utils::frequency::{fft_frequencies, mel_frequencies};
+
+/// Chroma STFT builder for method chaining (internal use only).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ChromaStftBuilder<'a> {
+    y: &'a [f32],
+    sr: u32,
+    n_fft: usize,
+    hop_length: usize,
+    norm: f32,
+}
+
+impl<'a> ChromaStftBuilder<'a> {
+    /// Set the FFT size (default: 2048).
+    #[allow(dead_code)]
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Set the hop length (default: 512).
+    #[allow(dead_code)]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = hop_length;
+        self
+    }
+
+    /// Set the normalization factor (default: 1.0).
+    #[allow(dead_code)]
+    pub fn norm(mut self, norm: f32) -> Self {
+        self.norm = norm;
+        self
+    }
+
+    /// Compute chroma features using STFT.
+    pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
+        chroma_stft_impl(self.y, self.sr, None, Some(self.norm), Some(self.n_fft), Some(self.hop_length))
+    }
+}
+
+/// Mel spectrogram builder for method chaining (internal use only).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct MelSpectrogramBuilder<'a> {
+    y: &'a [f32],
+    sr: u32,
+    n_fft: usize,
+    hop_length: usize,
+    n_mels: usize,
+    fmax: f32,
+}
+
+impl<'a> MelSpectrogramBuilder<'a> {
+    /// Set the FFT size (default: 2048).
+    #[allow(dead_code)]
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Set the hop length (default: 512).
+    #[allow(dead_code)]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = hop_length;
+        self
+    }
+
+    /// Set the number of mel bins (default: 128).
+    #[allow(dead_code)]
+    pub fn n_mels(mut self, n_mels: usize) -> Self {
+        self.n_mels = n_mels;
+        self
+    }
+
+    /// Set the maximum frequency (default: sample_rate / 2).
+    #[allow(dead_code)]
+    pub fn fmax(mut self, fmax: f32) -> Self {
+        self.fmax = fmax;
+        self
+    }
+
+    /// Compute mel spectrogram.
+    #[allow(dead_code)]
+    pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
+        melspectrogram_impl(self.y, self.sr, None, None, Some(self.n_fft), Some(self.hop_length), Some(self.n_mels), Some(self.fmax))
+    }
+}
+
+/// Spectral analysis builder for method chaining (internal use only).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct SpectralBuilder<'a> {
+    y: &'a [f32],
+    sr: u32,
+    n_fft: usize,
+    hop_length: usize,
+    win_length: usize,
+    n_mels: usize,
+    fmin: f32,
+    fmax: f32,
+    norm: f32,
+}
+
+impl<'a> SpectralBuilder<'a> {
+    /// Set the FFT size (default: 2048).
+    #[allow(dead_code)]
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Set the hop length (default: 512).
+    #[allow(dead_code)]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = hop_length;
+        self
+    }
+
+    /// Set the window length (default: 2048).
+    #[allow(dead_code)]
+    pub fn win_length(mut self, win_length: usize) -> Self {
+        self.win_length = win_length;
+        self
+    }
+
+    /// Set the number of mel bins (default: 128).
+    #[allow(dead_code)]
+    pub fn n_mels(mut self, n_mels: usize) -> Self {
+        self.n_mels = n_mels;
+        self
+    }
+
+    /// Set the minimum frequency (default: 0.0).
+    #[allow(dead_code)]
+    pub fn fmin(mut self, fmin: f32) -> Self {
+        self.fmin = fmin;
+        self
+    }
+
+    /// Set the maximum frequency (default: sample_rate / 2).
+    #[allow(dead_code)]
+    pub fn fmax(mut self, fmax: f32) -> Self {
+        self.fmax = fmax;
+        self
+    }
+
+    /// Set the normalization factor (default: 1.0).
+    #[allow(dead_code)]
+    pub fn norm(mut self, norm: f32) -> Self {
+        self.norm = norm;
+        self
+    }
+
+    /// Compute chroma features using STFT.
+    #[allow(dead_code)]
+    pub fn chroma_stft(self) -> Result<Array2<f32>, SpectralError> {
+        chroma_stft_impl(self.y, self.sr, None, Some(self.norm), Some(self.n_fft), Some(self.hop_length))
+    }
+
+    /// Compute mel spectrogram.
+    #[allow(dead_code)]
+    pub fn melspectrogram(self) -> Result<Array2<f32>, SpectralError> {
+        melspectrogram_impl(self.y, self.sr, None, None, Some(self.n_fft), Some(self.hop_length), Some(self.n_mels), Some(self.fmax))
+    }
+
+    /// Compute MFCC features.
+    #[allow(dead_code)]
+    pub fn mfcc(self) -> Result<Array2<f32>, SpectralError> {
+        mfcc_impl(self.y, self.sr, None, None, Some(self.n_fft), Some(self.hop_length))
+    }
+
+    /// Compute spectral centroid.
+    #[allow(dead_code)]
+    pub fn spectral_centroid(self) -> Result<Array1<f32>, SpectralError> {
+        spectral_centroid_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
+    }
+
+    /// Compute spectral bandwidth.
+    #[allow(dead_code)]
+    pub fn spectral_bandwidth(self) -> Result<Array1<f32>, SpectralError> {
+        spectral_bandwidth_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), None)
+    }
+
+    /// Compute spectral rolloff.
+    #[allow(dead_code)]
+    pub fn spectral_rolloff(self) -> Result<Array1<f32>, SpectralError> {
+        spectral_rolloff_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), None)
+    }
+
+    /// Compute spectral flatness.
+    #[allow(dead_code)]
+    pub fn spectral_flatness(self) -> Result<Array1<f32>, SpectralError> {
+        spectral_flatness_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
+    }
+
+    /// Compute spectral flux.
+    #[allow(dead_code)]
+    pub fn spectral_flux(self) -> Result<Array1<f32>, SpectralError> {
+        spectral_flux_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
+    }
+
+    /// Compute spectral entropy.
+    #[allow(dead_code)]
+    pub fn spectral_entropy(self) -> Result<Array1<f32>, SpectralError> {
+        spectral_entropy_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
+    }
+
+    /// Compute the configured spectral analysis.
+    #[allow(dead_code)]
+    pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
+        // This is a placeholder - the actual function will be determined by the caller
+        // For now, default to chroma_stft
+        self.chroma_stft()
+    }
+}
+
+/// Computes chroma features using STFT.
+///
+/// # Arguments
+/// * `y` - Input signal as a slice of `f32`
+/// * `sr` - Sample rate in Hz
+///
+/// # Returns
+/// Returns a builder that can be configured with method chaining.
+///
+/// # Examples
+/// ```
+/// let y = vec![1.0, 2.0, 3.0, 4.0];
+/// let chroma = chroma_stft(&y, 44100)
+///     .n_fft(2048)
+///     .hop_length(512)
+///     .compute()?;
+/// ```
+pub fn chroma_stft(y: &[f32], sr: u32) -> ChromaStftBuilder<'_> {
+    ChromaStftBuilder {
+        y,
+        sr,
+        n_fft: 2048,
+        hop_length: 512,
+        norm: 1.0,
+    }
+}
+
+/// Computes mel spectrogram.
+///
+/// # Arguments
+/// * `y` - Input signal as a slice of `f32`
+/// * `sr` - Sample rate in Hz
+///
+/// # Returns
+/// Returns a builder that can be configured with method chaining.
+///
+/// # Examples
+/// ```
+/// let y = vec![1.0, 2.0, 3.0, 4.0];
+/// let mel_spec = melspectrogram(&y, 44100)
+///     .n_fft(2048)
+///     .n_mels(128)
+///     .compute()?;
+/// ```
+// pub fn melspectrogram(y: &[f32], sr: u32) -> MelSpectrogramBuilder {
+//     MelSpectrogramBuilder {
+//         y,
+//         sr,
+//         n_fft: 2048,
+//         hop_length: 512,
+//         n_mels: 128,
+//         fmax: sr as f32 / 2.0,
+//     }
+// }
+
+/// Computes MFCC features.
+///
+/// # Arguments
+/// * `y` - Input signal as a slice of `f32`
+/// * `sr` - Sample rate in Hz
+///
+/// # Returns
+/// Returns a builder that can be configured with method chaining.
+///
+/// # Examples
+/// ```
+/// let y = vec![1.0, 2.0, 3.0, 4.0];
+/// let mfcc = mfcc(&y, 44100)
+///     .n_fft(2048)
+///     .hop_length(512)
+///     .compute()?;
+/// ```
+// pub fn mfcc(y: &[f32], sr: u32) -> SpectralBuilder {
+//     SpectralBuilder {
+//         y,
+//         sr,
+//         n_fft: 2048,
+//         hop_length: 512,
+//         win_length: 2048,
+//         n_mels: 128,
+//         fmin: 0.0,
+//         fmax: sr as f32 / 2.0,
+//         norm: 1.0,
+//     }
+// }
+
+/// Computes spectral centroid.
+///
+/// # Arguments
+/// * `y` - Input signal as a slice of `f32`
+/// * `sr` - Sample rate in Hz
+///
+/// # Returns
+/// Returns a builder that can be configured with method chaining.
+///
+/// # Examples
+/// ```
+/// let y = vec![1.0, 2.0, 3.0, 4.0];
+/// let centroid = spectral_centroid(&y, 44100)
+///     .n_fft(2048)
+///     .compute()?;
+/// ```
+// pub fn spectral_centroid(y: &[f32], sr: u32) -> SpectralBuilder {
+//     SpectralBuilder {
+//         y,
+//         sr,
+//         n_fft: 2048,
+//         hop_length: 512,
+//         win_length: 2048,
+//         n_mels: 128,
+//         fmin: 0.0,
+//         fmax: sr as f32 / 2.0,
+//         norm: 1.0,
+//     }
+// }
 
 /// Custom error types for spectral signal processing operations.
 ///
@@ -57,14 +388,22 @@ pub enum SpectralError {
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::chroma_stft;
+/// use dasp_rs::core::AudioData;
+/// use dasp_rs::features::spectral::SpectralBuilder;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
-/// let chroma = chroma_stft(&signal, None, None, None, None, None).unwrap();
+/// // Using the builder pattern (recommended)
+/// let chroma = SpectralBuilder::new(&signal)
+///     .n_fft(2048)
+///     .hop_length(512)
+///     .chroma_stft()?;
 /// assert_eq!(chroma.shape(), &[12, 1]);
+/// 
+/// // Or using the direct function (legacy)
+/// let chroma = chroma_stft(&signal, None, None, Some(2048), Some(512))?;
 /// ```
-pub fn chroma_stft(
-    signal: &AudioData,
+pub fn chroma_stft_impl(
+    y: &[f32],
+    sr: u32,
     s: Option<&Array2<f32>>,
     norm: Option<f32>,
     n_fft: Option<usize>,
@@ -78,7 +417,7 @@ pub fn chroma_stft(
             "n_fft and hop_length must be positive".into(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if y.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".into(),
         ));
@@ -86,13 +425,16 @@ pub fn chroma_stft(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(y)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm().powi(2)),
     };
 
     let n_bins = s.shape()[0];
-    let freqs = fft_frequencies(Some(signal.sample_rate), Some(n_fft));
+    let freqs = fft_frequencies(Some(sr), Some(n_fft));
 
     let pitch_classes: Vec<usize> = (1..n_bins)
         .map(|bin| {
@@ -188,7 +530,11 @@ pub fn chroma_cqt(
     let c: Array2<f32> = match c {
             Some(c_mag) => Ok::<Array2<f32>, SpectralError>(c_mag.to_owned()),
             None => {
-                let cqt_result = cqt(signal, Some(hop), Some(fmin), Some(n_bins))
+                let cqt_result = cqt(&signal.samples, signal.sample_rate)
+                    .hop_length(hop)
+                    .fmin(fmin)
+                    .n_bins(n_bins)
+                    .compute()
                     .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?;
                 Ok(cqt_result.mapv(|x| x.norm()))
             }
@@ -345,12 +691,15 @@ pub fn melspectrogram(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm().powi(2)),
     };
 
-    let mel_f = crate::mel_frequencies(Some(n_mels), Some(fmin), Some(fmax), None);
+        let mel_f = mel_frequencies(Some(n_mels), Some(fmin), Some(fmax), None);
     let mut mel_s = Array2::zeros((n_mels, s.shape()[1]));
     let fft_f = fft_frequencies(Some(signal.sample_rate), Some(n_fft));
     for m in 0..n_mels {
@@ -373,6 +722,23 @@ pub fn melspectrogram(
         }
     }
     Ok(mel_s)
+}
+
+/// Internal wrapper for melspectrogram that takes &[f32] and sample rate.
+#[allow(dead_code)]
+fn melspectrogram_impl(
+    y: &[f32],
+    sr: u32,
+    s: Option<&Array2<f32>>,
+    _norm: Option<f32>,
+    n_fft: Option<usize>,
+    hop_length: Option<usize>,
+    n_mels: Option<usize>,
+    fmax: Option<f32>,
+) -> Result<Array2<f32>, SpectralError> {
+    let signal = AudioData::new(y.to_vec(), sr, 1)
+        .map_err(|e| SpectralError::Audio(e))?;
+    melspectrogram(&signal, s, n_fft, hop_length, n_mels, None, fmax)
 }
 
 /// Computes Mel-frequency cepstral coefficients (MFCCs).
@@ -427,23 +793,51 @@ pub fn mfcc(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => melspectrogram(signal, None, None, None, None, None, None)?,
+        None => {
+            let temp_signal = AudioData::new(signal.samples.clone(), signal.sample_rate, signal.channels)
+                .map_err(|e| SpectralError::Audio(e))?;
+            melspectrogram(&temp_signal, None, None, None, None, None, None)?
+        },
     };
     let log_s = s.mapv(|x| x.max(1e-10).ln());
+    let n_mels = s.shape()[0] as f32;
+    let pi_over_n_mels = std::f32::consts::PI / n_mels;
+    // Precompute scale factors (constant for each k)
+    let scale_k0 = f32::sqrt(1.0 / n_mels);  // sqrt(2/N) * 1/sqrt(2) = sqrt(1/N)
+    let scale_k_other = f32::sqrt(2.0 / n_mels);  // sqrt(2/N) * 1
     let mut mfcc = Array2::zeros((n_mfcc, s.shape()[1]));
     for t in 0..s.shape()[1] {
         for k in 0..n_mfcc {
             let mut sum = 0.0;
+            let k_pi = k as f32 * pi_over_n_mels;
             for n in 0..s.shape()[0] {
-                sum += log_s[[n, t]] * (std::f32::consts::PI * k as f32 * (n as f32 + 0.5) / s.shape()[0] as f32).cos();
+                sum += log_s[[n, t]] * (k_pi * (n as f32 + 0.5)).cos();
             }
-            mfcc[[k, t]] = sum * if k == 0 { 1.0 / f32::sqrt(2.0) } else { 1.0 } * 2.0 / s.shape()[0] as f32;
+            // DCT Type II: X[k] = sqrt(2/N) * c[k] * sum, where c[0] = 1/sqrt(2), c[k>0] = 1
+            let scale = if k == 0 { scale_k0 } else { scale_k_other };
+            mfcc[[k, t]] = sum * scale;
         }
     }
     if norm == Some("ortho") {
-        mfcc *= f32::sqrt(2.0 / s.shape()[0] as f32);
+        // Orthonormal DCT already has correct normalization, no additional scaling needed
+        // (The scale factor above already includes the orthonormal normalization)
     }
     Ok(mfcc)
+}
+
+/// Internal wrapper for mfcc that takes &[f32] and sample rate.
+#[allow(dead_code)]
+fn mfcc_impl(
+    y: &[f32],
+    sr: u32,
+    s: Option<&Array2<f32>>,
+    _norm: Option<f32>,
+    _n_fft: Option<usize>,
+    _hop_length: Option<usize>,
+) -> Result<Array2<f32>, SpectralError> {
+    let signal = AudioData::new(y.to_vec(), sr, 1)
+        .map_err(|e| SpectralError::Audio(e))?;
+    mfcc(&signal, s, None, None, None)
 }
 
 /// Computes root mean square (RMS) energy.
@@ -545,22 +939,39 @@ pub fn spectral_centroid(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm()),
     };
 
-    let freqs = fft_frequencies(Some(signal.sample_rate), Some(n_fft));
+    let freqs = Array1::from_vec(fft_frequencies(Some(signal.sample_rate), Some(n_fft)));
     Ok(s.axis_iter(Axis(1))
         .map(|frame| {
             let total = frame.sum();
             if total > 1e-6 {
-                frame.dot(&Array1::from_vec(freqs.clone())) / total
+                frame.dot(&freqs) / total
             } else {
                 0.0
             }
         })
         .collect())
+}
+
+/// Internal wrapper for spectral_centroid that takes &[f32] and sample rate.
+#[allow(dead_code)]
+fn spectral_centroid_impl(
+    y: &[f32],
+    sr: u32,
+    s: Option<&Array2<f32>>,
+    n_fft: Option<usize>,
+    hop_length: Option<usize>,
+) -> Result<Array1<f32>, SpectralError> {
+    let signal = AudioData::new(y.to_vec(), sr, 1)
+        .map_err(|e| SpectralError::Audio(e))?;
+    spectral_centroid(&signal, s, n_fft, hop_length)
 }
 
 /// Computes spectral bandwidth.
@@ -598,12 +1009,17 @@ pub fn spectral_bandwidth(
             "p must be positive".to_string(),
         ));
     }
-    let centroid = spectral_centroid(signal, s, n_fft, hop_length)?;
+        let temp_signal = AudioData::new(signal.samples.clone(), signal.sample_rate, signal.channels)
+            .map_err(|e| SpectralError::Audio(e))?;
+        let centroid = spectral_centroid(&temp_signal, None, None, None)?;
     let n_fft = n_fft.unwrap_or(2048);
     let hop = hop_length.unwrap_or(n_fft / 4);
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm()),
     };
@@ -672,7 +1088,10 @@ pub fn spectral_contrast(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm()),
     };
@@ -750,7 +1169,10 @@ pub fn spectral_flatness(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm().max(1e-10)),
     };
@@ -763,6 +1185,21 @@ pub fn spectral_flatness(
             f32::exp(geo_mean) / arith_mean
         })
         .collect())
+}
+
+/// Internal wrapper for spectral_bandwidth that takes &[f32] and sample rate.
+#[allow(dead_code)]
+fn spectral_bandwidth_impl(
+    y: &[f32],
+    sr: u32,
+    s: Option<&Array2<f32>>,
+    n_fft: Option<usize>,
+    hop_length: Option<usize>,
+    p: Option<i32>,
+) -> Result<Array1<f32>, SpectralError> {
+    let signal = AudioData::new(y.to_vec(), sr, 1)
+        .map_err(|e| SpectralError::Audio(e))?;
+    spectral_bandwidth(&signal, s, n_fft, hop_length, p)
 }
 
 /// Computes spectral roll-off frequency.
@@ -815,7 +1252,10 @@ pub fn spectral_rolloff(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm()),
     };
@@ -835,6 +1275,35 @@ pub fn spectral_rolloff(
             freqs[freqs.len() - 1]
         })
         .collect())
+}
+
+/// Internal wrapper for spectral_rolloff that takes &[f32] and sample rate.
+#[allow(dead_code)]
+fn spectral_rolloff_impl(
+    y: &[f32],
+    sr: u32,
+    s: Option<&Array2<f32>>,
+    n_fft: Option<usize>,
+    hop_length: Option<usize>,
+    roll_percent: Option<f32>,
+) -> Result<Array1<f32>, SpectralError> {
+    let signal = AudioData::new(y.to_vec(), sr, 1)
+        .map_err(|e| SpectralError::Audio(e))?;
+    spectral_rolloff(&signal, s, n_fft, hop_length, roll_percent)
+}
+
+/// Internal wrapper for spectral_flatness that takes &[f32] and sample rate.
+#[allow(dead_code)]
+fn spectral_flatness_impl(
+    y: &[f32],
+    sr: u32,
+    s: Option<&Array2<f32>>,
+    n_fft: Option<usize>,
+    hop_length: Option<usize>,
+) -> Result<Array1<f32>, SpectralError> {
+    let signal = AudioData::new(y.to_vec(), sr, 1)
+        .map_err(|e| SpectralError::Audio(e))?;
+    spectral_flatness(&signal, s, n_fft, hop_length)
 }
 
 /// Computes polynomial fit coefficients for spectral features.
@@ -882,7 +1351,10 @@ pub fn poly_features(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm()),
     };
@@ -922,7 +1394,8 @@ pub fn tonnetz(
     signal: &AudioData,
     chroma: Option<&Array2<f32>>,
 ) -> Result<Array2<f32>, SpectralError> {
-    let chroma_stft_result = chroma_stft(signal, None, None, None, None)?;
+        let chroma_stft_result = chroma_stft(&signal.samples, signal.sample_rate)
+            .compute()?;
     let chroma = chroma.unwrap_or(&chroma_stft_result);
     if chroma.shape()[0] != 12 {
         return Err(SpectralError::InvalidSize(
@@ -1008,7 +1481,10 @@ pub fn spectral_flux(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm()),
     };
@@ -1019,6 +1495,20 @@ pub fn spectral_flux(
         flux[t] = diff.mapv(|x| x.powi(2)).sum().sqrt();
     }
     Ok(flux)
+}
+
+/// Internal wrapper for spectral_flux that takes &[f32] and sample rate.
+#[allow(dead_code)]
+fn spectral_flux_impl(
+    y: &[f32],
+    sr: u32,
+    s: Option<&Array2<f32>>,
+    n_fft: Option<usize>,
+    hop_length: Option<usize>,
+) -> Result<Array1<f32>, SpectralError> {
+    let signal = AudioData::new(y.to_vec(), sr, 1)
+        .map_err(|e| SpectralError::Audio(e))?;
+    spectral_flux(&signal, s, n_fft, hop_length)
 }
 
 /// Computes spectral entropy.
@@ -1063,7 +1553,10 @@ pub fn spectral_entropy(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm()),
     };
@@ -1079,6 +1572,20 @@ pub fn spectral_entropy(
             }
         })
         .collect())
+}
+
+/// Internal wrapper for spectral_entropy that takes &[f32] and sample rate.
+#[allow(dead_code)]
+fn spectral_entropy_impl(
+    y: &[f32],
+    sr: u32,
+    s: Option<&Array2<f32>>,
+    n_fft: Option<usize>,
+    hop_length: Option<usize>,
+) -> Result<Array1<f32>, SpectralError> {
+    let signal = AudioData::new(y.to_vec(), sr, 1)
+        .map_err(|e| SpectralError::Audio(e))?;
+    spectral_entropy(&signal, s, n_fft, hop_length)
 }
 
 /// Computes pitch chroma features.
@@ -1123,7 +1630,10 @@ pub fn pitch_chroma(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm()),
     };
@@ -1134,7 +1644,7 @@ pub fn pitch_chroma(
         let frame = s.column(t);
         for (bin, &f) in freqs.iter().enumerate() {
             if frame[bin] > 0.0 {
-                let midi = crate::hz_to_midi(&[f])[0];
+                let midi = hz_to_midi(&[f])[0];
                 let pitch_class = midi.round() as usize % 12;
                 chroma[[pitch_class, t]] += frame[bin];
             }
@@ -1245,8 +1755,8 @@ pub fn hpss(
 ) -> Result<(Array2<f32>, Array2<f32>), SpectralError> {
     let n_fft = n_fft.unwrap_or(2048);
     let hop = hop_length.unwrap_or(n_fft / 4);
-    let harm_win = harm_win.unwrap_or(31);
-    let perc_win = perc_win.unwrap_or(31);
+    let harm_win: usize = harm_win.unwrap_or(31);
+    let perc_win: usize = perc_win.unwrap_or(31);
     if n_fft == 0 || hop == 0 || harm_win == 0 || perc_win == 0 {
         return Err(SpectralError::InvalidParameter(
             "n_fft, hop_length, harm_win, and perc_win must be positive".to_string(),
@@ -1260,7 +1770,10 @@ pub fn hpss(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm().powi(2)),
     };
@@ -1289,9 +1802,11 @@ pub fn hpss(
         }
     }
 
-    let total = harmonic.clone() + percussive.clone();
-    let harm_mask = &harmonic / &total.mapv(|x| if x > 0.0 { x } else { 1.0 });
-    let perc_mask = &percussive / &total.mapv(|x| if x > 0.0 { x } else { 1.0 });
+    // Compute total once and reuse for both masks
+    let total = &harmonic + &percussive;
+    let total_safe = total.mapv(|x| if x > 0.0 { x } else { 1.0 });
+    let harm_mask = &harmonic / &total_safe;
+    let perc_mask = &percussive / &total_safe;
     Ok((s.to_owned() * &harm_mask, s.to_owned() * &perc_mask))
 }
 
@@ -1359,16 +1874,17 @@ pub fn pitch_autocorr(
             .map_err(|e| SpectralError::TimeDomain(e.to_string()))?;
         let lag_min = (signal.sample_rate as f32 / fmax).round() as usize;
         let lag_max = (signal.sample_rate as f32 / fmin).round() as usize;
-        let max_idx = autocorr[lag_min..lag_max.min(autocorr.len())]
-            .iter()
-            .position(|&x| {
-                x == *autocorr[lag_min..lag_max.min(autocorr.len())]
-                    .iter()
+        let slice = &autocorr[lag_min..lag_max.min(autocorr.len())];
+        let max_idx = if slice.is_empty() {
+            0
+        } else {
+            let max_val = slice.iter()
                     .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                    .unwrap()
-            })
+                .unwrap();
+            slice.iter()
+                .position(|&x| x == *max_val)
             .unwrap_or(0)
-            + lag_min;
+        } + lag_min;
         pitch[i] = if max_idx > 0 {
             signal.sample_rate as f32 / max_idx as f32
         } else {
@@ -1423,8 +1939,14 @@ pub fn vad_features(
     let n_frames = (signal.samples.len() - frame_len) / hop + 1;
     let energy = log_energy(signal, Some(frame_len), Some(hop))
         .map_err(|e| SpectralError::TimeDomain(e.to_string()))?;
-    let zcr = crate::features::zero_crossing_rate(&signal.samples, Some(frame_len), Some(hop));
-    let s = stft(&signal.samples, Some(n_fft), Some(hop), None)
+        let zcr = crate::features::zero_crossing_rate(&signal.samples)
+            .frame_length(frame_len)
+            .hop_length(hop)
+            .compute();
+    let s = stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
         .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
         .mapv(|x| x.norm());
     let flatness = s.axis_iter(Axis(1))
@@ -1493,7 +2015,10 @@ pub fn spectral_subband_centroids(
 
     let s = match s {
         Some(s) => s.to_owned(),
-        None => stft(&signal.samples, Some(n_fft), Some(hop), None)
+        None => stft(&signal.samples)
+            .n_fft(n_fft)
+            .hop_length(hop)
+            .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(|x| x.norm()),
     };

@@ -72,3 +72,30 @@ pub fn resample(samples: &[f32], orig_sr: u32, target_sr: u32) -> Result<Vec<f32
         .map_err(|e| ResampleError::RubatoError(format!("Resampling failed: {}", e)))?;
     Ok(output[0].clone())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_clone_when_sample_rates_match() {
+        let samples = vec![0.1, 0.2, 0.3];
+        let out = resample(&samples, 44_100, 44_100).unwrap();
+        assert_eq!(out, samples);
+    }
+
+    #[test]
+    fn resamples_empty_input_to_empty() {
+        let out = resample(&[], 48_000, 44_100).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn downsample_basic_signal() {
+        let samples = vec![0.0, 1.0, 0.0, -1.0];
+        let out = resample(&samples, 4, 2).unwrap();
+        // Should roughly halve length; allow tolerance for sinc padding
+        assert!(out.len() >= 2);
+        assert!(out.iter().all(|v| v.is_finite()));
+    }
+}

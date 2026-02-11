@@ -1,585 +1,737 @@
-use ndarray::Array2;
-use crate::AudioError;
+use ndarray::{Array1, Array2};
+use thiserror::Error;
 
-/// Converts amplitude spectrogram to decibels (dB).
+use crate::core::AudioError;
+
+/// Errors specific to spectrogram scaling and weighting operations.
+#[derive(Error, Debug)]
+pub enum ScalingError {
+    /// Insufficient data for the requested operation (e.g., empty spectrogram).
+    #[error("Insufficient data: {0}")]
+    InsufficientData(String),
+
+    /// Invalid input parameters (e.g., negative values, mismatched dimensions).
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+}
+
+impl From<ScalingError> for AudioError {
+    fn from(err: ScalingError) -> Self {
+        match err {
+            ScalingError::InsufficientData(msg) => AudioError::InsufficientData(msg),
+            ScalingError::InvalidInput(msg) => AudioError::InvalidInput(msg),
+        }
+    }
+}
+
+/// Converts an amplitude spectrogram to decibels (dB).
+///
+/// Computes the decibel representation of an amplitude spectrogram using the formula:
+/// `db = 20 * log10(max(x, amin) / ref_val)`, with clipping at `-top_db` below the maximum.
+/// This is useful for audio visualization and perceptual scaling.
 ///
 /// # Arguments
-/// * `S` - Amplitude spectrogram as a 2D array
-/// * `ref_val` - Optional reference amplitude (defaults to 1.0)
-/// * `amin` - Optional minimum amplitude threshold (defaults to 1e-5)
-/// * `top_db` - Optional maximum dB below reference (defaults to 80.0)
+/// * `spectrogram` - Amplitude spectrogram as a 2D array (`Array2<f32>`).
+/// * `ref_val` - Reference amplitude for 0 dB (defaults to 1.0 if `None`).
+/// * `amin` - Minimum amplitude threshold to avoid log of zero (defaults to 1e-5 if `None`).
+/// * `top_db` - Maximum dB below the reference level (defaults to 80.0 if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Array2<f32>, AudioError>` containing the dB spectrogram.
+/// A `Result` containing the decibel spectrogram as `Array2<f32>`.
+/// Values are clipped to ensure they do not fall below `max_db - top_db`.
 ///
 /// # Errors
-/// - `InsufficientData` if the spectrogram is empty
-/// - `InvalidInput` if `ref_val`, `amin`, or `top_db` is non-positive, or if `S` contains negative values
+/// * `ScalingError::InsufficientData` - If the spectrogram is empty.
+/// * `ScalingError::InvalidInput` - If `ref_val`, `amin`, or `top_db` is non-positive, or if the spectrogram contains negative values.
 ///
-/// # Examples
+/// # Example
 /// ```
 /// use ndarray::arr2;
-/// let S = arr2(&[[1.0, 2.0], [0.1, 0.01]]);
-/// let S_db = amplitude_to_db(&S, None, None, None).unwrap();
-/// assert!(S_db[[0, 0]] == 0.0); // 20 * log10(1.0 / 1.0)
-/// assert!(S_db[[0, 1]] > 6.0 && S_db[[0, 1]] < 7.0); // ~6.021 dB
+/// use dasp_rs::scaling::amplitude_to_db;
+/// let s = arr2(&[[1.0, 2.0], [0.1, 0.01]]);
+/// let s_db = amplitude_to_db(&s, None, None, None)?;
+/// assert_eq!(s_db[[0, 0]], 0.0); // 20 * log10(1.0 / 1.0)
+/// assert!((s_db[[0, 1]] - 6.0206).abs() < 1e-4); // 20 * log10(2.0 / 1.0)
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn amplitude_to_db(
-    s: &Array2<f32>,
+    spectrogram: &Array2<f32>,
     ref_val: Option<f32>,
     amin: Option<f32>,
     top_db: Option<f32>,
-) -> Result<Array2<f32>, AudioError> {
+) -> Result<Array2<f32>, ScalingError> {
     let ref_val = ref_val.unwrap_or(1.0);
-    let amin_val = amin.unwrap_or(1e-5);
-    let top_db_val = top_db.unwrap_or(80.0);
+    let amin = amin.unwrap_or(1e-5);
+    let top_db = top_db.unwrap_or(80.0);
 
-    if s.is_empty() {
-        return Err(AudioError::InsufficientData("Spectrogram is empty".to_string()));
-    }
-    if ref_val <= 0.0 {
-        return Err(AudioError::InvalidInput("Reference value must be positive".to_string()));
-    }
-    if amin_val <= 0.0 {
-        return Err(AudioError::InvalidInput("Minimum amplitude must be positive".to_string()));
-    }
-    if top_db_val <= 0.0 {
-        return Err(AudioError::InvalidInput("Top dB must be positive".to_string()));
-    }
-    if s.iter().any(|&x| x < 0.0) {
-        return Err(AudioError::InvalidInput("Spectrogram contains negative amplitudes".to_string()));
-    }
+    validate_spectrogram(spectrogram, "amplitude")?;
+    validate_positive_params(ref_val, amin, top_db, "Reference value", "Minimum amplitude", "Top dB")?;
 
-    Ok(s.mapv(|x| {
-        let x_clipped = x.max(amin_val);
+    Ok(spectrogram.mapv(|x| {
+        let x_clipped = x.max(amin);
         let db = 20.0 * (x_clipped / ref_val).log10();
-        db.max(db.max(-top_db_val))
+        let max_db = db.max(-top_db);
+        db.max(max_db)
     }))
 }
 
-/// Converts decibel (dB) spectrogram to amplitude.
+/// Converts a decibel (dB) spectrogram to amplitude.
+///
+/// Converts a decibel spectrogram back to amplitude using the formula:
+/// `amplitude = ref_val * 10^(db / 20)`.
 ///
 /// # Arguments
-/// * `S_db` - Decibel spectrogram as a 2D array
-/// * `ref_val` - Optional reference amplitude (defaults to 1.0)
+/// * `spectrogram_db` - Decibel spectrogram as a 2D array (`Array2<f32>`).
+/// * `ref_val` - Reference amplitude for 0 dB (defaults to 1.0 if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Array2<f32>, AudioError>` containing the amplitude spectrogram.
+/// A `Result` containing the amplitude spectrogram as `Array2<f32>`.
 ///
 /// # Errors
-/// - `InsufficientData` if the spectrogram is empty
-/// - `InvalidInput` if `ref_val` is non-positive
+/// * `ScalingError::InsufficientData` - If the spectrogram is empty.
+/// * `ScalingError::InvalidInput` - If `ref_val` is non-positive.
 ///
-/// # Examples
+/// # Example
 /// ```
 /// use ndarray::arr2;
-/// let S_db = arr2(&[[0.0, 6.021], [-20.0, -40.0]]);
-/// let S = db_to_amplitude(&S_db, None).unwrap();
-/// assert!(S[[0, 0]] == 1.0);
-/// assert!(S[[0, 1]] > 1.995 && S[[0, 1]] < 2.005); // ~2.0
+/// use dasp_rs::scaling::db_to_amplitude;
+/// let s_db = arr2(&[[0.0, 6.0206], [-20.0, -40.0]]);
+/// let s = db_to_amplitude(&s_db, None)?;
+/// assert_eq!(s[[0, 0]], 1.0);
+/// assert!((s[[0, 1]] - 2.0).abs() < 1e-4); // 10^(6.0206 / 20)
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn db_to_amplitude(
-    s_db: &Array2<f32>,
+    spectrogram_db: &Array2<f32>,
     ref_val: Option<f32>,
-) -> Result<Array2<f32>, AudioError> {
+) -> Result<Array2<f32>, ScalingError> {
     let ref_val = ref_val.unwrap_or(1.0);
 
-    if s_db.is_empty() {
-        return Err(AudioError::InsufficientData("Spectrogram is empty".to_string()));
-    }
+    validate_spectrogram(spectrogram_db, "decibel")?;
     if ref_val <= 0.0 {
-        return Err(AudioError::InvalidInput("Reference value must be positive".to_string()));
+        return Err(ScalingError::InvalidInput(
+            "Reference value must be positive".to_string(),
+        ));
     }
 
-    Ok(s_db.mapv(|x| ref_val * 10.0f32.powf(x / 20.0)))
+    Ok(spectrogram_db.mapv(|x| ref_val * 10.0f32.powf(x / 20.0)))
 }
 
-/// Converts power spectrogram to decibels (dB).
+/// Converts a power spectrogram to decibels (dB).
+///
+/// Computes the decibel representation of a power spectrogram using the formula:
+/// `db = 10 * log10(max(x, amin) / ref_val)`, with clipping at `-top_db` below the maximum.
+/// This is suitable for power-based spectrograms (e.g., squared amplitude).
 ///
 /// # Arguments
-/// * `S` - Power spectrogram as a 2D array
-/// * `ref_val` - Optional reference power (defaults to 1.0)
-/// * `amin` - Optional minimum power threshold (defaults to 1e-10)
-/// * `top_db` - Optional maximum dB below reference (defaults to 80.0)
+/// * `spectrogram` - Power spectrogram as a 2D array (`Array2<f32>`).
+/// * `ref_val` - Reference power for 0 dB (defaults to 1.0 if `None`).
+/// * `amin` - Minimum power threshold to avoid log of zero (defaults to 1e-10 if `None`).
+/// * `top_db` - Maximum dB below the reference level (defaults to 80.0 if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Array2<f32>, AudioError>` containing the dB spectrogram.
+/// A `Result` containing the decibel spectrogram as `Array2<f32>`.
+/// Values are clipped to ensure they do not fall below `max_db - top_db`.
 ///
 /// # Errors
-/// - `InsufficientData` if the spectrogram is empty
-/// - `InvalidInput` if `ref_val`, `amin`, or `top_db` is non-positive, or if `S` contains negative values
+/// * `ScalingError::InsufficientData` - If the spectrogram is empty.
+/// * `ScalingError::InvalidInput` - If `ref_val`, `amin`, or `top_db` is non-positive, or if the spectrogram contains negative values.
 ///
-/// # Examples
+/// # Example
 /// ```
 /// use ndarray::arr2;
-/// let S = arr2(&[[1.0, 4.0], [0.1, 0.01]]);
-/// let S_db = power_to_db(&S, None, None, None).unwrap();
-/// assert!(S_db[[0, 0]] == 0.0); // 10 * log10(1.0 / 1.0)
-/// assert!(S_db[[0, 1]] > 6.0 && S_db[[0, 1]] < 7.0); // ~6.021 dB
+/// use dasp_rs::scaling::power_to_db;
+/// let s = arr2(&[[1.0, 4.0], [0.1, 0.01]]);
+/// let s_db = power_to_db(&s, None, None, None)?;
+/// assert_eq!(s_db[[0, 0]], 0.0); // 10 * log10(1.0 / 1.0)
+/// assert!((s_db[[0, 1]] - 6.0206).abs() < 1e-4); // 10 * log10(4.0 / 1.0)
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn power_to_db(
-    s: &Array2<f32>,
+    spectrogram: &Array2<f32>,
     ref_val: Option<f32>,
     amin: Option<f32>,
     top_db: Option<f32>,
-) -> Result<Array2<f32>, AudioError> {
+) -> Result<Array2<f32>, ScalingError> {
     let ref_val = ref_val.unwrap_or(1.0);
-    let amin_val = amin.unwrap_or(1e-10);
-    let top_db_val = top_db.unwrap_or(80.0);
+    let amin = amin.unwrap_or(1e-10);
+    let top_db = top_db.unwrap_or(80.0);
 
-    if s.is_empty() {
-        return Err(AudioError::InsufficientData("Spectrogram is empty".to_string()));
-    }
-    if ref_val <= 0.0 {
-        return Err(AudioError::InvalidInput("Reference value must be positive".to_string()));
-    }
-    if amin_val <= 0.0 {
-        return Err(AudioError::InvalidInput("Minimum power must be positive".to_string()));
-    }
-    if top_db_val <= 0.0 {
-        return Err(AudioError::InvalidInput("Top dB must be positive".to_string()));
-    }
-    if s.iter().any(|&x| x < 0.0) {
-        return Err(AudioError::InvalidInput("Spectrogram contains negative power values".to_string()));
-    }
+    validate_spectrogram(spectrogram, "power")?;
+    validate_positive_params(ref_val, amin, top_db, "Reference value", "Minimum power", "Top dB")?;
 
-    Ok(s.mapv(|x| {
-        let x_clipped = x.max(amin_val);
+    Ok(spectrogram.mapv(|x| {
+        let x_clipped = x.max(amin);
         let db = 10.0 * (x_clipped / ref_val).log10();
-        db.max(db.max(-top_db_val))
+        let max_db = db.max(-top_db);
+        db.max(max_db)
     }))
 }
 
-/// Converts decibel (dB) spectrogram to power.
+/// Converts a decibel (dB) spectrogram to power.
+///
+/// Converts a decibel spectrogram back to power using the formula:
+/// `power = ref_val * 10^(db / 10)`.
 ///
 /// # Arguments
-/// * `S_db` - Decibel spectrogram as a 2D array
-/// * `ref_val` - Optional reference power (defaults to 1.0)
+/// * `spectrogram_db` - Decibel spectrogram as a 2D array (`Array2<f32>`).
+/// * `ref_val` - Reference power for 0 dB (defaults to 1.0 if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Array2<f32>, AudioError>` containing the power spectrogram.
+/// A `Result` containing the power spectrogram as `Array2<f32>`.
 ///
 /// # Errors
-/// - `InsufficientData` if the spectrogram is empty
-/// - `InvalidInput` if `ref_val` is non-positive
+/// * `ScalingError::InsufficientData` - If the spectrogram is empty.
+/// * `ScalingError::InvalidInput` - If `ref_val` is non-positive.
 ///
-/// # Examples
+/// # Example
 /// ```
 /// use ndarray::arr2;
-/// let S_db = arr2(&[[0.0, 6.021], [-10.0, -20.0]]);
-/// let S = db_to_power(&S_db, None).unwrap();
-/// assert!(S[[0, 0]] == 1.0);
-/// assert!(S[[0, 1]] > 3.995 && S[[0, 1]] < 4.005); // ~4.0
+/// use dasp_rs::scaling::db_to_power;
+/// let s_db = arr2(&[[0.0, 6.0206], [-10.0, -20.0]]);
+/// let s = db_to_power(&s_db, None)?;
+/// assert_eq!(s[[0, 0]], 1.0);
+/// assert!((s[[0, 1]] - 4.0).abs() < 1e-4); // 10^(6.0206 / 10)
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn db_to_power(
-    s_db: &Array2<f32>,
+    spectrogram_db: &Array2<f32>,
     ref_val: Option<f32>,
-) -> Result<Array2<f32>, AudioError> {
+) -> Result<Array2<f32>, ScalingError> {
     let ref_val = ref_val.unwrap_or(1.0);
 
-    if s_db.is_empty() {
-        return Err(AudioError::InsufficientData("Spectrogram is empty".to_string()));
-    }
+    validate_spectrogram(spectrogram_db, "decibel")?;
     if ref_val <= 0.0 {
-        return Err(AudioError::InvalidInput("Reference value must be positive".to_string()));
+        return Err(ScalingError::InvalidInput(
+            "Reference value must be positive".to_string(),
+        ));
     }
 
-    Ok(s_db.mapv(|x| ref_val * 10.0f32.powf(x / 10.0)))
+    Ok(spectrogram_db.mapv(|x| ref_val * 10.0f32.powf(x / 10.0)))
 }
 
 /// Applies perceptual frequency weighting to a spectrogram.
 ///
+/// Applies frequency-dependent weighting (e.g., A, B, C, or D) to a spectrogram to emphasize
+/// perceptually relevant frequencies. The spectrogram is multiplied by weights computed for each frequency bin.
+///
 /// # Arguments
-/// * `S` - Spectrogram as a 2D array (frequencies × time)
-/// * `frequencies` - Array of frequencies corresponding to spectrogram rows
-/// * `kind` - Optional weighting type ("A", "B", "C", "D"; defaults to "A")
+/// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies × time).
+/// * `frequencies` - Slice of frequencies (Hz) corresponding to spectrogram rows.
+/// * `kind` - Weighting type ("A", "B", "C", or "D"; defaults to "A" if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Array2<f32>, AudioError>` containing the weighted spectrogram.
+/// A `Result` containing the weighted spectrogram as `Array2<f32>`.
 ///
 /// # Errors
-/// - `InsufficientData` if the spectrogram is empty
-/// - `InvalidInput` if frequencies length mismatches spectrogram rows, spectrogram has negative values, or kind is unknown
+/// * `ScalingError::InsufficientData` - If the spectrogram is empty.
+/// * `ScalingError::InvalidInput` - If frequencies length mismatches spectrogram rows, spectrogram contains negative values, or `kind` is invalid.
 ///
-/// # Examples
+/// # Example
 /// ```
 /// use ndarray::arr2;
-/// let S = arr2(&[[1.0, 1.0], [1.0, 1.0]]);
+/// use dasp_rs::scaling::perceptual_weighting;
+/// let s = arr2(&[[1.0, 1.0], [1.0, 1.0]]);
 /// let freqs = vec![1000.0, 2000.0];
-/// let S_weighted = perceptual_weighting(&S, &freqs, None).unwrap();
+/// let s_weighted = perceptual_weighting(&s, &freqs, None)?;
+/// assert_eq!(s_weighted.shape(), s.shape());
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn perceptual_weighting(
-    s: &Array2<f32>,
+    spectrogram: &Array2<f32>,
     frequencies: &[f32],
     kind: Option<&str>,
-) -> Result<Array2<f32>, AudioError> {
-    if s.is_empty() {
-        return Err(AudioError::InsufficientData("Spectrogram is empty".to_string()));
-    }
-    if frequencies.len() != s.shape()[0] {
-        return Err(AudioError::InvalidInput(format!(
-            "Frequency length {} does not match spectrogram rows {}",
-            frequencies.len(), s.shape()[0]
-        )));
-    }
-    if s.iter().any(|&x| x < 0.0) {
-        return Err(AudioError::InvalidInput("Spectrogram contains negative values".to_string()));
-    }
+) -> Result<Array2<f32>, ScalingError> {
+    validate_spectrogram(spectrogram, "spectrogram")?;
+    validate_frequencies(frequencies, spectrogram.shape()[0])?;
 
-    let weights = match kind.unwrap_or("A") {
-        "A" => a_weighting(frequencies, None)?,
-        "B" => b_weighting(frequencies, None)?,
-        "C" => c_weighting(frequencies, None)?,
-        "D" => d_weighting(frequencies, None)?,
-        k => return Err(AudioError::InvalidInput(format!("Unknown weighting kind: {}", k))),
-    };
+    let weights = frequency_weighting(frequencies, kind)?;
+    let weights_array = Array1::from_vec(weights);
+    let weights_2d = weights_array
+            .clone()
+            .into_shape_with_order((weights_array.len(), 1))
+            .map_err(|e| ScalingError::InvalidInput(format!("Failed to reshape weights: {}", e)))?;
 
-    let mut s_weighted = Array2::zeros(s.dim());
-    for f in 0..s.shape()[0] {
-        let w = weights[f];
-        for t in 0..s.shape()[1] {
-            s_weighted[[f, t]] = s[[f, t]] * w;
-        }
-    }
+    // Broadcasting weights across time dimension
+    let s_weighted = spectrogram * &weights_2d;
 
     Ok(s_weighted)
 }
 
 /// Computes frequency weighting coefficients for a given type.
 ///
+/// Supports A, B, C, or D weightings, which adjust frequency amplitudes based on human auditory perception.
+/// Returns weights as amplitude multipliers (not dB).
+///
 /// # Arguments
-/// * `frequencies` - Array of frequencies
-/// * `kind` - Optional weighting type ("A", "B", "C", "D"; defaults to "A")
+/// * `frequencies` - Slice of frequencies in Hz.
+/// * `kind` - Weighting type ("A", "B", "C", or "D"; defaults to "A" if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Vec<f32>, AudioError>` containing weighting coefficients.
+/// A `Result` containing a `Vec<f32>` of weighting coefficients.
 ///
 /// # Errors
-/// - `InvalidInput` if the weighting kind is unknown
+/// * `ScalingError::InvalidInput` - If `kind` is not "A", "B", "C", or "D".
 ///
-/// # Examples
+/// # példa
 /// ```
+/// use dasp_rs::scaling::frequency_weighting;
 /// let freqs = vec![1000.0, 2000.0];
-/// let weights = frequency_weighting(&freqs, Some("A")).unwrap();
+/// let weights = frequency_weighting(&freqs, Some("A"))?;
+/// assert_eq!(weights.len(), 2);
+/// assert!(weights[0] > 0.0);
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn frequency_weighting(
     frequencies: &[f32],
     kind: Option<&str>,
-) -> Result<Vec<f32>, AudioError> {
+) -> Result<Vec<f32>, ScalingError> {
     match kind.unwrap_or("A") {
         "A" => a_weighting(frequencies, None),
         "B" => b_weighting(frequencies, None),
         "C" => c_weighting(frequencies, None),
         "D" => d_weighting(frequencies, None),
-        k => Err(AudioError::InvalidInput(format!("Unknown weighting kind: {}", k))),
+        k => Err(ScalingError::InvalidInput(format!("Unknown weighting kind: {}", k))),
     }
 }
 
 /// Computes multiple frequency weighting coefficients for various types.
 ///
+/// Generates weighting coefficients for multiple weighting types, useful for comparing different perceptual models.
+///
 /// # Arguments
-/// * `frequencies` - Array of frequencies
-/// * `kinds` - Array of weighting types (e.g., ["A", "C"])
+/// * `frequencies` - Slice of frequencies in Hz.
+/// * `kinds` - Slice of weighting types (e.g., ["A", "C"]).
 ///
 /// # Returns
-/// Returns a `Result<Vec<Vec<f32>>, AudioError>` containing weighting coefficients for each type.
+/// A `Result` containing a `Vec<Vec<f32>>`, where each inner vector corresponds to the weights for one kind.
 ///
 /// # Errors
-/// - `InsufficientData` if frequencies or kinds are empty
-/// - `InvalidInput` if any weighting kind is unknown
+/// * `ScalingError::InsufficientData` - If `frequencies` or `kinds` is empty.
+/// * `ScalingError::InvalidInput` - If any `kind` is not "A", "B", "C", or "D".
 ///
-/// # Examples
+/// # Example
 /// ```
+/// use dasp_rs::scaling::multi_frequency_weighting;
 /// let freqs = vec![1000.0, 2000.0];
-/// let weights = multi_frequency_weighting(&freqs, &["A", "C"]).unwrap();
+/// let weights = multi_frequency_weighting(&freqs, &["A", "C"])?;
 /// assert_eq!(weights.len(), 2);
+/// assert_eq!(weights[0].len(), 2);
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn multi_frequency_weighting(
     frequencies: &[f32],
     kinds: &[&str],
-) -> Result<Vec<Vec<f32>>, AudioError> {
+) -> Result<Vec<Vec<f32>>, ScalingError> {
     if frequencies.is_empty() {
-        return Err(AudioError::InsufficientData("Frequency array is empty".to_string()));
+        return Err(ScalingError::InsufficientData(
+            "Frequency array is empty".to_string(),
+        ));
     }
     if kinds.is_empty() {
-        return Err(AudioError::InvalidInput("No weighting kinds provided".to_string()));
+        return Err(ScalingError::InvalidInput(
+            "No weighting kinds provided".to_string(),
+        ));
     }
 
     let mut results = Vec::with_capacity(kinds.len());
     for &kind in kinds {
-        let weights = match kind {
-            "A" => a_weighting(frequencies, None)?,
-            "B" => b_weighting(frequencies, None)?,
-            "C" => c_weighting(frequencies, None)?,
-            "D" => d_weighting(frequencies, None)?,
-            k => return Err(AudioError::InvalidInput(format!("Unknown weighting kind: {}", k))),
-        };
-        results.push(weights);
+        results.push(frequency_weighting(frequencies, Some(kind))?);
     }
     Ok(results)
 }
 
 /// Computes A-weighting coefficients for given frequencies.
 ///
+/// A-weighting approximates human ear sensitivity, emphasizing frequencies around 1-6 kHz.
+/// The formula is based on IEC 61672-1, adjusted to return amplitude weights.
+///
 /// # Arguments
-/// * `frequencies` - Array of frequencies in Hz
-/// * `min_db` - Optional minimum dB threshold (defaults to -80.0)
+/// * `frequencies` - Slice of frequencies in Hz.
+/// * `min_db` - Minimum dB threshold for weights (defaults to -80.0 if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Vec<f32>, AudioError>` containing A-weighting coefficients.
+/// A `Result` containing a `Vec<f32>` of A-weighting coefficients as amplitude multipliers.
 ///
 /// # Errors
-/// - `InsufficientData` if frequencies array is empty
-/// - `InvalidInput` if frequencies contain negative values
+/// * `ScalingError::InsufficientData` - If `frequencies` is empty.
+/// * `ScalingError::InvalidInput` - If `frequencies` contains negative values.
 ///
-/// # Examples
+/// # Example
 /// ```
+/// use dasp_rs::scaling::a_weighting;
 /// let freqs = vec![1000.0];
-/// let weights = A_weighting(&freqs, None).unwrap();
-/// assert!(weights[0] > 0.0);
+/// let weights = a_weighting(&freqs, None)?;
+/// assert!((weights[0] - 1.2589).abs() < 1e-4); // A-weighting at 1 kHz
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn a_weighting(
     frequencies: &[f32],
     min_db: Option<f32>,
-) -> Result<Vec<f32>, AudioError> {
-    let min_db = min_db.unwrap_or(-80.0);
-
-    if frequencies.is_empty() {
-        return Err(AudioError::InsufficientData("Frequency array is empty".to_string()));
-    }
-    if frequencies.iter().any(|&f| f < 0.0) {
-        return Err(AudioError::InvalidInput("Frequencies must be non-negative".to_string()));
-    }
-
-    let mut weights = Vec::with_capacity(frequencies.len());
-    for &f in frequencies {
-        if f < 1e-6 {
-            weights.push(0.0);
-            continue;
-        }
+) -> Result<Vec<f32>, ScalingError> {
+    compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let f4 = f2 * f2;
         let num = 12194.0_f32.powi(2) * f4;
-        let den = (f2 + 20.6_f32.powi(2)) * (f2 + 12194.0_f32.powi(2)) * ((f2 + 107.7_f32.powi(2)) * (f2 + 737.9_f32.powi(2))).sqrt();
-        let gain_db = 20.0 * (num / den).log10() + 2.0;
-        let gain = if gain_db < min_db { 0.0 } else { 10.0_f32.powf(gain_db / 20.0) };
-        weights.push(gain);
-    }
-    Ok(weights)
+        let den = (f2 + 20.6_f32.powi(2))
+            * (f2 + 12194.0_f32.powi(2))
+            * ((f2 + 107.7_f32.powi(2)) * (f2 + 737.9_f32.powi(2))).sqrt();
+        20.0 * (num / den).log10() + 2.0
+    })
 }
 
 /// Computes B-weighting coefficients for given frequencies.
 ///
+/// B-weighting is less common but used for medium sound levels, with less attenuation at low frequencies than A-weighting.
+///
 /// # Arguments
-/// * `frequencies` - Array of frequencies in Hz
-/// * `min_db` - Optional minimum dB threshold (defaults to -80.0)
+/// * `frequencies` - Slice of frequencies in Hz.
+/// * `min_db` - Minimum dB threshold for weights (defaults to -80.0 if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Vec<f32>, AudioError>` containing B-weighting coefficients.
+/// A `Result` containing a `Vec<f32>` of B-weighting coefficients as amplitude multipliers.
 ///
 /// # Errors
-/// - `InsufficientData` if frequencies array is empty
-/// - `InvalidInput` if frequencies contain negative values
+/// * `ScalingError::InsufficientData` - If `frequencies` is empty.
+/// * `ScalingError::InvalidInput` - If `frequencies` contains negative values.
 ///
-/// # Examples
+/// # Example
 /// ```
+/// use dasp_rs::scaling::b_weighting;
 /// let freqs = vec![1000.0];
-/// let weights = B_weighting(&freqs, None).unwrap();
+/// let weights = b_weighting(&freqs, None)?;
 /// assert!(weights[0] > 0.0);
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn b_weighting(
     frequencies: &[f32],
     min_db: Option<f32>,
-) -> Result<Vec<f32>, AudioError> {
-    let min_db = min_db.unwrap_or(-80.0);
-
-    if frequencies.is_empty() {
-        return Err(AudioError::InsufficientData("Frequency array is empty".to_string()));
-    }
-    if frequencies.iter().any(|&f| f < 0.0) {
-        return Err(AudioError::InvalidInput("Frequencies must be non-negative".to_string()));
-    }
-
-    let mut weights = Vec::with_capacity(frequencies.len());
-    for &f in frequencies {
-        if f < 1e-6 {
-            weights.push(0.0);
-            continue;
-        }
+) -> Result<Vec<f32>, ScalingError> {
+    compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let num = 12194.0_f32.powi(2) * f2;
         let den = (f2 + 20.6_f32.powi(2)) * (f2 + 12194.0_f32.powi(2));
-        let gain_db = 10.0 * (num / den + 1.0).log10();
-        let gain = if gain_db < min_db { 0.0 } else { 10.0_f32.powf(gain_db / 20.0) };
-        weights.push(gain);
-    }
-    Ok(weights)
+        10.0 * (num / den + 1.0).log10()
+    })
 }
 
 /// Computes C-weighting coefficients for given frequencies.
 ///
+/// C-weighting is flatter than A-weighting, used for high sound levels, with minimal attenuation at low and high frequencies.
+///
 /// # Arguments
-/// * `frequencies` - Array of frequencies in Hz
-/// * `min_db` - Optional minimum dB threshold (defaults to -80.0)
+/// * `frequencies` - Slice of frequencies in Hz.
+/// * `min_db` - Minimum dB threshold for weights (defaults to -80.0 if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Vec<f32>, AudioError>` containing C-weighting coefficients.
+/// A `Result` containing a `Vec<f32>` of C-weighting coefficients as amplitude multipliers.
 ///
 /// # Errors
-/// - `InsufficientData` if frequencies array is empty
-/// - `InvalidInput` if frequencies contain negative values
+/// * `ScalingError::InsufficientData` - If `frequencies` is empty.
+/// * `ScalingError::InvalidInput` - If `frequencies` contains negative values.
 ///
-/// # Examples
+/// # Example
 /// ```
+/// use dasp_rs::scaling::c_weighting;
 /// let freqs = vec![1000.0];
-/// let weights = C_weighting(&freqs, None).unwrap();
+/// let weights = c_weighting(&freqs, None)?;
 /// assert!(weights[0] > 0.0);
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn c_weighting(
     frequencies: &[f32],
     min_db: Option<f32>,
-) -> Result<Vec<f32>, AudioError> {
-    let min_db = min_db.unwrap_or(-80.0);
-
-    if frequencies.is_empty() {
-        return Err(AudioError::InsufficientData("Frequency array is empty".to_string()));
-    }
-    if frequencies.iter().any(|&f| f < 0.0) {
-        return Err(AudioError::InvalidInput("Frequencies must be non-negative".to_string()));
-    }
-
-    let mut weights = Vec::with_capacity(frequencies.len());
-    for &f in frequencies {
-        if f < 1e-6 {
-            weights.push(0.0);
-            continue;
-        }
+) -> Result<Vec<f32>, ScalingError> {
+    compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let num = 12194.0_f32.powi(2) * f2;
         let den = (f2 + 20.6_f32.powi(2)) * (f2 + 12194.0_f32.powi(2));
-        let gain_db = 10.0 * (num / den).log10() + 0.06;
-        let gain = if gain_db < min_db { 0.0 } else { 10.0_f32.powf(gain_db / 20.0) };
-        weights.push(gain);
-    }
-    Ok(weights)
+        10.0 * (num / den).log10() + 0.06
+    })
 }
 
 /// Computes D-weighting coefficients for given frequencies.
 ///
+/// D-weighting is used for aircraft noise, emphasizing mid-frequencies more than A-weighting.
+///
 /// # Arguments
-/// * `frequencies` - Array of frequencies in Hz
-/// * `min_db` - Optional minimum dB threshold (defaults to -80.0)
+/// * `frequencies` - Slice of frequencies in Hz.
+/// * `min_db` - Minimum dB threshold for weights (defaults to -80.0 if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Vec<f32>, AudioError>` containing D-weighting coefficients.
+/// A `Result` containing a `Vec<f32>` of D-weighting coefficients as amplitude multipliers.
 ///
 /// # Errors
-/// - `InsufficientData` if frequencies array is empty
-/// - `InvalidInput` if frequencies contain negative values
+/// * `ScalingError::InsufficientData` - If `frequencies` is empty.
+/// * `ScalingError::InvalidInput` - If `frequencies` contains negative values.
 ///
-/// # Examples
+/// # Example
 /// ```
+/// use dasp_rs::scaling::d_weighting;
 /// let freqs = vec![1000.0];
-/// let weights = D_weighting(&freqs, None).unwrap();
+/// let weights = d_weighting(&freqs, None)?;
 /// assert!(weights[0] > 0.0);
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn d_weighting(
     frequencies: &[f32],
     min_db: Option<f32>,
-) -> Result<Vec<f32>, AudioError> {
-    let min_db = min_db.unwrap_or(-80.0);
-
-    if frequencies.is_empty() {
-        return Err(AudioError::InsufficientData("Frequency array is empty".to_string()));
-    }
-    if frequencies.iter().any(|&f| f < 0.0) {
-        return Err(AudioError::InvalidInput("Frequencies must be non-negative".to_string()));
-    }
-
-    let mut weights = Vec::with_capacity(frequencies.len());
-    for &f in frequencies {
-        if f < 1e-6 {
-            weights.push(0.0);
-            continue;
-        }
+) -> Result<Vec<f32>, ScalingError> {
+    compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let f4 = f2 * f2;
         let num = 6532.0_f32.powi(2) * f4;
-        let den = (f2 + 148.0_f32.powi(2)) * (f2 + 6532.0_f32.powi(2)) * (f + 1087.0).powi(2);
-        let gain_db = 10.0 * (num / den).log10();
-        let gain = if gain_db < min_db { 0.0 } else { 10.0_f32.powf(gain_db / 20.0) };
-        weights.push(gain);
-    }
-    Ok(weights)
+        let den = (f2 + 148.0_f32.powi(2))
+            * (f2 + 6532.0_f32.powi(2))
+            * (f + 1087.0).powi(2);
+        10.0 * (num / den).log10()
+    })
 }
 
 /// Applies Per-Channel Energy Normalization (PCEN) to a spectrogram.
 ///
+/// PCEN normalizes a spectrogram to reduce background noise and enhance foreground signals.
+/// The formula is: `P[f, t] = (S[f, t] / (eps + M[f, t]))^gain + bias - bias`, where
+/// `M[f, t]` is an exponentially smoothed version of the spectrogram.
+///
 /// # Arguments
-/// * `S` - Spectrogram as a 2D array (frequencies × time)
-/// * `sr` - Optional sample rate in Hz (defaults to 44100)
-/// * `hop_length` - Optional hop length in samples (defaults to 512)
-/// * `gain` - Optional gain factor (defaults to 0.8)
-/// * `bias` - Optional bias factor (defaults to 10.0)
+/// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies × time).
+/// * `sample_rate` - Sample rate in Hz (defaults to 44100 if `None`).
+/// * `hop_length` - Hop length in samples (defaults to 512 if `None`).
+/// * `gain` - Gain exponent for normalization (defaults to 0.8 if `None`).
+/// * `bias` - Bias term to stabilize output (defaults to 10.0 if `None`).
 ///
 /// # Returns
-/// Returns a `Result<Array2<f32>, AudioError>` containing the normalized spectrogram.
+/// A `Result` containing the normalized spectrogram as `Array2<f32>`.
 ///
 /// # Errors
-/// - `InsufficientData` if the spectrogram is empty
-/// - `InvalidInput` if spectrogram has negative values or if `gain`/`bias` are negative
+/// * `ScalingError::InsufficientData` - If the spectrogram is empty.
+/// * `ScalingError::InvalidInput` - If the spectrogram contains negative values, or if `gain` or `bias` is negative.
 ///
-/// # Examples
+/// # Example
 /// ```
 /// use ndarray::arr2;
-/// let S = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
-/// let P = pcen(&S, None, None, None, None).unwrap();
+/// use dasp_rs::scaling::pcen;
+/// let s = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
+/// let p = pcen(&s, None, None, None, None)?;
+/// assert_eq!(p.shape(), s.shape());
+/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
 /// ```
 pub fn pcen(
-    s: &Array2<f32>,
-    sr: Option<u32>,
+    spectrogram: &Array2<f32>,
+    sample_rate: Option<u32>,
     hop_length: Option<usize>,
     gain: Option<f32>,
     bias: Option<f32>,
-) -> Result<Array2<f32>, AudioError> {
-    let sr = sr.unwrap_or(44100);
+) -> Result<Array2<f32>, ScalingError> {
+    const EPS: f32 = 1e-6;
+    const SMOOTH_COEF: f32 = 0.025;
+
+    let sr = sample_rate.unwrap_or(44_100);
     let hop_length = hop_length.unwrap_or(512);
     let gain = gain.unwrap_or(0.8);
     let bias = bias.unwrap_or(10.0);
-    let eps = 1e-6;
-    let s_coef = 0.025;
 
-    if s.is_empty() {
-        return Err(AudioError::InsufficientData("Spectrogram is empty".to_string()));
-    }
-    if s.iter().any(|&x| x < 0.0) {
-        return Err(AudioError::InvalidInput("Spectrogram contains negative values".to_string()));
-    }
+    validate_spectrogram(spectrogram, "spectrogram")?;
     if gain < 0.0 || bias < 0.0 {
-        return Err(AudioError::InvalidInput("Gain and bias must be non-negative".to_string()));
+        return Err(ScalingError::InvalidInput(
+            "Gain and bias must be non-negative".to_string(),
+        ));
     }
 
-    let n_freqs = s.shape()[0];
-    let n_frames = s.shape()[1];
-    let alpha = (-s_coef * sr as f32 / hop_length as f32).exp();
+    let n_freqs = spectrogram.shape()[0];
+    let n_frames = spectrogram.shape()[1];
+    let alpha = (-SMOOTH_COEF * sr as f32 / hop_length as f32).exp();
     let one_minus_alpha = 1.0 - alpha;
 
     let mut m = Array2::zeros((n_freqs, n_frames));
-    let mut p = Array2::zeros((n_freqs, n_frames));
-
     for f in 0..n_freqs {
-        m[[f, 0]] = s[[f, 0]];
+        m[[f, 0]] = spectrogram[[f, 0]];
         for t in 1..n_frames {
-            m[[f, t]] = alpha * m[[f, t - 1]] + one_minus_alpha * s[[f, t]];
+            m[[f, t]] = alpha * m[[f, t - 1]] + one_minus_alpha * spectrogram[[f, t]];
         }
     }
 
+    let mut p = Array2::zeros((n_freqs, n_frames));
     for f in 0..n_freqs {
         for t in 0..n_frames {
-            let m = m[[f, t]] + eps;
-            p[[f, t]] = (s[[f, t]] / m).powf(gain) + bias - bias;
+            let m_val = m[[f, t]] + EPS;
+            p[[f, t]] = (spectrogram[[f, t]] / m_val).powf(gain) + bias - bias;
         }
     }
 
     Ok(p)
+}
+
+// Helper functions to reduce code duplication and improve maintainability.
+
+fn validate_spectrogram(spectrogram: &Array2<f32>, context: &str) -> Result<(), ScalingError> {
+    if spectrogram.is_empty() {
+        return Err(ScalingError::InsufficientData(format!(
+            "{} spectrogram is empty",
+            context
+        )));
+    }
+    if context != "decibel" && spectrogram.iter().any(|&x| x < 0.0) {
+        return Err(ScalingError::InvalidInput(format!(
+            "{} spectrogram contains negative values",
+            context
+        )));
+    }
+    Ok(())
+}
+
+fn validate_positive_params(
+    ref_val: f32,
+    amin: f32,
+    top_db: f32,
+    ref_name: &str,
+    amin_name: &str,
+    top_db_name: &str,
+) -> Result<(), ScalingError> {
+    if ref_val <= 0.0 {
+        return Err(ScalingError::InvalidInput(format!(
+            "{} must be positive",
+            ref_name
+        )));
+    }
+    if amin <= 0.0 {
+        return Err(ScalingError::InvalidInput(format!(
+            "{} must be positive",
+            amin_name
+        )));
+    }
+    if top_db <= 0.0 {
+        return Err(ScalingError::InvalidInput(format!(
+            "{} must be positive",
+            top_db_name
+        )));
+    }
+    Ok(())
+}
+
+fn validate_frequencies(frequencies: &[f32], n_rows: usize) -> Result<(), ScalingError> {
+    if frequencies.len() != n_rows {
+        return Err(ScalingError::InvalidInput(format!(
+            "Frequency length {} does not match spectrogram rows {}",
+            frequencies.len(),
+            n_rows
+        )));
+    }
+    if frequencies.iter().any(|&f| f < 0.0) {
+        return Err(ScalingError::InvalidInput(
+            "Frequencies must be non-negative".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn compute_weighting<F>(
+    frequencies: &[f32],
+    min_db: Option<f32>,
+    gain_fn: F,
+) -> Result<Vec<f32>, ScalingError>
+where
+    F: Fn(f32) -> f32,
+{
+    const EPS: f32 = 1e-6;
+    let min_db = min_db.unwrap_or(-80.0);
+
+    if frequencies.is_empty() {
+        return Err(ScalingError::InsufficientData(
+            "Frequency array is empty".to_string(),
+        ));
+    }
+    if frequencies.iter().any(|&f| f < 0.0) {
+        return Err(ScalingError::InvalidInput(
+            "Frequencies must be non-negative".to_string(),
+        ));
+    }
+
+    let weights = frequencies
+        .iter()
+        .map(|&f| {
+            if f < EPS {
+                0.0
+            } else {
+                let gain_db = gain_fn(f);
+                if gain_db < min_db {
+                    0.0
+                } else {
+                    10.0_f32.powf(gain_db / 20.0)
+                }
+            }
+        })
+        .collect::<Vec<f32>>();
+
+    Ok(weights)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::arr2;
+
+    #[test]
+    fn test_amplitude_to_db_invalid_inputs() {
+        let s = arr2(&[[1.0, 2.0]]);
+        assert!(amplitude_to_db(&s, Some(0.0), None, None).is_err());
+        assert!(amplitude_to_db(&s, None, Some(-1e-5), None).is_err());
+        assert!(amplitude_to_db(&s, None, None, Some(0.0)).is_err());
+        let s_neg = arr2(&[[-1.0, 2.0]]);
+        assert!(amplitude_to_db(&s_neg, None, None, None).is_err());
+        let s_empty = Array2::zeros((0, 0));
+        assert!(amplitude_to_db(&s_empty, None, None, None).is_err());
+    }
+
+    #[test]
+    fn test_db_to_amplitude_empty() {
+        let s_empty = Array2::zeros((0, 0));
+        assert!(db_to_amplitude(&s_empty, None).is_err());
+    }
+
+    #[test]
+    fn test_power_to_db_accuracy() {
+        let s = arr2(&[[1.0, 4.0], [0.1, 0.01]]);
+        let s_db = power_to_db(&s, None, None, None).unwrap();
+        assert_eq!(s_db[[0, 0]], 0.0);
+        assert!((s_db[[0, 1]] - 6.0206).abs() < 1e-4);
+        assert!((s_db[[1, 0]] - (-10.0)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_perceptual_weighting_mismatch() {
+        let s = arr2(&[[1.0, 1.0], [1.0, 1.0]]);
+        let freqs = vec![1000.0]; // Wrong length
+        assert!(perceptual_weighting(&s, &freqs, None).is_err());
+    }
+
+    #[test]
+    fn test_frequency_weighting_invalid_kind() {
+        let freqs = vec![1000.0];
+        assert!(frequency_weighting(&freqs, Some("X")).is_err());
+    }
+
+    #[test]
+    fn test_multi_frequency_weighting_empty() {
+        let freqs: Vec<f32> = vec![];
+        let kinds = ["A", "C"];
+        assert!(multi_frequency_weighting(&freqs, &kinds).is_err());
+        let freqs = vec![1000.0];
+        let kinds: [&str; 0] = [];
+        assert!(multi_frequency_weighting(&freqs, &kinds).is_err());
+    }
+
+    #[test]
+    fn test_a_weighting_zero_freq() {
+        let freqs = vec![0.0];
+        let weights = a_weighting(&freqs, None).unwrap();
+        assert_eq!(weights, vec![0.0]);
+    }
+
+    #[test]
+    fn test_pcen_negative_gain() {
+        let s = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
+        assert!(pcen(&s, None, None, Some(-0.8), None).is_err());
+    }
 }

@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::io::Cursor;
 
-use crate::{core::AudioData, AudioError};
+use crate::{core::AudioData, core::AudioError};
 use hound::WavReader;
 use ndarray::Array2;
 
@@ -302,4 +302,83 @@ pub fn get_samplerate<P: AsRef<Path>>(path: P) -> Result<u32, AudioError> {
     let wav_data = std::fs::read(&path)?;
     let reader = WavReader::new(Cursor::new(wav_data))?;
     Ok(reader.spec().sample_rate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hound::{SampleFormat, WavSpec, WavWriter};
+    use tempfile::NamedTempFile;
+
+    fn write_test_wav(samples: &[f32], sample_rate: u32) -> NamedTempFile {
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate,
+            bits_per_sample: 32,
+            sample_format: SampleFormat::Float,
+        };
+        let mut file = NamedTempFile::new().expect("temp wav");
+        let mut writer =
+            WavWriter::new(std::io::BufWriter::new(file.reopen().unwrap()), spec).unwrap();
+        for &s in samples {
+            writer.write_sample(s).unwrap();
+        }
+        writer.finalize().unwrap();
+        file
+    }
+
+    #[test]
+    fn duration_and_frame_conversions_round_trip() {
+        let audio = AudioData {
+            samples: vec![0.0; 4410],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        assert!((get_duration(&audio) - 0.1).abs() < 1e-6);
+
+        let frames = vec![0, 1, 2, 3];
+        let samples = frames_to_samples(&frames, Some(512), None);
+        assert_eq!(samples, vec![0, 512, 1024, 1536]);
+        assert_eq!(samples_to_frames(&samples, Some(512)), frames);
+
+        let times = frames_to_time(&frames, Some(44100), Some(512));
+        let frames_back = time_to_frames(&times, Some(44100), Some(512), None);
+        assert_eq!(frames_back, frames);
+    }
+
+    #[test]
+    fn block_and_time_mappings_align() {
+        let blocks = vec![0, 1, 2];
+        let frames = blocks_to_frames(&blocks, 4);
+        assert_eq!(frames, vec![0, 4, 8]);
+
+        let samples = blocks_to_samples(&blocks, 4, Some(256));
+        assert_eq!(samples, vec![0, 1024, 2048]);
+        assert_eq!(blocks_to_time(&blocks, 4, Some(256), Some(44100))[1], 1024.0 / 44100.0);
+    }
+
+    #[test]
+    fn samples_and_times_like_match_dimensions() {
+        let matrix = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
+        assert_eq!(samples_like(&matrix, Some(256), None, None), vec![0, 256, 512]);
+        let times = times_like(&matrix, Some(48000), Some(480), None, None);
+        let expected = vec![0.0, 480.0 / 48000.0, 960.0 / 48000.0];
+        for (actual, exp) in times.iter().zip(expected) {
+            assert!((actual - exp).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn samplerate_reads_from_wav_header() {
+        let file = write_test_wav(&[0.0, 0.0], 22_050);
+        let sr = get_samplerate(file.path()).unwrap();
+        assert_eq!(sr, 22_050);
+    }
+
+    #[test]
+    fn duration_from_path_uses_loader() {
+        let file = write_test_wav(&[0.0; 44100], 44_100);
+        let duration = get_duration_from_path(file.path()).unwrap();
+        assert!((duration - 1.0).abs() < 1e-6);
+    }
 }

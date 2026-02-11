@@ -401,3 +401,74 @@ pub fn plimit_intervals(primes: &[usize]) -> Vec<f32> {
     intervals.retain(|&x| (1.0..=2.0).contains(&x));
     intervals
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx_eq(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn key_and_degrees_cover_major_minor() {
+        let notes = key_to_notes("C:maj", None, None);
+        assert_eq!(notes[0], "C");
+
+        let c_major = key_to_degrees("C:maj");
+        assert_eq!(c_major, vec![0, 2, 4, 5, 7, 9, 11]);
+
+        let f_sharp_minor = key_to_degrees("F#:min");
+        assert!(f_sharp_minor.contains(&6));
+        assert!(f_sharp_minor.contains(&1));
+    }
+
+    #[test]
+    fn mela_and_thaat_mappings_return_expected_sizes() {
+        let svaras = mela_to_svara(29, Some(true), Some(false));
+        assert_eq!(svaras, vec!["S", "R2", "G3", "M1", "P", "D2", "N3"]);
+
+        let degrees = mela_to_degrees(1);
+        assert_eq!(degrees, vec![0, 1, 2, 5, 7, 8, 10]);
+
+        let thaats = list_thaat();
+        assert_eq!(thaats.len(), 10);
+        assert!(thaats.contains(&"Bilaval".to_string()));
+    }
+
+    #[test]
+    fn fifths_and_intervals_generate_consistent_values() {
+        let fifth = fifths_to_note("C", 1, None);
+        assert_eq!(fifth, "G");
+        let unicode = fifths_to_note("C", 7, Some(true));
+        assert!(unicode.starts_with("F"));
+
+        let fjs = interval_to_fjs(1.5, None);
+        assert_eq!(fjs, "3/2");
+        let approx = interval_to_fjs(1.333, None);
+        assert!(approx.starts_with("1.33"));
+    }
+
+    #[test]
+    fn interval_generators_produce_sorted_ranges() {
+        let freqs = interval_frequencies(3, 100.0, &[1.5, 4.0 / 3.0]);
+        assert!(approx_eq(freqs[0], 100.0));
+        assert!(freqs[1] > freqs[0]);
+
+        let pyth = pythagorean_intervals(Some(5));
+        assert_eq!(pyth.first().copied().unwrap(), 1.0);
+        assert!(pyth.windows(2).all(|w| w[0] <= w[1]));
+
+        let plimit = plimit_intervals(&[2, 3]);
+        assert!(plimit.contains(&1.0));
+        assert!(plimit.iter().all(|v| *v >= 1.0 && *v <= 2.0));
+    }
+
+    #[test]
+    fn list_mela_covers_all_entries() {
+        let melas = list_mela();
+        assert_eq!(melas.len(), 72);
+        assert_eq!(melas[0].0, 1);
+        assert!(melas.iter().any(|(_, name)| name == "Mechakalyani"));
+    }
+}
