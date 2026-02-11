@@ -29,7 +29,7 @@ pub enum PhaseRecoveryError {
 ///     .hop_length(256)
 ///     .compute()?;
 /// ```
-pub fn griffinlim(s: &Array2<f32>) -> GriffinLimBuilder {
+pub fn griffinlim(s: &Array2<f32>) -> GriffinLimBuilder<'_> {
     GriffinLimBuilder {
         s,
         n_iter: 32,

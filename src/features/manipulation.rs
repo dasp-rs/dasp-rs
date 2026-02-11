@@ -65,7 +65,7 @@ pub fn stack_memory(
 ///     .hop_length(512)
 ///     .compute()?;
 /// ```
-pub fn temporal_kurtosis(y: &[f32]) -> TemporalKurtosisBuilder {
+pub fn temporal_kurtosis(y: &[f32]) -> TemporalKurtosisBuilder<'_> {
     TemporalKurtosisBuilder {
         y,
         frame_length: 2048,
@@ -139,7 +139,7 @@ fn temporal_kurtosis_impl(
 ///     .hop_length(512)
 ///     .compute();
 /// ```
-pub fn zero_crossing_rate(y: &[f32]) -> ZeroCrossingRateBuilder {
+pub fn zero_crossing_rate(y: &[f32]) -> ZeroCrossingRateBuilder<'_> {
     ZeroCrossingRateBuilder {
         y,
         frame_length: 2048,

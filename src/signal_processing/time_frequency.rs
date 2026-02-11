@@ -58,7 +58,7 @@ impl<'a> StftBuilder<'a> {
 /// // Or with defaults
 /// let spectrogram = stft(&y).compute()?;
 /// ```
-pub fn stft(y: &[f32]) -> StftBuilder {
+pub fn stft(y: &[f32]) -> StftBuilder<'_> {
     StftBuilder {
         y,
         n_fft: 2048,
@@ -239,7 +239,7 @@ pub fn magphase(d: &Array2<Complex<f32>>, power: Option<f32>) -> (Array2<f32>, A
 ///     .n_fft(2048)
 ///     .compute()?;
 /// ```
-pub fn reassigned_spectrogram(y: &[f32], sr: u32) -> ReassignedSpectrogramBuilder {
+pub fn reassigned_spectrogram(y: &[f32], sr: u32) -> ReassignedSpectrogramBuilder<'_> {
     ReassignedSpectrogramBuilder {
         y,
         sr,
@@ -339,7 +339,7 @@ fn reassigned_spectrogram_impl(
 ///     .fmin(32.70)
 ///     .compute()?;
 /// ```
-pub fn cqt(y: &[f32], sr: u32) -> CqtBuilder {
+pub fn cqt(y: &[f32], sr: u32) -> CqtBuilder<'_> {
     CqtBuilder {
         y,
         sr,

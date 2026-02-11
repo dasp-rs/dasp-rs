@@ -241,7 +241,7 @@ impl<'a> SpectralBuilder<'a> {
 ///     .hop_length(512)
 ///     .compute()?;
 /// ```
-pub fn chroma_stft(y: &[f32], sr: u32) -> ChromaStftBuilder {
+pub fn chroma_stft(y: &[f32], sr: u32) -> ChromaStftBuilder<'_> {
     ChromaStftBuilder {
         y,
         sr,

@@ -46,7 +46,7 @@ impl<'a> TempoBuilder<'a> {
 ///     .hop_length(512)
 ///     .compute()?;
 /// ```
-pub fn tempo(y: &[f32], sr: u32) -> TempoBuilder {
+pub fn tempo(y: &[f32], sr: u32) -> TempoBuilder<'_> {
     TempoBuilder {
         y,
         sr,
