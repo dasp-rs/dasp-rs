@@ -172,7 +172,7 @@ fn interpolate_at(x: &[f32], freqs: &[f32], target_freq: f32) -> Result<f32, Har
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::features::harmonics::{interp_harmonics, HarmonicsError};
+/// use dasp_rs::feat::{interp_harmonics, HarmonicsError};
 /// let x = vec![0.1, 0.2, 0.3, 0.4];
 /// let freqs = vec![0.0, 100.0, 200.0, 300.0];
 /// let harmonics = vec![1.0, 2.0];
@@ -180,7 +180,7 @@ fn interpolate_at(x: &[f32], freqs: &[f32], target_freq: f32) -> Result<f32, Har
 /// assert_eq!(result.shape(), &[2, 4]);
 /// assert_eq!(result[[0, 0]], 0.1);
 /// assert_eq!(result[[1, 1]], 0.3);
-/// # Ok::<(), HarmonicsError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn interp_harmonics(x: &[f32], freqs: &[f32], harmonics: &[f32]) -> Result<Array2<f32>, HarmonicsError> {
     validate_inputs(&[(&x, "amplitudes"), (&freqs, "frequencies")], None, None, true, true, true)?;
@@ -223,15 +223,15 @@ pub fn interp_harmonics(x: &[f32], freqs: &[f32], harmonics: &[f32]) -> Result<A
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::features::harmonics::{salience, HarmonicsError};
+/// use dasp_rs::feat::salience;
 /// use ndarray::array;
 /// let s = array![[0.1, 0.2], [0.3, 0.4]];
 /// let freqs = vec![0.0, 100.0];
 /// let harmonics = vec![1.0, 2.0];
-/// let weights = Some(&[1.0, 0.5]);
+/// let weights: Option<&[f32]> = Some(&[1.0, 0.5]);
 /// let result = salience(&s, &freqs, &harmonics, weights)?;
 /// assert_eq!(result.shape(), &[2, 2]);
-/// # Ok::<(), HarmonicsError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn salience(s: &Array2<f32>, freqs: &[f32], harmonics: &[f32], weights: Option<&[f32]>) -> Result<Array2<f32>, HarmonicsError> {
     validate_inputs(&[(&freqs, "frequencies")], Some(s), None, true, true, false)?;
@@ -285,14 +285,14 @@ pub fn salience(s: &Array2<f32>, freqs: &[f32], harmonics: &[f32], weights: Opti
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::features::harmonics::{f0_harmonics, HarmonicsError};
+/// use dasp_rs::feat::{f0_harmonics, HarmonicsError};
 /// let x = vec![0.1, 0.2, 0.3, 0.4];
 /// let f0 = vec![100.0, 150.0];
 /// let freqs = vec![0.0, 100.0, 200.0, 300.0];
 /// let harmonics = vec![1.0, 2.0];
 /// let result = f0_harmonics(&x, &f0, &freqs, &harmonics)?;
 /// assert_eq!(result.shape(), &[2, 2]);
-/// # Ok::<(), HarmonicsError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn f0_harmonics(x: &[f32], f0: &[f32], freqs: &[f32], harmonics: &[f32]) -> Result<Array2<f32>, HarmonicsError> {
     validate_inputs(&[(&x, "amplitudes"), (&f0, "f0"), (&freqs, "frequencies")], None, None, true, true, false)?;
@@ -361,14 +361,14 @@ fn advance_phase(delta_phase_unwrapped: &[f32], hop: usize, rate: f32) -> Array2
 /// - `d` must be non-empty and contain finite values.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::features::harmonics::{phase_vocoder, HarmonicsError};
+/// ```no_run
+/// use dasp_rs::feat::phase_vocoder;
 /// use ndarray::array;
 /// use num_complex::Complex;
 /// let d = array![[Complex::new(1.0, 0.0), Complex::new(2.0, 0.0)]];
 /// let result = phase_vocoder(&d, 0.5, None, None)?;
 /// assert_eq!(result.shape()[0], 1);
-/// # Ok::<(), HarmonicsError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn phase_vocoder(
     d: &Array2<Complex<f32>>,

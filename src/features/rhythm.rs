@@ -41,10 +41,13 @@ impl<'a> TempoBuilder<'a> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::feat::*;
+/// use dasp_rs::types::*;
 /// let y = vec![1.0, 2.0, 3.0, 4.0];
 /// let bpm = tempo(&y, 44100)
 ///     .hop_length(512)
 ///     .compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn tempo(y: &[f32], sr: u32) -> TempoBuilder<'_> {
     TempoBuilder {
@@ -85,11 +88,14 @@ pub enum RhythmError {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::feat::*;
+/// use dasp_rs::types::*;
 /// let y = vec![0.1, 0.2, 0.3, 0.4];
 /// // Clean, ergonomic API
 /// let bpm = tempo(&y, 44100)
 ///     .hop_length(512)
 ///     .compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn tempo_impl(
     y: Option<&[f32]>,
@@ -135,13 +141,11 @@ pub fn tempo_impl(
 /// Panics if `y` is None and `onset_envelope` is None, or if STFT computation fails when `y` is provided.
 ///
 /// # Examples
-/// ```
-/// let y = vec![0.1, 0.2, 0.3, 0.4];
-/// // Clean, ergonomic API
-/// let tgram = tempogram(&y, 44100)
-///     .hop_length(512)
-///     .win_length(384)
-///     .compute()?;
+/// ```no_run
+/// use dasp_rs::feat::tempogram_impl;
+/// let y = vec![0.0; 2048];
+/// let tgram = tempogram_impl(Some(&y), Some(44100), None, Some(512), Some(384))?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn tempogram_impl(
     y: Option<&[f32]>,
@@ -191,18 +195,11 @@ pub fn tempogram_impl(
 /// Panics if `y` is None and `onset_envelope` is None, or if STFT computation fails when `y` is provided.
 ///
 /// # Examples
-/// ```
-/// let y = vec![0.1, 0.2, 0.3, 0.4];
-/// // Using the builder pattern (recommended)
-/// let ratio_tgram = RhythmBuilder::new()
-///     .signal(&y)
-///     .sr(44100)
-///     .hop_length(512)
-///     .ratios(&[2.0, 3.0, 4.0])
-///     .tempogram_ratio()?;
-/// 
-/// // Or using the direct function (legacy)
-/// let ratio_tgram = tempogram_ratio(Some(&y), Some(44100), None, Some(512), Some(&[2.0, 3.0, 4.0]))?;
+/// ```no_run
+/// use dasp_rs::feat::tempogram_ratio_impl;
+/// let y = vec![0.0; 2048];
+/// let ratio_tgram = tempogram_ratio_impl(Some(&y), Some(44100), None, Some(512), Some(&[2.0, 3.0, 4.0]))?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn tempogram_ratio_impl(
     y: Option<&[f32]>,

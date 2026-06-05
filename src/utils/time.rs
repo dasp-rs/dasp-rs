@@ -15,7 +15,9 @@ use ndarray::Array2;
 ///
 /// # Examples
 /// ```
-/// let audio = AudioData { samples: vec![0.0; 44100], sample_rate: 44100 };
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
+/// let audio = AudioData { samples: vec![0.0; 44100], sample_rate: 44100, channels: 1 };
 /// let duration = get_duration(&audio);
 /// assert_eq!(duration, 1.0); // 1 second
 /// ```
@@ -35,7 +37,9 @@ pub fn get_duration(audio: &AudioData) -> f32 {
 /// Returns `AudioError` if the audio file cannot be loaded.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let duration = get_duration_from_path("test.wav");
 /// // Assuming test.wav is 2 seconds long at 44100 Hz
 /// assert!(duration.is_ok_and(|d| d == 2.0));
@@ -57,6 +61,8 @@ pub fn get_duration_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<f32,
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let frames = vec![0, 1, 2];
 /// let samples = frames_to_samples(&frames, None, None);
 /// assert_eq!(samples, vec![0, 512, 1024]);
@@ -78,6 +84,8 @@ pub fn frames_to_samples(frames: &[usize], hop_length: Option<usize>, _n_fft: Op
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let frames = vec![0, 1, 2];
 /// let times = frames_to_time(&frames, None, None);
 /// assert_eq!(times, vec![0.0, 0.011609977, 0.023219954]); // Approx at 44100 Hz, hop 512
@@ -99,6 +107,8 @@ pub fn frames_to_time(frames: &[usize], sr: Option<u32>, hop_length: Option<usiz
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let samples = vec![0, 512, 1024];
 /// let frames = samples_to_frames(&samples, None);
 /// assert_eq!(frames, vec![0, 1, 2]);
@@ -119,6 +129,8 @@ pub fn samples_to_frames(samples: &[usize], hop_length: Option<usize>) -> Vec<us
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let samples = vec![0, 44100];
 /// let times = samples_to_time(&samples, None);
 /// assert_eq!(times, vec![0.0, 1.0]);
@@ -141,6 +153,8 @@ pub fn samples_to_time(samples: &[usize], sr: Option<u32>) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let times = vec![0.0, 0.011609977];
 /// let frames = time_to_frames(&times, None, None, None);
 /// assert_eq!(frames, vec![0, 1]);
@@ -162,6 +176,8 @@ pub fn time_to_frames(times: &[f32], sr: Option<u32>, hop_length: Option<usize>,
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let times = vec![0.0, 1.0];
 /// let samples = time_to_samples(&times, None);
 /// assert_eq!(samples, vec![0, 44100]);
@@ -182,6 +198,8 @@ pub fn time_to_samples(times: &[f32], sr: Option<u32>) -> Vec<usize> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let blocks = vec![0, 1, 2];
 /// let frames = blocks_to_frames(&blocks, 10);
 /// assert_eq!(frames, vec![0, 10, 20]);
@@ -202,6 +220,8 @@ pub fn blocks_to_frames(blocks: &[usize], block_length: usize) -> Vec<usize> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let blocks = vec![0, 1];
 /// let samples = blocks_to_samples(&blocks, 2, None);
 /// assert_eq!(samples, vec![0, 1024]); // 2 frames * 512 hop
@@ -224,6 +244,8 @@ pub fn blocks_to_samples(blocks: &[usize], block_length: usize, hop_length: Opti
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let blocks = vec![0, 1];
 /// let times = blocks_to_time(&blocks, 2, None, None);
 /// assert_eq!(times, vec![0.0, 0.023219954]); // 2 frames * 512 hop / 44100 Hz
@@ -247,6 +269,8 @@ pub fn blocks_to_time(blocks: &[usize], block_length: usize, hop_length: Option<
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// use ndarray::arr2;
 /// let X = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
 /// let samples = samples_like(&X, None, None, None);
@@ -271,6 +295,8 @@ pub fn samples_like(x: &Array2<f32>, hop_length: Option<usize>, _n_fft: Option<u
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// use ndarray::arr2;
 /// let X = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
 /// let times = times_like(&X, None, None, None, None);
@@ -294,9 +320,12 @@ pub fn times_like(x: &Array2<f32>, sr: Option<u32>, hop_length: Option<usize>, _
 /// - `Err(AudioError)`: I/O or format error.
 /// 
 /// # Example
-/// ```
+/// ```no_run
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let rate = get_samplerate("audio.wav")?;
 /// assert_eq!(rate, 44100);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn get_samplerate<P: AsRef<Path>>(path: P) -> Result<u32, AudioError> {
     let wav_data = std::fs::read(&path)?;

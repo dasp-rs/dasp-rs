@@ -43,9 +43,9 @@ pub enum TimeDomainError {
 /// * `TimeDomainError::InvalidTime` - If `delay_seconds` is negative.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::time_domain::delay;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::proc::delay;
 /// let signal = AudioData { samples: vec![1.0, 2.0, 3.0], sample_rate: 3, channels: 1 };
 /// let delayed = delay(&signal, 1.0, true).unwrap(); // 1s = 3 samples
 /// assert_eq!(delayed.samples, vec![0.0, 0.0, 1.0]);
@@ -103,8 +103,8 @@ pub fn delay(
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::time_domain::time_reversal;
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::proc::time_reversal;
 /// let signal = AudioData { samples: vec![1.0, 2.0, 3.0], sample_rate: 44100, channels: 1 };
 /// let reversed = time_reversal(&signal).unwrap();
 /// assert_eq!(reversed.samples, vec![3.0, 2.0, 1.0]);
@@ -144,8 +144,8 @@ pub fn time_reversal(signal: &AudioData) -> Result<AudioData, TimeDomainError> {
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::time_domain::time_crop;
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::proc::time_crop;
 /// let signal = AudioData { samples: vec![1.0, 2.0, 3.0, 4.0], sample_rate: 2, channels: 1 };
 /// let cropped = time_crop(&signal, 0.5, 1.0).unwrap(); // 0.5s = 1 sample, 1s = 2 samples
 /// assert_eq!(cropped.samples, vec![2.0, 3.0]);
@@ -202,8 +202,8 @@ pub fn time_crop(
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::time_domain::zero_padding;
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::proc::zero_padding;
 /// let signal = AudioData { samples: vec![1.0, 2.0], sample_rate: 2, channels: 1 };
 /// let padded = zero_padding(&signal, 0.5, 1.0).unwrap(); // 0.5s = 1 sample, 1s = 2 samples
 /// assert_eq!(padded.samples, vec![0.0, 1.0, 2.0, 0.0, 0.0]);
@@ -252,8 +252,8 @@ pub fn zero_padding(
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::time_domain::autocorrelate;
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::proc::autocorrelate;
 /// let signal = AudioData { samples: vec![1.0, 2.0, 3.0], sample_rate: 44100, channels: 1 };
 /// let autocorr = autocorrelate(&signal, Some(2)).unwrap();
 /// assert_eq!(autocorr, vec![14.0, 8.0]); // [1*1 + 2*2 + 3*3, 1*2 + 2*3]
@@ -306,8 +306,8 @@ pub fn autocorrelate(
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::time_domain::lpc;
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::proc::lpc;
 /// let signal = AudioData { samples: vec![1.0, 2.0, 3.0, 4.0], sample_rate: 44100, channels: 1 };
 /// let coeffs = lpc(&signal, 2).unwrap();
 /// assert_eq!(coeffs.len(), 3); // Includes leading 1.0
@@ -359,9 +359,9 @@ pub fn lpc(signal: &AudioData, order: usize) -> Result<Vec<f32>, TimeDomainError
 /// * `TimeDomainError::InvalidLength` - If the signal is empty.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::time_domain::zero_crossings;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::proc::zero_crossings;
 /// let signal = AudioData { samples: vec![1.0, -1.0, 2.0, -2.0], sample_rate: 44100, channels: 1 };
 /// let crossings = zero_crossings(&signal, None, None).unwrap();
 /// assert_eq!(crossings, vec![1, 3]);
@@ -393,14 +393,14 @@ pub fn zero_crossings(
     Ok(crossings)
 }
 
-/// Applies μ-law compression to a signal.
+/// Applies Î¼-law compression to a signal.
 ///
-/// This function compresses the dynamic range of the signal using the μ-law algorithm,
+/// This function compresses the dynamic range of the signal using the Î¼-law algorithm,
 /// often used in telephony to improve signal-to-noise ratio.
 ///
 /// # Arguments
 /// * `signal` - The input audio signal to compress.
-/// * `mu` - Optional μ-law parameter (defaults to 255.0 if None).
+/// * `mu` - Optional Î¼-law parameter (defaults to 255.0 if None).
 /// * `quantize` - Optional flag to quantize the output to 8-bit levels (defaults to false).
 ///
 /// # Returns
@@ -412,8 +412,8 @@ pub fn zero_crossings(
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::time_domain::mu_compress;
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::proc::mu_compress;
 /// let signal = AudioData { samples: vec![0.5, -0.5], sample_rate: 44100, channels: 1 };
 /// let compressed = mu_compress(&signal, None, None).unwrap();
 /// assert!(compressed[0] > 0.0 && compressed[1] < 0.0);
@@ -432,18 +432,18 @@ pub fn mu_compress(
     let mu_val = mu.unwrap_or(255.0);
     if mu_val <= 0.0 {
         return Err(TimeDomainError::InvalidTime(
-            "μ value must be positive".to_string(),
+            "Î¼ value must be positive".to_string(),
         ));
     }
 
-    // Precompute constant: ln(1 + μ) - used for every sample
+    // Precompute constant: ln(1 + Î¼) - used for every sample
     let ln_one_plus_mu = (1.0 + mu_val).ln();
     let compressed = signal
         .samples
         .iter()
         .map(|&v| {
             let sign = if v >= 0.0 { 1.0 } else { -1.0 };
-            // Standard μ-law compression: sign * ln(1 + μ|x|) / ln(1 + μ)
+            // Standard Î¼-law compression: sign * ln(1 + Î¼|x|) / ln(1 + Î¼)
             let compressed = sign * (1.0 + mu_val * v.abs()).ln() / ln_one_plus_mu;
             if quantize.unwrap_or(false) {
                 (compressed * 255.0).round() / 255.0
@@ -455,13 +455,13 @@ pub fn mu_compress(
     Ok(compressed)
 }
 
-/// Applies μ-law expansion to a compressed signal.
+/// Applies Î¼-law expansion to a compressed signal.
 ///
-/// This function expands a μ-law compressed signal back to its original dynamic range.
+/// This function expands a Î¼-law compressed signal back to its original dynamic range.
 ///
 /// # Arguments
 /// * `signal` - The input compressed audio signal.
-/// * `mu` - Optional μ-law parameter (defaults to 255.0 if None).
+/// * `mu` - Optional Î¼-law parameter (defaults to 255.0 if None).
 /// * `quantize` - Optional flag (unused, included for symmetry with `mu_compress`).
 ///
 /// # Returns
@@ -473,8 +473,8 @@ pub fn mu_compress(
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::time_domain::mu_expand;
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::proc::mu_expand;
 /// let signal = AudioData { samples: vec![0.5, -0.5], sample_rate: 44100, channels: 1 };
 /// let expanded = mu_expand(&signal, None, None).unwrap();
 /// assert!(expanded[0] > 0.0 && expanded[1] < 0.0);
@@ -493,7 +493,7 @@ pub fn mu_expand(
     let mu_val = mu.unwrap_or(255.0);
     if mu_val <= 0.0 {
         return Err(TimeDomainError::InvalidTime(
-            "μ value must be positive".to_string(),
+            "Î¼ value must be positive".to_string(),
         ));
     }
 
@@ -502,7 +502,7 @@ pub fn mu_expand(
         .iter()
         .map(|&v| {
             let sign = if v >= 0.0 { 1.0 } else { -1.0 };
-            // Standard μ-law expansion: sign * ((1 + μ)^|y| - 1) / μ
+            // Standard Î¼-law expansion: sign * ((1 + Î¼)^|y| - 1) / Î¼
             sign * ((1.0 + mu_val).powf(v.abs()) - 1.0) / mu_val
         })
         .collect();
@@ -528,8 +528,8 @@ pub fn mu_expand(
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::time_domain::log_energy;
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::proc::log_energy;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4, 0.5], sample_rate: 44100, channels: 1 };
 /// let energy = log_energy(&signal, Some(2), Some(1)).unwrap();
 /// assert_eq!(energy.len(), 4); // (5 - 2) / 1 + 1

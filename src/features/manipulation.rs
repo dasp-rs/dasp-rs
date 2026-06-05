@@ -21,6 +21,8 @@ pub enum ManipulationError {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::feat::*;
+/// use dasp_rs::types::*;
 /// use ndarray::Array2;
 /// let data = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
 /// let stacked = stack_memory(&data, None, None);
@@ -58,12 +60,15 @@ pub fn stack_memory(
 /// Returns a builder that can be configured with method chaining.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::feat::*;
+/// use dasp_rs::types::*;
 /// let y = vec![0.1, 0.2, 0.3, 0.4, 0.5];
 /// let kurtosis = temporal_kurtosis(&y)
 ///     .frame_length(2048)
 ///     .hop_length(512)
 ///     .compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn temporal_kurtosis(y: &[f32]) -> TemporalKurtosisBuilder<'_> {
     TemporalKurtosisBuilder {
@@ -132,7 +137,9 @@ fn temporal_kurtosis_impl(
 /// Returns a builder that can be configured with method chaining.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::feat::*;
+/// use dasp_rs::types::*;
 /// let y = vec![1.0, -1.0, 2.0, -2.0, 1.0];
 /// let zcr = zero_crossing_rate(&y)
 ///     .frame_length(2048)

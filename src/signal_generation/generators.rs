@@ -26,8 +26,11 @@ pub enum GeneratorError {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::generate::*;
+/// use dasp_rs::types::*;
 /// let times = vec![0.1, 0.2, 0.3];
 /// let signal = clicks(Some(&times), None, None, None)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn clicks(
     times: Option<&[f32]>,
@@ -85,6 +88,8 @@ pub fn clicks(
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::generate::*;
+/// use dasp_rs::types::*;
 /// let tone_signal = tone(440.0, 44100)
 ///     .duration(0.5)
 ///     .phase(0.0)
@@ -149,6 +154,8 @@ fn tone_impl(frequency: f32, sr: u32, duration: f32, phase: f32) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::generate::*;
+/// use dasp_rs::types::*;
 /// let chirp_signal = chirp(200.0, 800.0, 44100)
 ///     .duration(2.0)
 ///     .compute();

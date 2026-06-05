@@ -77,7 +77,7 @@ fn validate_metadata(signal1: &AudioData, signal2: &AudioData) -> Result<(), Sig
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::core::{AudioData, mix_signals};
+/// use dasp_rs::{types::AudioData, ops::mix_signals};
 /// let s1 = AudioData::new(vec![2.0, 4.0], 44100, 1)?;
 /// let s2 = AudioData::new(vec![4.0, 6.0], 44100, 1)?;
 /// let mixed = mix_signals(&[s1, s2])?;
@@ -89,7 +89,7 @@ fn validate_metadata(signal1: &AudioData, signal2: &AudioData) -> Result<(), Sig
 /// let mixed = mix_signals(&[s1, s2])?;
 /// assert_eq!(mixed.samples, vec![1.5, 1.5, 3.0, 3.0]);
 /// assert_eq!(mixed.channels, 2);
-/// # Ok::<(), dasp_rs::core::AudioError>()
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[allow(dead_code)]
 pub fn mix_signals(signals: &[AudioData]) -> Result<AudioData, SignalOpError> {
@@ -156,12 +156,12 @@ pub fn mix_signals(signals: &[AudioData]) -> Result<AudioData, SignalOpError> {
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::core::{AudioData, subtract_signals};
+/// use dasp_rs::{types::AudioData, ops::subtract_signals};
 /// let s1 = AudioData::new(vec![3.0, 5.0], 44100, 1)?;
 /// let s2 = AudioData::new(vec![1.0, 2.0], 44100, 1)?;
 /// let result = subtract_signals(&s1, &s2)?;
 /// assert_eq!(result.samples, vec![2.0, 3.0]);
-/// # Ok::<(), dasp_rs::core::AudioError>()
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[allow(dead_code)]
 pub fn subtract_signals(
@@ -230,12 +230,12 @@ pub fn subtract_signals(
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::core::{AudioData, multiply_signals};
+/// use dasp_rs::{types::AudioData, ops::multiply_signals};
 /// let s1 = AudioData::new(vec![2.0, 3.0], 44100, 1)?;
 /// let s2 = AudioData::new(vec![2.0, 2.0], 44100, 1)?;
 /// let result = multiply_signals(&s1, &s2)?;
 /// assert_eq!(result.samples, vec![4.0, 6.0]);
-/// # Ok::<(), dasp_rs::core::AudioError>()
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[allow(dead_code)]
 pub fn multiply_signals(
@@ -304,12 +304,12 @@ pub fn multiply_signals(
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::core::{AudioData, divide_signals};
+/// use dasp_rs::{types::AudioData, ops::divide_signals};
 /// let s1 = AudioData::new(vec![6.0, 8.0], 44100, 1)?;
 /// let s2 = AudioData::new(vec![2.0, 4.0], 44100, 1)?;
 /// let result = divide_signals(&s1, &s2)?;
 /// assert_eq!(result.samples, vec![3.0, 2.0]);
-/// # Ok::<(), dasp_rs::core::AudioError>()
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[allow(dead_code)]
 pub fn divide_signals(
@@ -379,7 +379,7 @@ pub enum ScalarOp {
 /// Applies a scalar operation to an audio signal in parallel.
 ///
 /// Performs element-wise addition, subtraction, multiplication, or division between
-/// a signal’s samples and a scalar value, producing a new `AudioData`. Division by zero
+/// a signalÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢s samples and a scalar value, producing a new `AudioData`. Division by zero
 /// is explicitly rejected.
 ///
 /// # Parameters
@@ -393,7 +393,7 @@ pub enum ScalarOp {
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::core::{AudioData, scalar_operation, ScalarOp};
+/// use dasp_rs::{types::AudioData, ops::{scalar_operation, ScalarOp}};
 /// let s = AudioData::new(vec![2.0, 3.0], 44100, 1)?;
 /// let result = scalar_operation(&s, 2.0, ScalarOp::Multiply)?;
 /// assert_eq!(result.samples, vec![4.0, 6.0]);
@@ -401,14 +401,14 @@ pub enum ScalarOp {
 /// // Process individual channels
 /// let stereo = AudioData::new(vec![2.0, 1.0, 4.0, 2.0], 44100, 2)?;
 /// let channels = stereo.split_channels()?;
-/// let scaled: Vec<_> = channels.into_iter()
+/// let scaled: Vec<Vec<f32>> = channels.into_iter()
 ///     .map(|ch| {
 ///         let audio = AudioData::new(ch, 44100, 1)?;
-///         scalar_operation(&audio, 2.0, ScalarOp::Multiply)?.samples
+///         Ok(scalar_operation(&audio, 2.0, ScalarOp::Multiply)?.samples)
 ///     })
-///     .collect();
+///     .collect::<Result<_, Box<dyn std::error::Error>>>()?;
 /// assert_eq!(scaled, vec![vec![4.0, 8.0], vec![2.0, 4.0]]);
-/// # Ok::<(), dasp_rs::core::AudioError>()
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[allow(dead_code)]
 pub fn scalar_operation(

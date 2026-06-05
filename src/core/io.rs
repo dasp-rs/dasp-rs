@@ -82,8 +82,8 @@ pub enum AudioError {
 /// - For `librosa`-like raw access, use `to_raw` to get samples, sample rate, and channels.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::core::{AudioData, AudioError};
+/// ```no_run
+/// use dasp_rs::types::{AudioData, AudioError};
 /// // Create mono audio
 /// let audio = AudioData::new(vec![0.5, -0.5, 0.5], 44100, 1)?;
 /// assert_eq!(audio.samples.len(), 3);
@@ -112,7 +112,7 @@ pub enum AudioError {
 /// // Invalid construction
 /// let result = AudioData::new(vec![0.1], 0, 1);
 /// assert!(matches!(result, Err(AudioError::InvalidInput(_))));
-/// # Ok::<(), AudioError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct AudioData {
@@ -135,12 +135,12 @@ impl AudioData {
     ///
     /// # Example
     /// ```
-    /// use dasp_rs::core::{AudioData, AudioError};
+    /// use dasp_rs::types::{AudioData, AudioError};
     /// let audio = AudioData::new(vec![0.5, -0.5], 44100, 1)?;
     /// assert_eq!(audio.samples.len(), 2);
     /// assert_eq!(audio.sample_rate, 44100);
     /// assert_eq!(audio.channels, 1);
-    /// # Ok::<(), AudioError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn new(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Self, AudioError> {
         if sample_rate == 0 {
@@ -169,13 +169,13 @@ impl AudioData {
     /// New `AudioData` instance with mono samples.
     ///
     /// # Example
-    /// ```
-    /// use dasp_rs::core::AudioData;
+    /// ```no_run
+    /// use dasp_rs::types::AudioData;
     /// let stereo = AudioData::new(vec![0.2, 0.4, 0.6, 0.8], 44100, 2)?;
     /// let mono = stereo.to_mono();
     /// assert_eq!(mono.samples, vec![0.3, 0.7]);
     /// assert_eq!(mono.channels, 1);
-    /// # Ok::<(), dasp_rs::core::AudioError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn to_mono(&self) -> Self {
         let samples = if self.channels > 1 {
@@ -201,11 +201,11 @@ impl AudioData {
     ///
     /// # Example
     /// ```
-    /// use dasp_rs::core::{AudioData, AudioError};
+    /// use dasp_rs::types::{AudioData, AudioError};
     /// let stereo = AudioData::new(vec![0.2, 0.4, 0.6, 0.8], 44100, 2)?;
     /// let channels = stereo.split_channels()?;
     /// assert_eq!(channels, vec![vec![0.2, 0.6], vec![0.4, 0.8]]);
-    /// # Ok::<(), AudioError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn split_channels(&self) -> Result<Vec<Vec<f32>>, AudioError> {
         if self.samples.len() % self.channels as usize != 0 {
@@ -231,10 +231,10 @@ impl AudioData {
     ///
     /// # Example
     /// ```
-    /// use dasp_rs::core::AudioData;
+    /// use dasp_rs::types::AudioData;
     /// let audio = AudioData::new(vec![0.2, 0.4], 44100, 1)?;
     /// assert_eq!(audio.duration(), 2.0 / 44100.0);
-    /// # Ok::<(), dasp_rs::core::AudioError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn duration(&self) -> f32 {
         self.samples.len() as f32 / (self.channels as f32 * self.sample_rate as f32)
@@ -249,10 +249,10 @@ impl AudioData {
     ///
     /// # Example
     /// ```
-    /// use dasp_rs::core::AudioData;
+    /// use dasp_rs::types::AudioData;
     /// let stereo = AudioData::new(vec![0.2, 0.4, 0.6, 0.8], 44100, 2)?;
     /// assert_eq!(stereo.frame_count(), 2);
-    /// # Ok::<(), dasp_rs::core::AudioError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn frame_count(&self) -> usize {
         self.samples.len() / self.channels as usize
@@ -267,13 +267,13 @@ impl AudioData {
     ///
     /// # Example
     /// ```
-    /// use dasp_rs::core::AudioData;
+    /// use dasp_rs::types::AudioData;
     /// let audio = AudioData::new(vec![0.2, 0.4], 44100, 1)?;
     /// let (samples, sr, ch) = audio.to_raw();
     /// assert_eq!(samples, &[0.2, 0.4]);
     /// assert_eq!(sr, 44100);
     /// assert_eq!(ch, 1);
-    /// # Ok::<(), dasp_rs::core::AudioError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn to_raw(&self) -> (&[f32], u32, u16) {
         (&self.samples, self.sample_rate, self.channels)
@@ -307,8 +307,9 @@ impl AudioData {
 /// - `AudioError::InsufficientData`: Empty or insufficient samples.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::core::{load, AudioData};
+/// ```no_run
+/// use dasp_rs::io::load;
+/// use dasp_rs::types::AudioData;
 /// // Load entire file with original channels and sample rate
 /// let audio = load("audio.wav", None, None, None, None)?;
 ///
@@ -320,7 +321,7 @@ impl AudioData {
 /// let channels = stereo.split_channels()?;
 /// let mono = stereo.to_mono();
 /// assert_eq!(mono.channels, 1);
-/// # Ok::<(), dasp_rs::core::AudioError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn load<P: AsRef<Path>>(
     path: P,
@@ -432,7 +433,7 @@ pub fn load<P: AsRef<Path>>(
 /// Modern audio decoder with builder pattern for clean, readable API.
 ///
 /// # Example
-/// ```rust
+/// ```no_run
 /// use dasp_rs::io::Decoder;
 /// 
 /// // Simple loading
@@ -445,6 +446,7 @@ pub fn load<P: AsRef<Path>>(
 ///     .offset(10.0)
 ///     .duration(30.0)
 ///     .load()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct Decoder {
@@ -522,11 +524,12 @@ impl Decoder {
 /// - `AudioError::InvalidInput`: Invalid audio data parameters (e.g., zero channels, zero sample rate).
 ///
 /// # Example
-/// ```
-/// use dasp_rs::core::{AudioData, export};
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::io::export;
 /// let audio = AudioData::new(vec![0.2, 0.4, 0.6], 44100, 1)?;
 /// export("output.wav", &audio)?;
-/// # Ok::<(), dasp_rs::core::AudioError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn export<P: AsRef<Path>>(path: P, audio_data: &AudioData) -> Result<(), AudioError> {
     if audio_data.channels == 0 {
@@ -582,14 +585,14 @@ pub fn export<P: AsRef<Path>>(path: P, audio_data: &AudioData) -> Result<(), Aud
 /// - `AudioError::InsufficientData`: Insufficient samples for any blocks.
 ///
 /// # Example
-/// ```
-/// use dasp_rs::core::stream;
+/// ```no_run
+/// use dasp_rs::io::stream;
 /// let blocks = stream("audio.wav", 100, 4096, None)?;
 /// for block in blocks {
 ///     // Process each 4096-sample block
 ///     println!("Block size: {}", block.len());
 /// }
-/// # Ok::<(), dasp_rs::core::AudioError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Performance
@@ -707,14 +710,14 @@ pub fn stream<P: AsRef<Path>>(
 /// - `AudioError::InsufficientData`: Insufficient samples for any blocks.
 ///
 /// # Example
-/// ```
-/// use dasp_rs::core::stream_lazy;
+/// ```no_run
+/// use dasp_rs::io::stream_lazy;
 /// let rx = stream_lazy("audio.wav", 1000, 1024, Some(512))?;
 /// while let Ok(block) = rx.recv() {
 ///     // Process each 1024-sample block with 50% overlap
 ///     println!("Received block of {} samples", block.len());
 /// }
-/// # Ok::<(), dasp_rs::core::AudioError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Performance

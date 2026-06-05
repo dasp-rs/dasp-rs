@@ -34,7 +34,9 @@ pub enum PanningError {
 /// Returns `Result<AudioData, PanningError>` containing the stereo signal or an error.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let signal = AudioData { samples: vec![1.0, 1.0], sample_rate: 44100, channels: 1 };
 /// let panned = stereo_pan(&signal, 0.0)?; // Center
 /// assert_eq!(panned.samples, vec![1.0, 1.0, 1.0, 1.0]); // Left, Right, Left, Right
@@ -42,6 +44,7 @@ pub enum PanningError {
 ///
 /// let panned_left = stereo_pan(&signal, -1.0)?; // Fully left
 /// assert_eq!(panned_left.samples, vec![1.0, 0.0, 1.0, 0.0]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn stereo_pan(signal: &AudioData, pan: f32) -> Result<AudioData, PanningError> {
     if signal.channels != 1 {
@@ -85,12 +88,15 @@ pub fn stereo_pan(signal: &AudioData, pan: f32) -> Result<AudioData, PanningErro
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let signal = AudioData { samples: vec![1.0, 1.0], sample_rate: 44100, channels: 1 };
 /// let panned = multi_channel_pan(&signal, 0.0, 6)?; // Front center for 5.1
 /// assert_eq!(panned.channels, 6);
 /// // Samples: [FL, FR, C, LFE, BL, BR], center emphasized
 /// assert_eq!(panned.samples[2], 1.0); // Center channel full
 /// assert_eq!(panned.samples[3], 0.0); // LFE off
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn multi_channel_pan(
     signal: &AudioData,

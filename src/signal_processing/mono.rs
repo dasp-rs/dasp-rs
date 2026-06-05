@@ -15,6 +15,8 @@
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let stereo = vec![0.5, 0.7, 0.3, 0.9]; // [L1, R1, L2, R2]
 /// let mono = to_mono(&stereo, 2);
 /// assert_eq!(mono, vec![0.6, 0.6]); // [(0.5 + 0.7)/2, (0.3 + 0.9)/2]

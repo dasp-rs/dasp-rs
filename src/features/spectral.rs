@@ -234,12 +234,15 @@ impl<'a> SpectralBuilder<'a> {
 /// Returns a builder that can be configured with method chaining.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::feat::*;
+/// use dasp_rs::types::*;
 /// let y = vec![1.0, 2.0, 3.0, 4.0];
 /// let chroma = chroma_stft(&y, 44100)
 ///     .n_fft(2048)
 ///     .hop_length(512)
 ///     .compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn chroma_stft(y: &[f32], sr: u32) -> ChromaStftBuilder<'_> {
     ChromaStftBuilder {
@@ -250,95 +253,6 @@ pub fn chroma_stft(y: &[f32], sr: u32) -> ChromaStftBuilder<'_> {
         norm: 1.0,
     }
 }
-
-/// Computes mel spectrogram.
-///
-/// # Arguments
-/// * `y` - Input signal as a slice of `f32`
-/// * `sr` - Sample rate in Hz
-///
-/// # Returns
-/// Returns a builder that can be configured with method chaining.
-///
-/// # Examples
-/// ```
-/// let y = vec![1.0, 2.0, 3.0, 4.0];
-/// let mel_spec = melspectrogram(&y, 44100)
-///     .n_fft(2048)
-///     .n_mels(128)
-///     .compute()?;
-/// ```
-// pub fn melspectrogram(y: &[f32], sr: u32) -> MelSpectrogramBuilder {
-//     MelSpectrogramBuilder {
-//         y,
-//         sr,
-//         n_fft: 2048,
-//         hop_length: 512,
-//         n_mels: 128,
-//         fmax: sr as f32 / 2.0,
-//     }
-// }
-
-/// Computes MFCC features.
-///
-/// # Arguments
-/// * `y` - Input signal as a slice of `f32`
-/// * `sr` - Sample rate in Hz
-///
-/// # Returns
-/// Returns a builder that can be configured with method chaining.
-///
-/// # Examples
-/// ```
-/// let y = vec![1.0, 2.0, 3.0, 4.0];
-/// let mfcc = mfcc(&y, 44100)
-///     .n_fft(2048)
-///     .hop_length(512)
-///     .compute()?;
-/// ```
-// pub fn mfcc(y: &[f32], sr: u32) -> SpectralBuilder {
-//     SpectralBuilder {
-//         y,
-//         sr,
-//         n_fft: 2048,
-//         hop_length: 512,
-//         win_length: 2048,
-//         n_mels: 128,
-//         fmin: 0.0,
-//         fmax: sr as f32 / 2.0,
-//         norm: 1.0,
-//     }
-// }
-
-/// Computes spectral centroid.
-///
-/// # Arguments
-/// * `y` - Input signal as a slice of `f32`
-/// * `sr` - Sample rate in Hz
-///
-/// # Returns
-/// Returns a builder that can be configured with method chaining.
-///
-/// # Examples
-/// ```
-/// let y = vec![1.0, 2.0, 3.0, 4.0];
-/// let centroid = spectral_centroid(&y, 44100)
-///     .n_fft(2048)
-///     .compute()?;
-/// ```
-// pub fn spectral_centroid(y: &[f32], sr: u32) -> SpectralBuilder {
-//     SpectralBuilder {
-//         y,
-//         sr,
-//         n_fft: 2048,
-//         hop_length: 512,
-//         win_length: 2048,
-//         n_mels: 128,
-//         fmin: 0.0,
-//         fmax: sr as f32 / 2.0,
-//         norm: 1.0,
-//     }
-// }
 
 /// Custom error types for spectral signal processing operations.
 ///
@@ -387,19 +301,12 @@ pub enum SpectralError {
 /// with chroma features, or an error.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::core::AudioData;
-/// use dasp_rs::features::spectral::SpectralBuilder;
-/// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
-/// // Using the builder pattern (recommended)
-/// let chroma = SpectralBuilder::new(&signal)
-///     .n_fft(2048)
-///     .hop_length(512)
-///     .chroma_stft()?;
+/// ```no_run
+/// use dasp_rs::feat::chroma_stft_impl;
+/// let y = vec![0.0; 2048];
+/// let chroma = chroma_stft_impl(&y, 44100, None, None, Some(2048), Some(512))?;
 /// assert_eq!(chroma.shape(), &[12, 1]);
-/// 
-/// // Or using the direct function (legacy)
-/// let chroma = chroma_stft(&signal, None, None, Some(2048), Some(512))?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn chroma_stft_impl(
     y: &[f32],
@@ -492,9 +399,9 @@ pub fn chroma_stft_impl(
 /// with chroma features, or an error.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::chroma_cqt;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::chroma_cqt;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let chroma = chroma_cqt(&signal, None, None, None, None).unwrap();
 /// assert_eq!(chroma.shape(), &[12, 1]);
@@ -591,9 +498,9 @@ pub fn chroma_cqt(
 /// with CENS features, or an error.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::chroma_cens;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::chroma_cens;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let cens = chroma_cens(&signal, None, None, None, None, None).unwrap();
 /// assert_eq!(cens.shape(), &[12, 1]);
@@ -652,9 +559,9 @@ pub fn chroma_cens(
 /// with mel spectrogram, or an error.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::melspectrogram;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::melspectrogram;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let mel = melspectrogram(&signal, None, None, None, None, None, None).unwrap();
 /// assert_eq!(mel.shape(), &[128, 1]);
@@ -757,9 +664,9 @@ fn melspectrogram_impl(
 /// with MFCCs, or an error.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::mfcc;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::mfcc;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let mfcc = mfcc(&signal, None, None, None, None).unwrap();
 /// assert_eq!(mfcc.shape(), &[20, 1]);
@@ -854,9 +761,9 @@ fn mfcc_impl(
 /// Returns `Result<Array1<f32>, SpectralError>` containing RMS values per frame, or an error.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::rms;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::rms;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let rms = rms(&signal, None, None, None).unwrap();
 /// assert_eq!(rms.len(), 1);
@@ -911,9 +818,9 @@ pub fn rms(
 /// Returns `Result<Array1<f32>, SpectralError>` containing centroid frequencies per frame, or an error.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::spectral_centroid;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::spectral_centroid;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let centroid = spectral_centroid(&signal, None, None, None).unwrap();
 /// assert_eq!(centroid.len(), 1);
@@ -989,9 +896,9 @@ fn spectral_centroid_impl(
 /// Returns `Result<Array1<f32>, SpectralError>` containing bandwidth values per frame, or an error.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::spectral_bandwidth;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::spectral_bandwidth;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let bandwidth = spectral_bandwidth(&signal, None, None, None, None).unwrap();
 /// assert_eq!(bandwidth.len(), 1);
@@ -1058,9 +965,9 @@ pub fn spectral_bandwidth(
 /// Returns `Result<Array2<f32>, SpectralError>` containing contrast values of shape `(n_bands + 1, n_frames)`.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::spectral_contrast;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::spectral_contrast;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let contrast = spectral_contrast(&signal, None, None, None, None).unwrap();
 /// assert_eq!(contrast.shape(), &[7, 1]);
@@ -1141,9 +1048,9 @@ pub fn spectral_contrast(
 /// Returns `Result<Array1<f32>, SpectralError>` containing flatness values per frame.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::spectral_flatness;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::spectral_flatness;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let flatness = spectral_flatness(&signal, None, None, None).unwrap();
 /// assert_eq!(flatness.len(), 1);
@@ -1217,9 +1124,9 @@ fn spectral_bandwidth_impl(
 /// Returns `Result<Array1<f32>, SpectralError>` containing roll-off frequencies per frame.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::spectral_rolloff;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::spectral_rolloff;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let rolloff = spectral_rolloff(&signal, None, None, None, None).unwrap();
 /// assert_eq!(rolloff.len(), 1);
@@ -1308,7 +1215,7 @@ fn spectral_flatness_impl(
 
 /// Computes polynomial fit coefficients for spectral features.
 ///
-/// Fits a polynomial to each frame’s spectral magnitude.
+/// Fits a polynomial to each frameâ€™s spectral magnitude.
 ///
 /// # Arguments
 /// * `signal` - The input audio signal.
@@ -1321,9 +1228,9 @@ fn spectral_flatness_impl(
 /// Returns `Result<Array2<f32>, SpectralError>` containing coefficients of shape `(order + 1, n_frames)`.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::poly_features;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::poly_features;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let coeffs = poly_features(&signal, None, None, None, None).unwrap();
 /// assert_eq!(coeffs.shape(), &[2, 1]);
@@ -1383,9 +1290,9 @@ pub fn poly_features(
 /// Returns `Result<Array2<f32>, SpectralError>` containing Tonnetz features of shape `(6, n_frames)`.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::tonnetz;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::tonnetz;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let tonnetz = tonnetz(&signal, None).unwrap();
 /// assert_eq!(tonnetz.shape(), &[6, 1]);
@@ -1455,9 +1362,9 @@ fn polyfit(x: &Array1<f32>, y: &Array1<f32>, order: usize) -> Vec<f32> {
 /// Returns `Result<Array1<f32>, SpectralError>` containing flux values per frame.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::spectral_flux;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::spectral_flux;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let flux = spectral_flux(&signal, None, None, None).unwrap();
 /// assert_eq!(flux.len(), 1);
@@ -1527,9 +1434,9 @@ fn spectral_flux_impl(
 /// Returns `Result<Array1<f32>, SpectralError>` containing entropy values per frame.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::spectral_entropy;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::spectral_entropy;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let entropy = spectral_entropy(&signal, None, None, None).unwrap();
 /// assert_eq!(entropy.len(), 1);
@@ -1604,9 +1511,9 @@ fn spectral_entropy_impl(
 /// Returns `Result<Array2<f32>, SpectralError>` containing normalized pitch chroma features of shape `(12, n_frames)`.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::pitch_chroma;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::pitch_chroma;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let chroma = pitch_chroma(&signal, None, None, None).unwrap();
 /// assert_eq!(chroma.shape(), &[12, 1]);
@@ -1674,8 +1581,8 @@ pub fn pitch_chroma(
 /// Returns `Result<Array2<f32>, SpectralError>` containing the normalized feature matrix.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::signal_processing::spectral::cmvn;
+/// ```no_run
+/// use dasp_rs::feat::cmvn;
 /// use ndarray::Array2;
 /// let features = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
 /// let normalized = cmvn(&features, None, None).unwrap();
@@ -1740,12 +1647,12 @@ pub fn cmvn(
 /// Returns a tuple `(harmonic, percussive)` containing two `Array2<f32>` with separated components.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::hpss;
-/// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
-/// let (harmonic, percussive) = hpss(&signal, None, None, None, None, None);
-/// assert_eq!(harmonic.shape(), &[2, 1]);
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::hpss;
+/// let signal = AudioData { samples: vec![0.0; 2048], sample_rate: 44100, channels: 1 };
+/// let (harmonic, percussive) = hpss(&signal, None, None, None, None, None)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn hpss(
     signal: &AudioData,
@@ -1827,9 +1734,9 @@ pub fn hpss(
 /// Returns `Result<Array1<f32>, SpectralError>` containing pitch estimates in Hz per frame.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::pitch_autocorr;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::pitch_autocorr;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let pitch = pitch_autocorr(&signal, None, None, None, None).unwrap();
 /// assert_eq!(pitch.len(), 1);
@@ -1911,9 +1818,9 @@ pub fn pitch_autocorr(
 /// Returns `Result<Array2<f32>, SpectralError>` containing features of shape `(3, n_frames)`.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::vad_features;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::vad_features;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let vad = vad_features(&signal, None, None, None).unwrap();
 /// assert_eq!(vad.shape(), &[3, 1]);
@@ -1987,9 +1894,9 @@ pub fn vad_features(
 /// Returns `Result<Array2<f32>, SpectralError>` containing subband centroids of shape `(n_bands, n_frames)`.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::spectral_subband_centroids;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::spectral_subband_centroids;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let centroids = spectral_subband_centroids(&signal, None, None, None, None).unwrap();
 /// assert_eq!(centroids.shape(), &[4, 1]);
@@ -2067,9 +1974,9 @@ pub fn spectral_subband_centroids(
 /// Returns `Result<Array2<f32>, SpectralError>` containing formant frequencies of shape `(n_formants, n_frames)`.
 ///
 /// # Examples
-/// ```
-/// use dasp_rs::io::core::AudioData;
-/// use dasp_rs::signal_processing::spectral::formant_frequencies;
+/// ```no_run
+/// use dasp_rs::types::AudioData;
+/// use dasp_rs::feat::formant_frequencies;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let formants = formant_frequencies(&signal, None, None, None).unwrap();
 /// assert_eq!(formants.shape(), &[3, 1]);

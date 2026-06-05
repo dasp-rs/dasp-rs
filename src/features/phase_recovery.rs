@@ -21,13 +21,16 @@ pub enum PhaseRecoveryError {
 /// Returns a builder that can be configured with method chaining.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::feat::*;
+/// use dasp_rs::types::*;
 /// use ndarray::Array2;
 /// let mag_spectrogram = Array2::from_shape_vec((513, 10), vec![1.0; 513 * 10]).unwrap();
 /// let signal = griffinlim(&mag_spectrogram)
 ///     .n_iter(32)
 ///     .hop_length(256)
 ///     .compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn griffinlim(s: &Array2<f32>) -> GriffinLimBuilder<'_> {
     GriffinLimBuilder {

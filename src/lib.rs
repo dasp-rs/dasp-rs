@@ -23,7 +23,7 @@
 //! dasp-rs = "0.2.0"
 //! ```
 //!
-//! ```rust
+//! ```no_run
 //! // Option 1: Use prelude for convenience
 //! use dasp_rs::prelude::*;
 //! 
@@ -34,9 +34,10 @@
 //! 
 //! let duration = get_duration(&audio);
 //! println!("Duration: {} seconds", duration);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! ```rust
+//! ```no_run
 //! // Option 2: Explicit imports for clarity
 //! use dasp_rs::{types::AudioData, io::{Decoder, export}, util::get_duration};
 //! 
@@ -47,6 +48,7 @@
 //! 
 //! let duration = get_duration(&audio);
 //! println!("Duration: {} seconds", duration);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## API Structure
@@ -80,6 +82,11 @@ pub mod types {
 /// Audio input/output operations
 pub mod io {
     pub use crate::core::io::{load, export, stream, stream_lazy, Decoder};
+}
+
+/// Sample-wise signal operations
+pub mod ops {
+    pub use crate::core::ops::*;
 }
 
 /// Signal processing algorithms
@@ -138,12 +145,13 @@ pub mod generate {
 /// to make it easier to use the library without verbose imports.
 ///
 /// # Example
-/// ```rust
+/// ```no_run
 /// use dasp_rs::prelude::*;
 /// 
 /// // Now you can use common items directly
 /// let audio = Decoder::from("file.wav").mono().load()?;
 /// let duration = get_duration(&audio);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub mod prelude {
     // Core types

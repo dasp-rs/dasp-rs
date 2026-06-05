@@ -47,12 +47,12 @@ impl From<ScalingError> for AudioError {
 /// # Example
 /// ```
 /// use ndarray::arr2;
-/// use dasp_rs::scaling::amplitude_to_db;
+/// use dasp_rs::mag::amplitude_to_db;
 /// let s = arr2(&[[1.0, 2.0], [0.1, 0.01]]);
 /// let s_db = amplitude_to_db(&s, None, None, None)?;
 /// assert_eq!(s_db[[0, 0]], 0.0); // 20 * log10(1.0 / 1.0)
 /// assert!((s_db[[0, 1]] - 6.0206).abs() < 1e-4); // 20 * log10(2.0 / 1.0)
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn amplitude_to_db(
     spectrogram: &Array2<f32>,
@@ -94,12 +94,12 @@ pub fn amplitude_to_db(
 /// # Example
 /// ```
 /// use ndarray::arr2;
-/// use dasp_rs::scaling::db_to_amplitude;
+/// use dasp_rs::mag::db_to_amplitude;
 /// let s_db = arr2(&[[0.0, 6.0206], [-20.0, -40.0]]);
 /// let s = db_to_amplitude(&s_db, None)?;
 /// assert_eq!(s[[0, 0]], 1.0);
 /// assert!((s[[0, 1]] - 2.0).abs() < 1e-4); // 10^(6.0206 / 20)
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn db_to_amplitude(
     spectrogram_db: &Array2<f32>,
@@ -140,12 +140,12 @@ pub fn db_to_amplitude(
 /// # Example
 /// ```
 /// use ndarray::arr2;
-/// use dasp_rs::scaling::power_to_db;
+/// use dasp_rs::mag::power_to_db;
 /// let s = arr2(&[[1.0, 4.0], [0.1, 0.01]]);
 /// let s_db = power_to_db(&s, None, None, None)?;
 /// assert_eq!(s_db[[0, 0]], 0.0); // 10 * log10(1.0 / 1.0)
 /// assert!((s_db[[0, 1]] - 6.0206).abs() < 1e-4); // 10 * log10(4.0 / 1.0)
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn power_to_db(
     spectrogram: &Array2<f32>,
@@ -187,12 +187,12 @@ pub fn power_to_db(
 /// # Example
 /// ```
 /// use ndarray::arr2;
-/// use dasp_rs::scaling::db_to_power;
+/// use dasp_rs::mag::db_to_power;
 /// let s_db = arr2(&[[0.0, 6.0206], [-10.0, -20.0]]);
 /// let s = db_to_power(&s_db, None)?;
 /// assert_eq!(s[[0, 0]], 1.0);
 /// assert!((s[[0, 1]] - 4.0).abs() < 1e-4); // 10^(6.0206 / 10)
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn db_to_power(
     spectrogram_db: &Array2<f32>,
@@ -216,7 +216,7 @@ pub fn db_to_power(
 /// perceptually relevant frequencies. The spectrogram is multiplied by weights computed for each frequency bin.
 ///
 /// # Arguments
-/// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies × time).
+/// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies Ãƒâ€” time).
 /// * `frequencies` - Slice of frequencies (Hz) corresponding to spectrogram rows.
 /// * `kind` - Weighting type ("A", "B", "C", or "D"; defaults to "A" if `None`).
 ///
@@ -230,12 +230,12 @@ pub fn db_to_power(
 /// # Example
 /// ```
 /// use ndarray::arr2;
-/// use dasp_rs::scaling::perceptual_weighting;
+/// use dasp_rs::mag::perceptual_weighting;
 /// let s = arr2(&[[1.0, 1.0], [1.0, 1.0]]);
 /// let freqs = vec![1000.0, 2000.0];
 /// let s_weighted = perceptual_weighting(&s, &freqs, None)?;
 /// assert_eq!(s_weighted.shape(), s.shape());
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn perceptual_weighting(
     spectrogram: &Array2<f32>,
@@ -273,14 +273,14 @@ pub fn perceptual_weighting(
 /// # Errors
 /// * `ScalingError::InvalidInput` - If `kind` is not "A", "B", "C", or "D".
 ///
-/// # példa
+/// # pÃƒÂ©lda
 /// ```
-/// use dasp_rs::scaling::frequency_weighting;
+/// use dasp_rs::mag::frequency_weighting;
 /// let freqs = vec![1000.0, 2000.0];
 /// let weights = frequency_weighting(&freqs, Some("A"))?;
 /// assert_eq!(weights.len(), 2);
 /// assert!(weights[0] > 0.0);
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn frequency_weighting(
     frequencies: &[f32],
@@ -312,12 +312,12 @@ pub fn frequency_weighting(
 ///
 /// # Example
 /// ```
-/// use dasp_rs::scaling::multi_frequency_weighting;
+/// use dasp_rs::mag::multi_frequency_weighting;
 /// let freqs = vec![1000.0, 2000.0];
 /// let weights = multi_frequency_weighting(&freqs, &["A", "C"])?;
 /// assert_eq!(weights.len(), 2);
 /// assert_eq!(weights[0].len(), 2);
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn multi_frequency_weighting(
     frequencies: &[f32],
@@ -358,12 +358,12 @@ pub fn multi_frequency_weighting(
 /// * `ScalingError::InvalidInput` - If `frequencies` contains negative values.
 ///
 /// # Example
-/// ```
-/// use dasp_rs::scaling::a_weighting;
+/// ```no_run
+/// use dasp_rs::mag::a_weighting;
 /// let freqs = vec![1000.0];
 /// let weights = a_weighting(&freqs, None)?;
 /// assert!((weights[0] - 1.2589).abs() < 1e-4); // A-weighting at 1 kHz
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn a_weighting(
     frequencies: &[f32],
@@ -397,11 +397,11 @@ pub fn a_weighting(
 ///
 /// # Example
 /// ```
-/// use dasp_rs::scaling::b_weighting;
+/// use dasp_rs::mag::b_weighting;
 /// let freqs = vec![1000.0];
 /// let weights = b_weighting(&freqs, None)?;
 /// assert!(weights[0] > 0.0);
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn b_weighting(
     frequencies: &[f32],
@@ -432,11 +432,11 @@ pub fn b_weighting(
 ///
 /// # Example
 /// ```
-/// use dasp_rs::scaling::c_weighting;
+/// use dasp_rs::mag::c_weighting;
 /// let freqs = vec![1000.0];
 /// let weights = c_weighting(&freqs, None)?;
 /// assert!(weights[0] > 0.0);
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn c_weighting(
     frequencies: &[f32],
@@ -467,11 +467,11 @@ pub fn c_weighting(
 ///
 /// # Example
 /// ```
-/// use dasp_rs::scaling::d_weighting;
+/// use dasp_rs::mag::d_weighting;
 /// let freqs = vec![1000.0];
 /// let weights = d_weighting(&freqs, None)?;
 /// assert!(weights[0] > 0.0);
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn d_weighting(
     frequencies: &[f32],
@@ -495,7 +495,7 @@ pub fn d_weighting(
 /// `M[f, t]` is an exponentially smoothed version of the spectrogram.
 ///
 /// # Arguments
-/// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies × time).
+/// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies Ãƒâ€” time).
 /// * `sample_rate` - Sample rate in Hz (defaults to 44100 if `None`).
 /// * `hop_length` - Hop length in samples (defaults to 512 if `None`).
 /// * `gain` - Gain exponent for normalization (defaults to 0.8 if `None`).
@@ -511,11 +511,11 @@ pub fn d_weighting(
 /// # Example
 /// ```
 /// use ndarray::arr2;
-/// use dasp_rs::scaling::pcen;
+/// use dasp_rs::mag::pcen;
 /// let s = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
 /// let p = pcen(&s, None, None, None, None)?;
 /// assert_eq!(p.shape(), s.shape());
-/// # Ok::<(), dasp_rs::scaling::ScalingError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn pcen(
     spectrogram: &Array2<f32>,

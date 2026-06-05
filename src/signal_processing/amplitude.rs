@@ -30,9 +30,12 @@ pub enum AmplitudeError {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let signal = AudioData { samples: vec![0.5, 1.0, 0.5], sample_rate: 44100, channels: 1 };
 /// let amplified = amplify(&signal, 2.0)?;
 /// assert_eq!(amplified.samples, vec![1.0, 2.0, 1.0]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn amplify(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeError> {
     if gain <= 0.0 {
@@ -63,9 +66,12 @@ pub fn amplify(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeErro
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let signal = AudioData { samples: vec![1.0, 2.0, 1.0], sample_rate: 44100, channels: 1 };
 /// let attenuated = attenuate(&signal, 0.5)?;
 /// assert_eq!(attenuated.samples, vec![0.5, 1.0, 0.5]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn attenuate(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeError> {
     if gain < 0.0 {
@@ -97,6 +103,8 @@ pub fn attenuate(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeEr
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let signal = AudioData { samples: vec![0.5, 1.0, 0.5], sample_rate: 44100, channels: 1 };
 /// let normalized = normalize(&signal, 1.0, "peak")?;
 /// assert_eq!(normalized.samples, vec![0.5, 1.0, 0.5]); // Already at peak 1.0
@@ -104,6 +112,7 @@ pub fn attenuate(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeEr
 /// let signal = AudioData { samples: vec![0.2, 0.4, 0.2], sample_rate: 44100, channels: 1 };
 /// let normalized = normalize(&signal, 1.0, "peak")?;
 /// assert_eq!(normalized.samples, vec![0.5, 1.0, 0.5]); // Scaled to peak 1.0
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn normalize(signal: &AudioData, target: f32, mode: &str) -> Result<AudioData, AmplitudeError> {
     if target <= 0.0 {

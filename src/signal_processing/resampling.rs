@@ -33,6 +33,8 @@ pub enum ResampleError {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let samples = vec![0.1, 0.2, 0.3, 0.4];
 /// let resampled = resample(&samples, 44100, 22050).unwrap();
 /// ```

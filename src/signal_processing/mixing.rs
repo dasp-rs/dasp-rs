@@ -39,11 +39,14 @@ pub enum MixingError {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let left = AudioData { samples: vec![0.1, 0.2, 0.3], sample_rate: 44100, channels: 1 };
 /// let right = AudioData { samples: vec![0.4, 0.5, 0.6], sample_rate: 44100, channels: 1 };
 /// let stereo = stereo_mix(&left, &right)?;
 /// assert_eq!(stereo.samples, vec![0.1, 0.4, 0.2, 0.5, 0.3, 0.6]);
 /// assert_eq!(stereo.channels, 2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn stereo_mix(left: &AudioData, right: &AudioData) -> Result<AudioData, MixingError> {
     if left.channels != 1 || right.channels != 1 {
@@ -92,13 +95,14 @@ pub fn stereo_mix(left: &AudioData, right: &AudioData) -> Result<AudioData, Mixi
 ///
 /// # Examples
 /// ```
-/// let signals = vec![
-///     AudioData { samples: vec![0.1, 0.2], sample_rate: 44100, channels: 1 }, // Front Left
-///     AudioData { samples: vec![0.3, 0.4], sample_rate: 44100, channels: 1 }, // Front Right
-/// ];
-/// let stereo = multi_channel_mix(&signals, 2)?;
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
+/// let left = AudioData { samples: vec![0.1, 0.2], sample_rate: 44100, channels: 1 };
+/// let right = AudioData { samples: vec![0.3, 0.4], sample_rate: 44100, channels: 1 };
+/// let stereo = multi_channel_mix(&[&left, &right], 2)?;
 /// assert_eq!(stereo.samples, vec![0.1, 0.3, 0.2, 0.4]);
 /// assert_eq!(stereo.channels, 2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn multi_channel_mix(signals: &[&AudioData], channels: u16) -> Result<AudioData, MixingError> {
     if signals.is_empty() {
@@ -163,10 +167,13 @@ pub fn multi_channel_mix(signals: &[&AudioData], channels: u16) -> Result<AudioD
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let dry = AudioData { samples: vec![1.0, 1.0], sample_rate: 44100, channels: 1 };
 /// let wet = AudioData { samples: vec![2.0, 2.0], sample_rate: 44100, channels: 1 };
 /// let mixed = dry_wet_mix(&dry, &wet, 0.5)?;
 /// assert_eq!(mixed.samples, vec![1.5, 1.5]); // (1.0 * 0.5) + (2.0 * 0.5)
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn dry_wet_mix(dry: &AudioData, wet: &AudioData, wet_mix: f32) -> Result<AudioData, MixingError> {
     if !(0.0..=1.0).contains(&wet_mix) {

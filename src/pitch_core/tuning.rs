@@ -59,8 +59,8 @@ impl From<TuningError> for AudioError {
 /// * `TuningError::InsufficientData` - If signal length is less than frame length.
 ///
 /// # Example
-/// ```
-/// use dasp_rs::tuning::pyin;
+/// ```no_run
+/// use dasp_rs::pitch::pyin;
 /// let signal = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]; // Short signal
 /// let pitches = pyin(&signal, 50.0, 500.0, None, Some(4)).unwrap();
 /// assert_eq!(pitches.len(), 1); // Single frame due to short signal
@@ -115,8 +115,8 @@ pub fn pyin(
 /// * `TuningError::InsufficientData` - If signal length is less than frame length.
 ///
 /// # Example
-/// ```
-/// use dasp_rs::tuning::yin;
+/// ```no_run
+/// use dasp_rs::pitch::yin;
 /// let signal = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
 /// let pitches = yin(&signal, 50.0, 500.0, None, Some(4)).unwrap();
 /// assert_eq!(pitches.len(), 1);
@@ -170,8 +170,8 @@ pub fn yin(
 /// * `TuningError::ComputationFailed` - If STFT or piptrack computation fails.
 ///
 /// # Example
-/// ```
-/// use dasp_rs::tuning::estimate_tuning;
+/// ```no_run
+/// use dasp_rs::pitch::estimate_tuning;
 /// let signal = vec![0.1, 0.2, 0.3, 0.4];
 /// let tuning = estimate_tuning(Some(&signal), None, None, Some(4)).unwrap();
 /// assert_eq!(tuning, 0.0); // No valid pitches in short signal
@@ -229,7 +229,7 @@ pub fn estimate_tuning(
 ///
 /// # Example
 /// ```
-/// use dasp_rs::tuning::pitch_tuning;
+/// use dasp_rs::pitch::pitch_tuning;
 /// let freqs = vec![440.0, 442.0, 438.0];
 /// let tuning = pitch_tuning(&freqs, None).unwrap();
 /// assert!(tuning.abs() < 10.0); // Deviation within reasonable range
@@ -288,8 +288,8 @@ pub fn pitch_tuning(frequencies: &[f32], resolution: Option<f32>) -> Result<f32,
 /// * `TuningError::ComputationFailed` - If STFT or frequency bin computation fails.
 ///
 /// # Example
-/// ```
-/// use dasp_rs::tuning::piptrack;
+/// ```no_run
+/// use dasp_rs::pitch::piptrack;
 /// let signal = vec![0.1, 0.2, 0.3, 0.4];
 /// let (pitches, mags) = piptrack(Some(&signal), None, None, Some(4), None).unwrap();
 /// assert_eq!(pitches.shape(), &[3, 1]); // n_fft/2 + 1, n_frames

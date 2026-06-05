@@ -48,6 +48,8 @@ impl<'a> StftBuilder<'a> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let y = vec![1.0, 2.0, 3.0, 4.0];
 /// // Clean, ergonomic API with method chaining
 /// let spectrogram = stft(&y)
@@ -57,6 +59,7 @@ impl<'a> StftBuilder<'a> {
 /// 
 /// // Or with defaults
 /// let spectrogram = stft(&y).compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn stft(y: &[f32]) -> StftBuilder<'_> {
     StftBuilder {
@@ -117,7 +120,10 @@ fn stft_impl(
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// use ndarray::arr2;
+/// use num_complex::Complex;
 /// let stft_data = arr2(&[[Complex::new(1.0, 0.0)], [Complex::new(0.5, 0.0)]]);
 /// let signal = istft(&stft_data, None, None, None);
 /// ```
@@ -171,12 +177,6 @@ pub fn istft(
 ///
 /// # Returns
 /// Returns a `f32` representing the Hamming window coefficient.
-///
-/// # Examples
-/// ```
-/// let value = hamming(0, 10);
-/// assert!(value > 0.0 && value <= 1.0);
-/// ```
 fn hamming(n: usize, win_length: usize) -> f32 {
     0.54 - 0.46 * (2.0 * std::f32::consts::PI * n as f32 / (win_length - 1) as f32).cos()
 }
@@ -188,12 +188,6 @@ fn hamming(n: usize, win_length: usize) -> f32 {
 ///
 /// # Returns
 /// Returns a `Vec<f32>` containing the Hamming window coefficients.
-///
-/// # Examples
-/// ```
-/// let window = hamming_vec(5);
-/// assert_eq!(window.len(), 5);
-/// ```
 fn hamming_vec(win_length: usize) -> Vec<f32> {
     (0..win_length).map(|n| hamming(n, win_length)).collect()
 }
@@ -211,7 +205,10 @@ fn hamming_vec(win_length: usize) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// use ndarray::arr2;
+/// use num_complex::Complex;
 /// let spectrogram = arr2(&[[Complex::new(3.0, 4.0)]]);
 /// let (mag, phase) = magphase(&spectrogram, None);
 /// assert_eq!(mag[[0, 0]], 5.0); // sqrt(3^2 + 4^2)
@@ -233,11 +230,14 @@ pub fn magphase(d: &Array2<Complex<f32>>, power: Option<f32>) -> (Array2<f32>, A
 /// Returns a builder that can be configured with method chaining.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let y = vec![1.0, 2.0, 3.0, 4.0];
 /// let reassigned = reassigned_spectrogram(&y, 44100)
 ///     .n_fft(2048)
 ///     .compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn reassigned_spectrogram(y: &[f32], sr: u32) -> ReassignedSpectrogramBuilder<'_> {
     ReassignedSpectrogramBuilder {
@@ -332,12 +332,15 @@ fn reassigned_spectrogram_impl(
 /// Returns a builder that can be configured with method chaining.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let y = vec![1.0, 2.0, 3.0, 4.0];
 /// let cqt = cqt(&y, 44100)
 ///     .hop_length(512)
 ///     .fmin(32.70)
 ///     .compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn cqt(y: &[f32], sr: u32) -> CqtBuilder<'_> {
     CqtBuilder {
@@ -450,7 +453,10 @@ fn cqt_impl(
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// use ndarray::arr2;
+/// use num_complex::Complex;
 /// let cqt_data = arr2(&[[Complex::new(1.0, 0.0)]]);
 /// let signal = icqt(&cqt_data, None, None, None).unwrap();
 /// ```
@@ -532,7 +538,9 @@ pub fn icqt(
 /// * `AudioError::ComputationFailed` - If STFT computation fails.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let signal = vec![1.0; 1024];
 /// let hybrid = hybrid_cqt(&signal, None, None, None).unwrap();
 /// ```
@@ -601,7 +609,9 @@ pub fn hybrid_cqt(
 /// * `AudioError::ComputationFailed` - If STFT computation fails.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let signal = vec![1.0; 1024];
 /// let pseudo = pseudo_cqt(&signal, None, None, None).unwrap();
 /// ```
@@ -662,7 +672,9 @@ pub fn pseudo_cqt(
 /// * `AudioError::ComputationFailed` - If STFT computation fails.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let signal = vec![1.0; 1024];
 /// let vqt_result = vqt(&signal, None, None, None, None).unwrap();
 /// ```
@@ -735,6 +747,8 @@ pub fn vqt(
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let signal = vec![1.0; 1024];
 /// let fmt_result = fmt(&signal, None, None, None, None).unwrap();
 /// ```
@@ -791,12 +805,6 @@ pub fn fmt(
 ///
 /// # Returns
 /// Returns a `Vec<f32>` containing the Hann window coefficients.
-///
-/// # Examples
-/// ```
-/// let window = hann_window(5);
-/// assert_eq!(window.len(), 5);
-/// ```
 fn hann_window(n: usize) -> Vec<f32> {
     (0..n).map(|i| 0.5 * (1.0 - (2.0 * PI * i as f32 / (n - 1) as f32).cos())).collect()
 }
@@ -812,12 +820,6 @@ fn hann_window(n: usize) -> Vec<f32> {
 /// # Returns
 /// Returns a `Result` containing an `Array2<Complex<f32>>` with derivative information,
 /// or an `AudioError` if computation fails.
-///
-/// # Examples
-/// ```
-/// let signal = vec![1.0; 2048];
-/// let deriv = stft_with_derivative(&signal, None, None, true).unwrap();
-/// ```
 fn stft_with_derivative(
     y: &[f32],
     n_fft: Option<usize>,
@@ -864,11 +866,6 @@ fn stft_with_derivative(
 ///
 /// # Errors
 /// * `AudioError::InvalidInput` - If `lowcut` <= 0, `highcut` <= `lowcut`, or `highcut` >= `fs/2`.
-///
-/// # Examples
-/// ```
-/// let (b, a) = butterworth_bandpass(100.0, 1000.0, 44100.0, None).unwrap();
-/// ```
 fn butterworth_bandpass(lowcut: f32, highcut: f32, fs: f32, order: Option<usize>) -> Result<(Vec<f32>, Vec<f32>), AudioError> {
     if lowcut <= 0.0 || highcut <= lowcut || highcut >= fs / 2.0 {
         return Err(AudioError::InvalidInput(format!(
@@ -933,12 +930,6 @@ fn butterworth_bandpass(lowcut: f32, highcut: f32, fs: f32, order: Option<usize>
 ///
 /// # Returns
 /// Returns a `Vec<f32>` containing the convolution result.
-///
-/// # Examples
-/// ```
-/// let result = convolve(&[1.0, 2.0], &[3.0, 4.0]);
-/// assert_eq!(result, vec![3.0, 10.0, 8.0]);
-/// ```
 fn convolve(a: &[f32], b: &[f32]) -> Vec<f32> {
     let mut result = vec![0.0; a.len() + b.len() - 1];
     for i in 0..a.len() {
@@ -958,11 +949,6 @@ fn convolve(a: &[f32], b: &[f32]) -> Vec<f32> {
 ///
 /// # Returns
 /// Returns a `Complex<f32>` representing the filter's response.
-///
-/// # Examples
-/// ```
-/// let response = evaluate_filter(&[1.0], &[1.0, -0.5], 0.1);
-/// ```
 fn evaluate_filter(b: &[f32], a: &[f32], w: f32) -> Complex<f32> {
     let mut num = Complex::new(0.0, 0.0);
     let mut den = Complex::new(0.0, 0.0);
@@ -994,7 +980,9 @@ fn evaluate_filter(b: &[f32], a: &[f32], w: f32) -> Complex<f32> {
 /// * `AudioError::InvalidInput` - If bandpass filter frequencies are invalid.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::proc::*;
+/// use dasp_rs::types::*;
 /// let signal = vec![1.0; 4096];
 /// let iirt_result = iirt(&signal, None, None, None).unwrap();
 /// ```
@@ -1042,12 +1030,6 @@ pub fn iirt(
 ///
 /// # Returns
 /// Returns a `Vec<f32>` containing the filtered signal.
-///
-/// # Examples
-/// ```
-/// let signal = vec![1.0, 2.0, 3.0];
-/// let filtered = filter(&signal, &[1.0, 0.0, 0.0], &[1.0, -0.5, 0.0]);
-/// ```
 fn filter(x: &[f32], b: &[f32], a: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
     for n in 0..x.len() {

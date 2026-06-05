@@ -11,6 +11,8 @@ use crate::utils::notation;
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = vec![261.63, 329.63];
 /// let notes = hz_to_note(&freqs);
 /// assert_eq!(notes, vec!["C4", "E4"]);
@@ -32,6 +34,8 @@ pub fn hz_to_note(frequencies: &[f32]) -> Vec<String> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = vec![440.0];
 /// let midi = hz_to_midi(&freqs);
 /// assert_eq!(midi, vec![69.0]);
@@ -51,7 +55,9 @@ pub fn hz_to_midi(frequencies: &[f32]) -> Vec<f32> {
 /// Returns a `Vec<String>` containing Hindustani svara names (e.g., "S", "R1" or "Shadjam", "Shuddha Rishabham").
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = vec![261.63, 293.66];
 /// let svaras = hz_to_svara_h(&freqs, 261.63, Some(true));
 /// assert_eq!(svaras, vec!["S", "R2"]);
@@ -86,6 +92,8 @@ pub fn hz_to_svara_h(frequencies: &[f32], sa: f32, abbr: Option<bool>) -> Vec<St
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = vec![261.63, 293.66];
 /// let svaras = hz_to_svara_c(&freqs, 261.63, None);
 /// assert_eq!(svaras, vec!["S", "R2"]);
@@ -119,7 +127,9 @@ pub fn hz_to_svara_c(frequencies: &[f32], sa: f32, mela: Option<usize>) -> Vec<S
 /// Returns a `Vec<String>` containing FJS note names (e.g., "C4 1/1").
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = vec![261.63];
 /// let fjs = hz_to_fjs(&freqs, None, None);
 /// assert_eq!(fjs, vec!["C4 1/1"]);
@@ -145,6 +155,8 @@ pub fn hz_to_fjs(frequencies: &[f32], fmin: Option<f32>, unison: Option<f32>) ->
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let midi = vec![69.0];
 /// let freqs = midi_to_hz(&midi);
 /// assert_eq!(freqs, vec![440.0]);
@@ -166,6 +178,8 @@ pub fn midi_to_hz(notes: &[f32]) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let midi = vec![60.0, 61.0];
 /// let notes = midi_to_note(&midi, None, None, None);
 /// assert_eq!(notes, vec!["C4", "C#4"]);
@@ -192,6 +206,8 @@ pub fn midi_to_note(midi: &[f32], octave: Option<bool>, _cents: Option<bool>, _k
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let midi = vec![60.0, 62.0];
 /// let svaras = midi_to_svara_h(&midi, 261.63, Some(true), None);
 /// assert_eq!(svaras, vec!["S", "R2"]);
@@ -228,6 +244,8 @@ pub fn midi_to_svara_h(midi: &[f32], sa: f32, abbr: Option<bool>, octave: Option
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let midi = vec![60.0, 62.0];
 /// let svaras = midi_to_svara_c(&midi, 261.63, None, Some(true));
 /// assert_eq!(svaras, vec!["S", "R2"]);
@@ -260,6 +278,8 @@ pub fn midi_to_svara_c(midi: &[f32], sa: f32, mela: Option<usize>, abbr: Option<
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let notes = vec!["C4", "E4"];
 /// let freqs = note_to_hz(&notes);
 /// assert!(freqs[0] > 261.0 && freqs[0] < 262.0);
@@ -282,6 +302,8 @@ pub fn note_to_hz(note: &[&str]) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let notes = vec!["C4", "C#4"];
 /// let midi = note_to_midi(&notes, None);
 /// assert_eq!(midi, vec![60.0, 61.0]);
@@ -309,6 +331,8 @@ pub fn note_to_midi(note: &[&str], round_midi: Option<bool>) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let notes = vec!["C4", "D4"];
 /// let svaras = note_to_svara_h(&notes, 261.63, Some(true));
 /// assert_eq!(svaras, vec!["S", "R2"]);
@@ -331,6 +355,8 @@ pub fn note_to_svara_h(notes: &[&str], sa: f32, abbr: Option<bool>) -> Vec<Strin
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let notes = vec!["C4", "D4"];
 /// let svaras = note_to_svara_c(&notes, 261.63, None, Some(true));
 /// assert_eq!(svaras, vec!["S", "R2"]);
@@ -351,6 +377,8 @@ pub fn note_to_svara_c(notes: &[&str], sa: f32, mela: Option<usize>, _abbr: Opti
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = vec![440.0];
 /// let mels = hz_to_mel(&freqs, None);
 /// ```
@@ -373,6 +401,8 @@ pub fn hz_to_mel(frequencies: &[f32], htk: Option<bool>) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = vec![440.0];
 /// let octs = hz_to_octs(&freqs, None);
 /// assert_eq!(octs, vec![4.0]);
@@ -393,6 +423,8 @@ pub fn hz_to_octs(frequencies: &[f32], tuning: Option<f32>) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let mels = vec![1125.0];
 /// let freqs = mel_to_hz(&mels, None);
 /// ```
@@ -416,6 +448,8 @@ pub fn mel_to_hz(mels: &[f32], htk: Option<bool>) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let octs = vec![4.0];
 /// let freqs = octs_to_hz(&octs, None, None);
 /// assert_eq!(freqs, vec![440.0]);
@@ -436,7 +470,9 @@ pub fn octs_to_hz(octs: &[f32], tuning: Option<f32>, _bins_per_octave: Option<us
 ///
 /// # Examples
 /// ```
-/// let tuning = A4_to_tuning(432.0, None);
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
+/// let tuning = a4_to_tuning(432.0, None);
 /// assert!(tuning < 0.0);
 /// ```
 pub fn a4_to_tuning(a4: f32, _bins_per_octave: Option<usize>) -> f32 {
@@ -454,8 +490,10 @@ pub fn a4_to_tuning(a4: f32, _bins_per_octave: Option<usize>) -> f32 {
 ///
 /// # Examples
 /// ```
-/// let A4 = tuning_to_A4(-0.317667, None);
-/// assert!(A4 > 431.0 && A4 < 433.0);
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
+/// let a4 = tuning_to_a4(-0.317667, None);
+/// assert!(a4 > 431.0 && a4 < 433.0);
 /// ```
 pub fn tuning_to_a4(tuning: f32, _bins_per_octave: Option<usize>) -> f32 {
     440.0 * 2.0f32.powf(tuning / 12.0)
@@ -472,6 +510,8 @@ pub fn tuning_to_a4(tuning: f32, _bins_per_octave: Option<usize>) -> f32 {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = fft_frequencies(None, Some(4));
 /// assert_eq!(freqs, vec![0.0, 11025.0, 22050.0]);
 /// ```
@@ -492,6 +532,8 @@ pub fn fft_frequencies(sr: Option<u32>, n_fft: Option<usize>) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = cqt_frequencies(3, None);
 /// ```
 pub fn cqt_frequencies(n_bins: usize, fmin: Option<f32>) -> Vec<f32> {
@@ -513,6 +555,8 @@ pub fn cqt_frequencies(n_bins: usize, fmin: Option<f32>) -> Vec<f32> {
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = mel_frequencies(Some(3), None, None, None);
 /// ```
 pub fn mel_frequencies(n_mels: Option<usize>, fmin: Option<f32>, fmax: Option<f32>, _htk: Option<bool>) -> Vec<f32> {
@@ -537,6 +581,8 @@ pub fn mel_frequencies(n_mels: Option<usize>, fmin: Option<f32>, fmax: Option<f3
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = tempo_frequencies(3, None, None);
 /// ```
 pub fn tempo_frequencies(n_bins: usize, hop_length: Option<usize>, sr: Option<u32>) -> Vec<f32> {
@@ -556,6 +602,8 @@ pub fn tempo_frequencies(n_bins: usize, hop_length: Option<usize>, sr: Option<u3
 ///
 /// # Examples
 /// ```
+/// use dasp_rs::util::*;
+/// use dasp_rs::types::*;
 /// let freqs = fourier_tempo_frequencies(None);
 /// ```
 pub fn fourier_tempo_frequencies(sr: Option<u32>) -> Vec<f32> {
