@@ -1,9 +1,10 @@
 [package]
 name = "dasp-rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
-description = "A crate for digital signal processing, speech processing, music analysis, and phonetics."
-authors = ["Amirhossein Ghanipour amirhosseinghanipour@gmail.com"]
+rust-version = "1.85"
+description = "Pure-Rust digital audio signal processing: I/O, STFT/CQT, spectral & MIR features, pitch, and music/phonetics notation."
+authors = ["Amirhossein Ghanipour d3v1ll3n@gmail.com"]
 license = "MIT"
 keywords = [
   "audio",
@@ -13,7 +14,7 @@ keywords = [
   "music-analysis",
 ]
 repository = "https://github.com/amirhosseinghanipour/dasp-rs"
-documentation = "https://docs.rs/dasp-rs/0.2.0"
+documentation = "https://docs.rs/dasp-rs"
 categories = ["multimedia::audio", "algorithms"]
 readme = "README.md"
 
