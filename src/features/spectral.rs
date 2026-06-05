@@ -3,7 +3,7 @@ use rayon::prelude::*;
 use crate::signal_processing::time_frequency::{stft, cqt};
 use crate::signal_processing::time_domain::{autocorrelate, log_energy};
 use crate::utils::frequency::hz_to_midi;
-use ndarray_linalg::{Solve, Eig};
+use nalgebra::{DMatrix, DVector};
 use num_complex::Complex;
 use thiserror::Error;
 use crate::core::io::{AudioError, AudioData};
@@ -1430,13 +1430,15 @@ pub fn tonnetz(
 /// Returns a vector of polynomial coefficients, or zeros if solving fails.
 fn polyfit(x: &Array1<f32>, y: &Array1<f32>, order: usize) -> Vec<f32> {
     let n = order + 1;
-    let mut a = Array2::zeros((x.len(), n));
-    for i in 0..x.len() {
-        for j in 0..n {
-            a[[i, j]] = x[i].powi(j as i32);
-        }
+    let rows = x.len();
+    // Vandermonde matrix (rows x n), column j = x^j.
+    let a = DMatrix::from_fn(rows, n, |i, j| x[i].powi(j as i32));
+    let b = DVector::from_iterator(rows, y.iter().copied());
+    // Least-squares solve via SVD (handles over-/under-determined systems).
+    match a.svd(true, true).solve(&b, 1e-9_f32) {
+        Ok(coeffs) => coeffs.iter().copied().collect(),
+        Err(_) => vec![0.0; n],
     }
-    a.solve(&y.to_owned()).unwrap_or_else(|_| Array1::zeros(n)).to_vec()
 }
 
 /// Computes spectral flux.
@@ -2193,22 +2195,21 @@ fn polynomial_roots(coeffs: &[f32]) -> Result<Vec<Complex<f32>>, SpectralError> 
     }
 
     let n = coeffs.len() - 1;
-    let mut companion = Array2::zeros((n, n));
-    for i in 0..n - 1 {
-        companion[[i + 1, i]] = 1.0;
-    }
     let a_n = coeffs[n];
     if a_n.abs() < 1e-10 {
         return Err(SpectralError::Numerical(
             "Leading coefficient too small".to_string(),
         ));
     }
+    // Build the companion matrix; its eigenvalues are the polynomial roots.
+    let mut companion = DMatrix::<f32>::zeros(n, n);
+    for i in 0..n - 1 {
+        companion[(i + 1, i)] = 1.0;
+    }
     for i in 0..n {
-        companion[[i, n - 1]] = -coeffs[n - 1 - i] / a_n;
+        companion[(i, n - 1)] = -coeffs[n - 1 - i] / a_n;
     }
 
-    let eigenvalues = companion
-        .eig()
-        .map_err(|e| SpectralError::Numerical(format!("Eigenvalue computation failed: {}", e)))?;
-    Ok(eigenvalues.0.to_vec())
+    let eigenvalues = companion.complex_eigenvalues();
+    Ok(eigenvalues.iter().map(|c| Complex::new(c.re, c.im)).collect())
 }

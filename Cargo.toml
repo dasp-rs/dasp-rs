@@ -26,9 +26,7 @@ rubato = "0.16.1"
 ndarray = { version = "0.16", features = ["rayon"] }
 approx = "0.5.1"
 rayon = "1.10.0"
-ndarray-linalg = { version = "0.17.0", features = [
-  "openblas-system"
-] }
+nalgebra = "0.33"
 log = "0.4.27"
 
 [dev-dependencies]
