@@ -25,32 +25,6 @@
 
 ## Installation
 
-### Dependencies
-
-This crate requires **OpenBLAS** and **pkg-config** to be installed on your system *before* building. The build links to your system OpenBLAS and does not download anything when the library is found. If the build attempts to download OpenBLAS, the system library was not detected (install OpenBLAS and pkg-config, or set `PKG_CONFIG_PATH` if installed in a custom location).
-
-**Linux (Arch/Manjaro):**
-```bash
-sudo pacman -S openblas pkg-config
-```
-
-**Linux (Debian/Ubuntu):**
-```bash
-sudo apt-get install libopenblas-dev pkg-config
-```
-
-**macOS:**
-```bash
-brew install openblas pkg-config
-```
-
-**Windows:**
-OpenBLAS is typically provided via vcpkg or you can download pre-built binaries.
-
-**Verify:** Before building, ensure `pkg-config` can find OpenBLAS (avoids network download and "Connection refused" errors):
-```bash
-pkg-config --libs openblas
-```
 
 ### Cargo
 
@@ -122,4 +96,4 @@ Contributing steps:
 5. Open a pull request.
 
 ## License
-`dasp-rs` is licensed under the GPLv3 License. See `LICENSE` for details.
+`dasp-rs` is licensed under the MIT License. See `LICENSE` for details.
