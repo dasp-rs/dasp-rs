@@ -48,6 +48,7 @@ impl From<TuningError> for AudioError {
 /// * `fmax` - Maximum frequency in Hz (must be less than Nyquist frequency).
 /// * `sample_rate` - Sample rate in Hz (defaults to 44100 if `None`).
 /// * `frame_length` - Frame length in samples (defaults to 2048 if `None`).
+/// * `hop_length` - Hop length in samples between frames (defaults to `frame_length / 4` if `None`).
 ///
 /// # Returns
 /// A `Result` containing a `Vec<f32>` of pitch estimates in Hz for each frame.
@@ -62,7 +63,7 @@ impl From<TuningError> for AudioError {
 /// ```no_run
 /// use dasp_rs::pitch::pyin;
 /// let signal = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]; // Short signal
-/// let pitches = pyin(&signal, 50.0, 500.0, None, Some(4)).unwrap();
+/// let pitches = pyin(&signal, 50.0, 500.0, None, Some(4), None).unwrap();
 /// assert_eq!(pitches.len(), 1); // Single frame due to short signal
 /// ```
 pub fn pyin(
@@ -71,12 +72,13 @@ pub fn pyin(
     fmax: f32,
     sample_rate: Option<u32>,
     frame_length: Option<usize>,
+    hop_length: Option<usize>,
 ) -> Result<Vec<f32>, TuningError> {
     let sr = sample_rate.unwrap_or(44_100);
     let frame_len = frame_length.unwrap_or(2048);
     validate_inputs(fmin, fmax, sr, frame_len, signal.len())?;
 
-    let hop_length = frame_len / 4;
+    let hop_length = hop_length.unwrap_or(frame_len / 4).max(1);
     let n_frames = calculate_n_frames(signal.len(), frame_len, hop_length);
     let lag_min = (sr as f32 / fmax).round() as usize;
     let lag_max = (sr as f32 / fmin).round() as usize;
@@ -104,6 +106,7 @@ pub fn pyin(
 /// * `fmax` - Maximum frequency in Hz (must be less than Nyquist frequency).
 /// * `sample_rate` - Sample rate in Hz (defaults to 44100 if `None`).
 /// * `frame_length` - Frame length in samples (defaults to 2048 if `None`).
+/// * `hop_length` - Hop length in samples between frames (defaults to `frame_length / 4` if `None`).
 ///
 /// # Returns
 /// A `Result` containing a `Vec<f32>` of pitch estimates in Hz for each frame.
@@ -118,7 +121,7 @@ pub fn pyin(
 /// ```no_run
 /// use dasp_rs::pitch::yin;
 /// let signal = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
-/// let pitches = yin(&signal, 50.0, 500.0, None, Some(4)).unwrap();
+/// let pitches = yin(&signal, 50.0, 500.0, None, Some(4), None).unwrap();
 /// assert_eq!(pitches.len(), 1);
 /// ```
 pub fn yin(
@@ -127,12 +130,13 @@ pub fn yin(
     fmax: f32,
     sample_rate: Option<u32>,
     frame_length: Option<usize>,
+    hop_length: Option<usize>,
 ) -> Result<Vec<f32>, TuningError> {
     let sr = sample_rate.unwrap_or(44_100);
     let frame_len = frame_length.unwrap_or(2048);
     validate_inputs(fmin, fmax, sr, frame_len, signal.len())?;
 
-    let hop_length = frame_len / 4;
+    let hop_length = hop_length.unwrap_or(frame_len / 4).max(1);
     let n_frames = calculate_n_frames(signal.len(), frame_len, hop_length);
     let lag_min = (sr as f32 / fmax).round() as usize;
     let lag_max = (sr as f32 / fmin).round() as usize;
@@ -158,6 +162,7 @@ pub fn yin(
 /// * `sample_rate` - Sample rate in Hz (defaults to 44100 if `None`).
 /// * `spectrogram` - Optional pre-computed magnitude spectrogram as `Array2<f32>`.
 /// * `n_fft` - FFT window size in samples (defaults to 2048 if `None`).
+/// * `hop_length` - Hop length in samples between frames (defaults to `n_fft / 4` if `None`).
 ///
 /// # Returns
 /// A `Result` containing the tuning deviation in cents.
@@ -173,7 +178,7 @@ pub fn yin(
 /// ```no_run
 /// use dasp_rs::pitch::estimate_tuning;
 /// let signal = vec![0.1, 0.2, 0.3, 0.4];
-/// let tuning = estimate_tuning(Some(&signal), None, None, Some(4)).unwrap();
+/// let tuning = estimate_tuning(Some(&signal), None, None, Some(4), None).unwrap();
 /// assert_eq!(tuning, 0.0); // No valid pitches in short signal
 /// ```
 pub fn estimate_tuning(
@@ -181,10 +186,11 @@ pub fn estimate_tuning(
     sample_rate: Option<u32>,
     spectrogram: Option<&Array2<f32>>,
     n_fft: Option<usize>,
+    hop_length: Option<usize>,
 ) -> Result<f32, TuningError> {
     let sr = sample_rate.unwrap_or(44_100);
     let n_fft = n_fft.unwrap_or(2048);
-    let hop_length = n_fft / 4;
+    let hop_length = hop_length.unwrap_or(n_fft / 4).max(1);
 
     let s = compute_spectrogram(signal, spectrogram, n_fft, hop_length)?;
     let (pitches, mags) = piptrack(signal, Some(sr), Some(&s), Some(n_fft), Some(hop_length))?;
@@ -499,12 +505,12 @@ mod tests {
         let signal = vec![0.1, 0.2, 0.3];
         // Invalid frequency range
         assert!(matches!(
-            pyin(&signal, 500.0, 50.0, None, None),
+            pyin(&signal, 500.0, 50.0, None, None, None),
             Err(TuningError::InvalidFrequencyRange(_))
         ));
         // Signal too short
         assert!(matches!(
-            pyin(&signal, 50.0, 500.0, None, Some(10)),
+            pyin(&signal, 50.0, 500.0, None, Some(10), None),
             Err(TuningError::InsufficientData(_))
         ));
     }
@@ -512,14 +518,14 @@ mod tests {
     #[test]
     fn test_yin_short_signal() {
         let signal = vec![0.1, 0.2, 0.3, 0.4];
-        let pitches = yin(&signal, 50.0, 500.0, None, Some(4)).unwrap();
+        let pitches = yin(&signal, 50.0, 500.0, None, Some(4), None).unwrap();
         assert_eq!(pitches, vec![0.0]);
     }
 
     #[test]
     fn test_estimate_tuning_no_input() {
         assert!(matches!(
-            estimate_tuning(None, None, None, None),
+            estimate_tuning(None, None, None, None, None),
             Err(TuningError::InvalidInput(_))
         ));
     }

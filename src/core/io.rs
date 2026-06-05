@@ -385,11 +385,18 @@ pub fn load<P: AsRef<Path>>(
                 .map(|s| s.map(|v| v as f32 / i16::MAX as f32))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(AudioError::HoundError)?,
-            24 | 32 => reader
+            24 => reader
                 .samples::<i32>()
                 .skip(start)
                 .take(len.unwrap_or(usize::MAX))
-                .map(|s| s.map(|v| v as f32 / i32::MAX as f32))
+                .map(|s| s.map(|v| v as f32 / 8_388_608.0))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(AudioError::HoundError)?,
+            32 => reader
+                .samples::<i32>()
+                .skip(start)
+                .take(len.unwrap_or(usize::MAX))
+                .map(|s| s.map(|v| v as f32 / 2_147_483_648.0))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(AudioError::HoundError)?,
             _ => return Err(AudioError::UnsupportedFormat),
@@ -640,10 +647,15 @@ pub fn stream<P: AsRef<Path>>(
                     .samples::<i16>()
                     .map(|s| s.map(|v| v as f32 / i16::MAX as f32)),
             ),
-            24 | 32 => Box::new(
+            24 => Box::new(
                 reader
                     .samples::<i32>()
-                    .map(|s| s.map(|v| v as f32 / i32::MAX as f32)),
+                    .map(|s| s.map(|v| v as f32 / 8_388_608.0)),
+            ),
+            32 => Box::new(
+                reader
+                    .samples::<i32>()
+                    .map(|s| s.map(|v| v as f32 / 2_147_483_648.0)),
             ),
             _ => return Err(AudioError::UnsupportedFormat),
         },
@@ -768,10 +780,15 @@ pub fn stream_lazy<P: AsRef<Path>>(
                         .samples::<i16>()
                         .map(|s| s.map(|v| v as f32 / i16::MAX as f32)),
                 ),
-                24 | 32 => Box::new(
+                24 => Box::new(
                     reader
                         .samples::<i32>()
-                        .map(|s| s.map(|v| v as f32 / i32::MAX as f32)),
+                        .map(|s| s.map(|v| v as f32 / 8_388_608.0)),
+                ),
+                32 => Box::new(
+                    reader
+                        .samples::<i32>()
+                        .map(|s| s.map(|v| v as f32 / 2_147_483_648.0)),
                 ),
                 _ => {
                     let _ = tx.send(Vec::new());
@@ -1105,5 +1122,103 @@ mod tests {
             matches!(audio, Err(AudioError::InvalidInput(_))),
             "AudioData::new should fail with zero channels"
         );
+    }
+
+    fn write_int_wav<S: hound::Sample + Copy>(path: &std::path::Path, bits: u16, samples: &[S]) {
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 44100,
+            bits_per_sample: bits,
+            sample_format: SampleFormat::Int,
+        };
+        let mut writer = WavWriter::create(path, spec).unwrap();
+        for &s in samples {
+            writer.write_sample(s).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+
+    #[test]
+    fn test_load_8bit_int() {
+        let temp = NamedTempFile::new().unwrap();
+        write_int_wav(temp.path(), 8, &[0i8, 64, -64]);
+        let loaded = load(temp.path(), None, None, None, None).unwrap();
+        let expected = [0.0, 64.0 / i8::MAX as f32, -64.0 / i8::MAX as f32];
+        assert_eq!(loaded.samples.len(), 3);
+        for (a, e) in loaded.samples.iter().zip(expected) {
+            assert!((a - e).abs() < 1e-4, "8-bit: expected {e}, got {a}");
+        }
+    }
+
+    #[test]
+    fn test_load_16bit_int() {
+        let temp = NamedTempFile::new().unwrap();
+        write_int_wav(temp.path(), 16, &[0i16, 16384, -16384]);
+        let loaded = load(temp.path(), None, None, None, None).unwrap();
+        let expected = [0.0, 16384.0 / i16::MAX as f32, -16384.0 / i16::MAX as f32];
+        for (a, e) in loaded.samples.iter().zip(expected) {
+            assert!((a - e).abs() < 1e-4, "16-bit: expected {e}, got {a}");
+        }
+    }
+
+    #[test]
+    fn test_load_24bit_int() {
+        let temp = NamedTempFile::new().unwrap();
+        write_int_wav(temp.path(), 24, &[0i32, 4_194_304, -4_194_304]);
+        let loaded = load(temp.path(), None, None, None, None).unwrap();
+        let expected = [0.0, 0.5, -0.5];
+        for (a, e) in loaded.samples.iter().zip(expected) {
+            assert!((a - e).abs() < 1e-6, "24-bit: expected {e}, got {a}");
+        }
+    }
+
+    #[test]
+    fn test_load_32bit_int() {
+        let temp = NamedTempFile::new().unwrap();
+        write_int_wav(temp.path(), 32, &[0i32, 1_073_741_824, -1_073_741_824]);
+        let loaded = load(temp.path(), None, None, None, None).unwrap();
+        let expected = [0.0, 0.5, -0.5];
+        for (a, e) in loaded.samples.iter().zip(expected) {
+            assert!((a - e).abs() < 1e-6, "32-bit int: expected {e}, got {a}");
+        }
+    }
+
+    #[test]
+    fn test_load_32bit_float() {
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 44100,
+            bits_per_sample: 32,
+            sample_format: SampleFormat::Float,
+        };
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let mut writer = WavWriter::create(temp.path(), spec).unwrap();
+            for &s in &[0.0f32, 0.5, -0.5] {
+                writer.write_sample(s).unwrap();
+            }
+            writer.finalize().unwrap();
+        }
+        let loaded = load(temp.path(), None, None, None, None).unwrap();
+        for (a, e) in loaded.samples.iter().zip([0.0, 0.5, -0.5]) {
+            assert!((a - e).abs() < 1e-6, "32-bit float: expected {e}, got {a}");
+        }
+    }
+
+    #[test]
+    fn test_stream_24bit_int() {
+        let temp = NamedTempFile::new().unwrap();
+        write_int_wav(temp.path(), 24, &[0i32, 4_194_304, -4_194_304, 4_194_304, -4_194_304, 0]);
+        let blocks = stream(temp.path(), 3, 2, Some(2)).unwrap();
+        assert_eq!(blocks, vec![vec![0.0, 0.5], vec![-0.5, 0.5], vec![-0.5, 0.0]]);
+    }
+
+    #[test]
+    fn test_stream_lazy_24bit_int() {
+        let temp = NamedTempFile::new().unwrap();
+        write_int_wav(temp.path(), 24, &[0i32, 4_194_304, -4_194_304, 4_194_304, -4_194_304, 0]);
+        let rx = stream_lazy(temp.path(), 3, 2, Some(2)).unwrap();
+        let blocks: Vec<_> = rx.into_iter().collect();
+        assert_eq!(blocks, vec![vec![0.0, 0.5], vec![-0.5, 0.5], vec![-0.5, 0.0]]);
     }
 }
