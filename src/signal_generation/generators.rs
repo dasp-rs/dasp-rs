@@ -41,15 +41,16 @@ pub fn clicks(
         if t.is_empty() {
             return Err(GeneratorError::InvalidInput("Times array cannot be empty".to_string()));
         }
-        (t.iter()
+        ((t.iter()
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap()
-            * sample_rate as f32) as usize
+            * sample_rate as f32) as usize)
+            + 1
     } else if let Some(f) = frames {
         if f.is_empty() {
             return Err(GeneratorError::InvalidInput("Frames array cannot be empty".to_string()));
         }
-        f.iter().max().unwrap() * hop
+        f.iter().max().unwrap() * hop + 1
     } else {
         44100
     };
@@ -211,14 +212,16 @@ mod tests {
     #[test]
     fn clicks_from_times_and_frames() {
         let signal = clicks(Some(&[0.0, 0.001]), None, Some(1000), None).unwrap();
-        assert_eq!(signal.len(), 1); // max time 0.001s at 1 kHz => 1 sample
-        assert_eq!(signal, vec![1.0]);
+        assert_eq!(signal.len(), 2);
+        assert_eq!(signal, vec![1.0, 1.0]);
 
         let frames = clicks(None, Some(&[0, 2]), Some(8000), Some(2)).unwrap();
-        assert_eq!(frames.len(), 4); // max frame 2 with hop 2 -> 4 samples
+        assert_eq!(frames.len(), 5);
         assert_eq!(frames[0], 1.0);
-        assert_eq!(frames[2], 1.0);
+        assert_eq!(frames[4], 1.0);
         assert!(frames[1].abs() < f32::EPSILON);
+        assert!(frames[2].abs() < f32::EPSILON);
+        assert!(frames[3].abs() < f32::EPSILON);
     }
 
     #[test]

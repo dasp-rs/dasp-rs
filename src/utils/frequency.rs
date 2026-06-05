@@ -605,7 +605,8 @@ mod tests {
         let mels = hz_to_mel(&hz, None);
         let back = mel_to_hz(&mels, None);
         for (orig, recon) in hz.iter().zip(back.iter()) {
-            assert!(approx_eq(*orig, *recon));
+            let tol = 1e-4 * orig.abs().max(1.0);
+            assert!((orig - recon).abs() <= tol);
         }
     }
 
@@ -630,7 +631,8 @@ mod tests {
         let fourier = fourier_tempo_frequencies(Some(44_100));
         assert_eq!(fourier.len(), 256);
         assert!(fourier.first().unwrap().abs() < 1e-6);
-        assert!(fourier.last().unwrap() > &5000.0);
+        // Last bin is the frame-rate Nyquist in BPM: (44100/512)/2 * 60 ≈ 2584.
+        assert!(fourier.last().unwrap() > &2500.0);
     }
 
     #[test]

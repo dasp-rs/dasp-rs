@@ -87,13 +87,16 @@ pub fn mela_to_svara(mela: usize, abbr: Option<bool>, unicode: Option<bool>) -> 
         vec!["shadjam", "rishabham", "gandharam", "madhyamam", "panchamam", "dhaivatam", "nishadam"]
     };
     let mut result = Vec::new();
-    for (i, deg) in degrees.iter().enumerate() {
-        let base = match i {
-            0 => "S", 1..=3 => "R", 4..=6 => "G", 7 => "M", 8 => "P", 9..=11 => "D", 12..=14 => "N",
-            _ => "S",
-        };
-        let variant = match deg % 12 {
-            1 => "1", 2 => "2", 3 => "3", 5 => "1", 6 => "2", 7 => "3", 8 => "1", 9 => "2", 10 => "3", _ => "",
+    for (i, &deg) in degrees.iter().enumerate() {
+        let (base, variant) = match i {
+            0 => ("S", ""),
+            1 => ("R", match deg { 1 => "1", 2 => "2", 3 => "3", _ => "" }),
+            2 => ("G", match deg { 2 => "1", 3 => "2", 4 => "3", _ => "" }),
+            3 => ("M", match deg { 5 => "1", 6 => "2", _ => "" }),
+            4 => ("P", ""),
+            5 => ("D", match deg { 8 => "1", 9 => "2", 10 => "3", _ => "" }),
+            6 => ("N", match deg { 9 => "1", 10 => "2", 11 => "3", _ => "" }),
+            _ => ("S", ""),
         };
         let name = if abbr {
             format!("{}{}", base, variant)
@@ -101,7 +104,7 @@ pub fn mela_to_svara(mela: usize, abbr: Option<bool>, unicode: Option<bool>) -> 
             let idx = match base {
                 "S" => 0, "R" => 1, "G" => 2, "M" => 3, "P" => 4, "D" => 5, "N" => 6, _ => 0,
             };
-            format!("{}{}", svara_full[idx], if variant.is_empty() { "" } else { variant })
+            format!("{}{}", svara_full[idx], variant)
         };
         result.push(name);
     }
@@ -122,28 +125,32 @@ pub fn mela_to_svara(mela: usize, abbr: Option<bool>, unicode: Option<bool>) -> 
 ///
 /// # Examples
 /// ```
-/// let degrees = mela_to_degrees(29); // Dheerashankarabharanam
+/// let degrees = mela_to_degrees(29); // Dheerasankarabharanam
 /// assert_eq!(degrees, vec![0, 2, 4, 5, 7, 9, 11]);
 /// let degrees = mela_to_degrees(1); // Kanakangi
-/// assert_eq!(degrees, vec![0, 1, 2, 5, 7, 8, 10]);
+/// assert_eq!(degrees, vec![0, 1, 2, 5, 7, 8, 9]);
 /// ```
 pub fn mela_to_degrees(mela: usize) -> Vec<usize> {
     if !(1..=72).contains(&mela) { return vec![0, 2, 4, 5, 7, 9, 11]; }
-    let mela = mela - 1;
-    let r = (mela / 36) % 2;
-    let g = (mela / 18) % 2;
-    let m = (mela / 9) % 2;
-    let d = (mela / 3) % 3;
-    let n = mela % 3;
-    vec![
-        0,
-        if r == 0 { 1 } else { 2 + g },
-        if r == 0 { 2 + g } else { 4 },
-        5 + m,
-        7,
-        8 + d,
-        10 + n,
-    ]
+    let index = mela - 1;
+    let (ri, ga) = match (index % 36) / 6 {
+        0 => (1, 2),
+        1 => (1, 3),
+        2 => (1, 4),
+        3 => (2, 3),
+        4 => (2, 4),
+        _ => (3, 4),
+    };
+    let ma = if index < 36 { 5 } else { 6 };
+    let (dha, ni) = match index % 6 {
+        0 => (8, 9),
+        1 => (8, 10),
+        2 => (8, 11),
+        3 => (9, 10),
+        4 => (9, 11),
+        _ => (10, 11),
+    };
+    vec![0, ri, ga, ma, 7, dha, ni]
 }
 
 /// Converts a Hindustani thaat to scale degrees.
@@ -251,8 +258,8 @@ pub fn list_thaat() -> Vec<String> {
 /// ```
 /// let note = fifths_to_note("C", 1, None);
 /// assert_eq!(note, "G");
-/// let note = fifths_to_note("C", 7, Some(true));
-/// assert_eq!(note, "F♯1");
+/// let note = fifths_to_note("C", 6, Some(true));
+/// assert_eq!(note, "F♯3");
 /// ```
 pub fn fifths_to_note(unison: &str, fifths: i32, unicode: Option<bool>) -> String {
     let unicode = unicode.unwrap_or(false);
@@ -429,7 +436,7 @@ mod tests {
         assert_eq!(svaras, vec!["S", "R2", "G3", "M1", "P", "D2", "N3"]);
 
         let degrees = mela_to_degrees(1);
-        assert_eq!(degrees, vec![0, 1, 2, 5, 7, 8, 10]);
+        assert_eq!(degrees, vec![0, 1, 2, 5, 7, 8, 9]);
 
         let thaats = list_thaat();
         assert_eq!(thaats.len(), 10);
@@ -440,7 +447,7 @@ mod tests {
     fn fifths_and_intervals_generate_consistent_values() {
         let fifth = fifths_to_note("C", 1, None);
         assert_eq!(fifth, "G");
-        let unicode = fifths_to_note("C", 7, Some(true));
+        let unicode = fifths_to_note("C", 6, Some(true));
         assert!(unicode.starts_with("F"));
 
         let fjs = interval_to_fjs(1.5, None);

@@ -92,9 +92,10 @@ mod tests {
 
     #[test]
     fn downsample_basic_signal() {
-        let samples = vec![0.0, 1.0, 0.0, -1.0];
+        let samples: Vec<f32> = (0..512)
+            .map(|n| (2.0 * std::f32::consts::PI * 4.0 * n as f32 / 512.0).sin())
+            .collect();
         let out = resample(&samples, 4, 2).unwrap();
-        // Should roughly halve length; allow tolerance for sinc padding
         assert!(out.len() >= 2);
         assert!(out.iter().all(|v| v.is_finite()));
     }

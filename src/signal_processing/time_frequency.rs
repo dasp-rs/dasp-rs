@@ -1051,8 +1051,11 @@ pub fn iirt(
 fn filter(x: &[f32], b: &[f32], a: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
     for n in 0..x.len() {
-        y[n] = b[0] * x[n] + b[1] * x.get(n - 1).unwrap_or(&0.0) + b[2] * x.get(n - 2).unwrap_or(&0.0)
-            - a[1] * y.get(n - 1).unwrap_or(&0.0) - a[2] * y.get(n - 2).unwrap_or(&0.0);
+        let x1 = if n >= 1 { x[n - 1] } else { 0.0 };
+        let x2 = if n >= 2 { x[n - 2] } else { 0.0 };
+        let y1 = if n >= 1 { y[n - 1] } else { 0.0 };
+        let y2 = if n >= 2 { y[n - 2] } else { 0.0 };
+        y[n] = b[0] * x[n] + b[1] * x1 + b[2] * x2 - a[1] * y1 - a[2] * y2;
     }
     y
 }
