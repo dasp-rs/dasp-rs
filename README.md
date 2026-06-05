@@ -5,31 +5,27 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `dasp-rs` is a pure-Rust library for digital audio signal processing, analysis, and
-synthesis. It targets the same ground as Python's `librosa` — STFT/CQT transforms,
-spectral and MIR features, pitch tracking, and music/phonetics notation — but as a
-fast, dependency-light Rust crate that builds with no system libraries.
+synthesis. It covers the same ground as Python's `librosa` — STFT/CQT transforms,
+spectral and MIR features, pitch tracking, and music/phonetics notation — as a fast,
+dependency-light Rust crate that builds with no system libraries.
 
 It is aimed at developers, audio/ML researchers, phoneticians, and music-information-
 retrieval work.
 
 ## Highlights
 
-- **Pure Rust, no system dependencies.** No OpenBLAS, no `pkg-config`, no C toolchain that previously supported.
-- **WAV I/O** with 8/16/24/32-bit PCM and 32-bit float, including segment loading,
-  on-load resampling/mono conversion, and streaming readers for large files.
-- **Time–frequency transforms**: STFT/iSTFT, CQT/iCQT, VQT, pseudo/hybrid CQT, FMT,
-  IIRT, reassigned spectrograms, and Griffin–Lim phase reconstruction.
-- **Spectral & MIR features**: mel spectrogram, MFCC, chroma (STFT/CQT/CENS), spectral
-  centroid/bandwidth/contrast/flatness/rolloff/flux/entropy, tonnetz, RMS, HPSS, and more.
-- **Pitch & tuning**: YIN, pYIN, `piptrack`, tuning estimation.
-- **Music & phonetics notation**: Hz/MIDI/note conversion, mel scale, Western keys,
-  Carnatic melakarta and Hindustani thaat svaras, Functional Just System, Pythagorean
-  and p-limit intervals.
+- **Pure Rust, no system dependencies.** No OpenBLAS, `pkg-config`, or C toolchain
+  required (unlike earlier versions). Builds out of the box on Linux, macOS, and Windows.
+- **Ergonomic builder APIs** for the common entry points (`Decoder`, `stft`, `cqt`,
+  `tempo`, `griffinlim`, …), with positional functions underneath for full control.
+- **WAV I/O** for 8/16/24/32-bit PCM and 32-bit float, with segment loading, on-load
+  resampling / mono conversion, and streaming readers for large files.
+- **Broad feature set**: time–frequency transforms, spectral/MIR features, pitch &
+  tuning, magnitude scaling & loudness weighting, signal generation, and extensive
+  music/phonetics notation utilities.
 - **Parallelized** with `rayon` where it helps.
 
 ## Installation
-
-Add it with Cargo:
 
 ```toml
 [dependencies]
@@ -41,14 +37,16 @@ No additional system packages are required.
 ## Quick start
 
 ```rust
-use dasp_rs::io::load;
+use dasp_rs::io::Decoder;
 use dasp_rs::proc::stft;
 use dasp_rs::feat::mfcc;
-use dasp_rs::types::AudioData;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load a WAV file as mono at 22.05 kHz
-    let audio: AudioData = load("input.wav", Some(22_050), Some(true), None, None)?;
+    // Load a WAV file as mono at 22.05 kHz (builder API)
+    let audio = Decoder::from("input.wav")
+        .sample_rate(22_050)
+        .mono()
+        .load()?;
 
     // Short-Time Fourier Transform (builder API)
     let spec = stft(&audio.samples).n_fft(2048).hop_length(512).compute()?;
@@ -62,28 +60,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## API overview
+The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `feat`,
+`pitch`, `mag`, `generate`, `util`, and a `prelude`.
 
-The public API is organized by concern, re-exported from the crate root:
+## Features
 
-| Module | Contents |
-|--------|----------|
-| `types` | `AudioData`, `AudioError` |
-| `io` | `load`, `export`, `stream`, `stream_lazy`, `Decoder` (builder) |
-| `ops` | sample-wise `mix_signals`, `subtract_signals`, `multiply_signals`, `divide_signals`, `scalar_operation` |
-| `proc` | mono/amplitude/mixing/panning/resampling; time-domain (`delay`, `lpc`, `autocorrelate`, `zero_crossings`, μ-law, …); time–frequency (`stft`/`istft`, `cqt`/`icqt`, `vqt`, `pseudo_cqt`, `hybrid_cqt`, `fmt`, `iirt`, `reassigned_spectrogram`, `magphase`) |
-| `feat` | spectral features (`melspectrogram`, `mfcc`, `chroma_*`, `spectral_*`, `tonnetz`, `hpss`, `rms`, `formant_frequencies`, …), harmonics, rhythm (`tempo`, `tempogram`), `griffinlim`, inverse transforms (`mel_to_audio`, `mfcc_to_audio`, …) |
-| `pitch` | `yin`, `pyin`, `piptrack`, `estimate_tuning`, `pitch_tuning` |
-| `mag` | dB/amplitude/power scaling, A/B/C/D weighting, perceptual weighting, `pcen` |
-| `generate` | `tone`, `chirp`, `clicks` |
-| `util` | time/frame/sample conversions, frequency & note conversions, music/phonetics notation |
-| `prelude` | the most common imports |
+### Audio I/O — `io` / `types`
+- `AudioData` — `f32` sample container (`samples`, `sample_rate`,
+  `channels`) with `to_mono`, `split_channels`, `duration`, `frame_count`, `to_raw`.
+- `Decoder` — builder for loading: `.sample_rate()`, `.mono()`, `.offset()`,
+  `.duration()`, `.load()`.
+- `load` — load a WAV (with optional resample, mono, offset, duration).
+- `export` — write a 32-bit float WAV.
+- `stream` / `stream_lazy` — block/streaming readers for large files.
+- Reads 8/16/24/32-bit PCM and 32-bit float WAV.
 
-Full item-level documentation is on [docs.rs](https://docs.rs/dasp-rs).
+### Sample-wise operations — `ops`
+- `mix_signals`, `subtract_signals`, `multiply_signals`, `divide_signals`,
+  `scalar_operation`.
+
+### Signal processing — `proc`
+- **Channels / amplitude**: `to_mono`, `amplify`, `attenuate`, `normalize`.
+- **Mixing**: `stereo_mix`, `multi_channel_mix`, `dry_wet_mix`.
+- **Panning**: `stereo_pan`, `multi_channel_pan`.
+- **Resampling**: `resample` (sinc-based, via `rubato`).
+- **Time domain**: `delay`, `time_reversal`, `time_crop`, `zero_padding`,
+  `autocorrelate`, `lpc`, `zero_crossings`, `mu_compress`, `mu_expand`, `log_energy`.
+- **Time–frequency**: `stft` / `istft`, `cqt` / `icqt`, `vqt`, `pseudo_cqt`,
+  `hybrid_cqt`, `fmt`, `iirt`, `reassigned_spectrogram`, `magphase`.
+
+### Feature extraction — `feat`
+- **Spectral / MIR**: `melspectrogram`, `mfcc`, `rms`, `chroma_stft`, `chroma_cqt`,
+  `chroma_cens`, `spectral_centroid`, `spectral_bandwidth`, `spectral_contrast`,
+  `spectral_flatness`, `spectral_rolloff`, `spectral_flux`, `spectral_entropy`,
+  `poly_features`, `tonnetz`, `pitch_chroma`, `cmvn`, `hpss`, `pitch_autocorr`,
+  `vad_features`, `spectral_subband_centroids`, `formant_frequencies`.
+- **Harmonics**: `interp_harmonics`, `salience`, `f0_harmonics`, `phase_vocoder`.
+- **Rhythm**: `tempo`, `tempogram`, ratio tempogram.
+- **Manipulation**: `stack_memory`, `temporal_kurtosis`, `zero_crossing_rate`.
+- **Phase reconstruction**: `griffinlim`.
+- **Inverse transforms**: `compute_delta`, `mel_to_stft`, `mel_to_audio`,
+  `mfcc_to_mel`, `mfcc_to_audio`.
+
+### Pitch & tuning — `pitch`
+- `yin`, `pyin` — fundamental-frequency estimation (with independent
+  `frame_length` / `hop_length`).
+- `piptrack` — spectral peak pitch tracking.
+- `estimate_tuning`, `pitch_tuning` — tuning-deviation estimation.
+
+### Magnitude & loudness — `mag`
+- `amplitude_to_db`, `db_to_amplitude`, `power_to_db`, `db_to_power`.
+- `perceptual_weighting`, `frequency_weighting`, `multi_frequency_weighting`.
+- `a_weighting`, `b_weighting`, `c_weighting`, `d_weighting`.
+- `pcen` — per-channel energy normalization.
+
+### Signal generation — `generate`
+- `tone` (sine), `chirp` (linear sweep), `clicks`.
+
+### Utilities — `util`
+- **Time / framing**: `get_duration`, `get_duration_from_path`, `get_samplerate`,
+  `frames_to_samples`, `frames_to_time`, `samples_to_frames`, `samples_to_time`,
+  `time_to_frames`, `time_to_samples`, `blocks_to_frames`, `blocks_to_samples`,
+  `blocks_to_time`, `samples_like`, `times_like`.
+- **Frequency / scales**: `hz_to_midi`, `midi_to_hz`, `hz_to_note`, `note_to_hz`,
+  `note_to_midi`, `midi_to_note`, `hz_to_mel`, `mel_to_hz`, `hz_to_octs`, `octs_to_hz`,
+  `a4_to_tuning`, `tuning_to_a4`, `fft_frequencies`, `cqt_frequencies`,
+  `mel_frequencies`, `tempo_frequencies`, `fourier_tempo_frequencies`.
+- **Notation**:
+  - Western: `key_to_notes`, `key_to_degrees`, `fifths_to_note`.
+  - Carnatic: `mela_to_svara`, `mela_to_degrees`, `list_mela`, `hz_to_svara_c`,
+    `midi_to_svara_c`, `note_to_svara_c`.
+  - Hindustani: `thaat_to_degrees`, `list_thaat`, `hz_to_svara_h`, `midi_to_svara_h`,
+    `note_to_svara_h`.
+  - Just intonation: `interval_to_fjs`, `hz_to_fjs`, `interval_frequencies`,
+    `pythagorean_intervals`, `plimit_intervals`.
+
+Full item-level documentation, with signatures and examples, is on
+[docs.rs](https://docs.rs/dasp-rs).
 
 ## Audio format support
 
-`dasp-rs` reads and writes WAV via [`hound`]. Supported sample formats:
+`dasp-rs` reads and writes WAV via [`hound`]. Internally all audio is `f32`.
 
 | Format | Read | Write |
 |--------|:----:|:-----:|
@@ -93,7 +150,7 @@ Full item-level documentation is on [docs.rs](https://docs.rs/dasp-rs).
 | 32-bit PCM | ✅ | – |
 | 32-bit float | ✅ | ✅ |
 
-Internally all audio is `f32`. `export` writes 32-bit float WAV.
+`export` writes 32-bit float WAV (lossless for the internal representation).
 
 ## Performance
 
@@ -104,8 +161,8 @@ Internally all audio is `f32`. `export` writes 32-bit float WAV.
 
 ## Contributing
 
-Issues and pull requests are welcome on [GitHub]. Please run `cargo test` and
-`cargo clippy` before submitting.
+Issues and pull requests are welcome on [GitHub]. Please run `cargo test` before
+submitting.
 
 ## License
 
@@ -114,10 +171,11 @@ Licensed under the MIT License. See [LICENSE](LICENSE).
 ## Acknowledgements
 
 Thanks to [@Levitanus](https://github.com/Levitanus) for reporting the OpenBLAS build
-failure and 24-bit decoding issues and contributing the diagnosis in
+failure and 24-bit decoding issues, and for the diagnosis in
 [#4](https://github.com/amirhosseinghanipour/dasp-rs/pull/4).
 
 [`hound`]: https://crates.io/crates/hound
 [`rustfft`]: https://crates.io/crates/rustfft
 [`rubato`]: https://crates.io/crates/rubato
 [`nalgebra`]: https://crates.io/crates/nalgebra
+[GitHub]: https://github.com/amirhosseinghanipour/dasp-rs
