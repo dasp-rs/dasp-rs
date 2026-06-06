@@ -172,10 +172,10 @@ Licensed under the MIT License. See [LICENSE](LICENSE).
 
 Thanks to [@Levitanus](https://github.com/Levitanus) for reporting the OpenBLAS build
 failure and 24-bit decoding issues, and for the diagnosis in
-[#4](https://github.com/amirhosseinghanipour/dasp-rs/pull/4).
+[#4](https://github.com/dasp-rs/dasp-rs/pull/4).
 
 [`hound`]: https://crates.io/crates/hound
 [`rustfft`]: https://crates.io/crates/rustfft
 [`rubato`]: https://crates.io/crates/rubato
 [`nalgebra`]: https://crates.io/crates/nalgebra
-[GitHub]: https://github.com/amirhosseinghanipour/dasp-rs
+[GitHub]: https://github.com/dasp-rs/dasp-rs

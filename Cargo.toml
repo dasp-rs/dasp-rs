@@ -13,7 +13,7 @@ keywords = [
   "speech-processing",
   "music-analysis",
 ]
-repository = "https://github.com/amirhosseinghanipour/dasp-rs"
+repository = "https://github.com/dasp-rs/dasp-rs"
 documentation = "https://docs.rs/dasp-rs"
 categories = ["multimedia::audio", "algorithms"]
 readme = "README.md"
