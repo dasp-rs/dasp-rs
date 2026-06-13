@@ -5,19 +5,17 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `dasp-rs` is a pure-Rust library for digital audio signal processing, analysis, and
-synthesis. It covers the same ground as Python's `librosa` — STFT/CQT transforms,
-spectral and MIR features, pitch tracking, and music/phonetics notation — as a fast,
-dependency-light Rust crate that builds with no system libraries.
-
-It is aimed at developers, audio/ML researchers, phoneticians, and music-information-
-retrieval work.
+synthesis as a fast, dependency-light crate that builds with no
+system libraries. It is aimed at developers, audio/ML researchers, phoneticians, and music-information-retrieval work.
 
 ## Highlights
 
 - **Pure Rust, no system dependencies.** No OpenBLAS, `pkg-config`, or C toolchain
   required (unlike earlier versions). Builds out of the box on Linux, macOS, and Windows.
-- **Ergonomic builder APIs** for the common entry points (`Decoder`, `stft`, `cqt`,
-  `tempo`, `griffinlim`, …), with positional functions underneath for full control.
+- **Standards-based STFT**: periodic Hann window and centered (reflect-padded) framing
+  by default, the conventional choices for spectral analysis.
+- **Ergonomic builder APIs** for the common entry points (`Decoder`, `stft`, `istft`,
+  `spectral`, `yin`/`pyin`, `cqt`, `tempo`, `griffinlim`, `clicks`, …).
 - **WAV I/O** for 8/16/24/32-bit PCM and 32-bit float, with segment loading, on-load
   resampling / mono conversion, and streaming readers for large files.
 - **Broad feature set**: time–frequency transforms, spectral/MIR features, pitch &
@@ -29,7 +27,7 @@ retrieval work.
 
 ```toml
 [dependencies]
-dasp-rs = "0.3.1"
+dasp-rs = "0.4"
 ```
 
 No additional system packages are required.
@@ -39,21 +37,24 @@ No additional system packages are required.
 ```rust
 use dasp_rs::io::Decoder;
 use dasp_rs::proc::stft;
-use dasp_rs::feat::mfcc;
+use dasp_rs::feat::spectral;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load a WAV file as mono at 22.05 kHz (builder API)
-    let audio = Decoder::from("input.wav")
+    // Load a WAV file as mono at 22.05 kHz
+    let audio = Decoder::new("input.wav")
         .sample_rate(22_050)
         .mono()
         .load()?;
 
-    // Short-Time Fourier Transform (builder API)
+    // Short-Time Fourier Transform
     let spec = stft(&audio.samples).n_fft(2048).hop_length(512).compute()?;
     println!("STFT: {} bins x {} frames", spec.nrows(), spec.ncols());
 
-    // MFCCs
-    let cc = mfcc(&audio, None, Some(20), None, None)?;
+    // MFCCs via the spectral-feature builder
+    let cc = spectral(&audio.samples, audio.sample_rate)
+        .n_fft(2048)
+        .hop_length(512)
+        .mfcc()?;
     println!("MFCC: {:?}", cc.shape());
 
     Ok(())
@@ -72,7 +73,8 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
   `.duration()`, `.load()`.
 - `load` — load a WAV (with optional resample, mono, offset, duration).
 - `export` — write a 32-bit float WAV.
-- `stream` / `stream_lazy` — block/streaming readers for large files.
+- `stream` / `stream_lazy` — block/streaming readers for large files
+  (`stream_lazy` delivers `Result` items so mid-stream decode errors surface).
 - Reads 8/16/24/32-bit PCM and 32-bit float WAV.
 
 ### Sample-wise operations — `ops`
@@ -90,11 +92,13 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
   `hybrid_cqt`, `fmt`, `iirt`, `reassigned_spectrogram`, `magphase`.
 
 ### Feature extraction — `feat`
-- **Spectral / MIR**: `melspectrogram`, `mfcc`, `rms`, `chroma_stft`, `chroma_cqt`,
-  `chroma_cens`, `spectral_centroid`, `spectral_bandwidth`, `spectral_contrast`,
-  `spectral_flatness`, `spectral_rolloff`, `spectral_flux`, `spectral_entropy`,
-  `poly_features`, `tonnetz`, `pitch_chroma`, `cmvn`, `hpss`, `pitch_autocorr`,
-  `vad_features`, `spectral_subband_centroids`, `formant_frequencies`.
+- **Spectral / MIR** via the `spectral(&y, sr)` builder with terminal methods:
+  `.melspectrogram()`, `.mfcc()`, `.rms()`, `.chroma_cqt()`, `.chroma_cens()`,
+  `.spectral_centroid()`, `.spectral_bandwidth()`, `.spectral_contrast()`,
+  `.spectral_flatness()`, `.spectral_rolloff()`, `.spectral_flux()`,
+  `.spectral_entropy()`, `.poly_features()`, `.tonnetz()`, `.pitch_chroma()`,
+  `.hpss()`, `.pitch_autocorr()`, `.vad_features()`, `.spectral_subband_centroids()`,
+  `.formant_frequencies()`. Also `chroma_stft` and `cmvn(&feats)` builders.
 - **Harmonics**: `interp_harmonics`, `salience`, `f0_harmonics`, `phase_vocoder`.
 - **Rhythm**: `tempo`, `tempogram`, ratio tempogram.
 - **Manipulation**: `stack_memory`, `temporal_kurtosis`, `zero_crossing_rate`.
@@ -103,10 +107,10 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
   `mfcc_to_mel`, `mfcc_to_audio`.
 
 ### Pitch & tuning — `pitch`
-- `yin`, `pyin` — fundamental-frequency estimation (with independent
-  `frame_length` / `hop_length`).
+- `yin(&y, fmin, fmax)`, `pyin(&y, fmin, fmax)` — fundamental-frequency estimation
+  (builders: `.sample_rate()`, `.frame_length()`, `.hop_length()`, `.compute()`).
 - `piptrack` — spectral peak pitch tracking.
-- `estimate_tuning`, `pitch_tuning` — tuning-deviation estimation.
+- `estimate_tuning(&y)` (builder), `pitch_tuning` — tuning-deviation estimation.
 
 ### Magnitude & loudness — `mag`
 - `amplitude_to_db`, `db_to_amplitude`, `power_to_db`, `db_to_power`.
