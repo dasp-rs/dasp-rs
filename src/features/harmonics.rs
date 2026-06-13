@@ -1,4 +1,4 @@
-use ndarray::{Array2, ArrayView1};
+use ndarray::{Array2, ArrayView1, Axis};
 use num_complex::Complex;
 use thiserror::Error;
 
@@ -58,7 +58,7 @@ fn validate_inputs(
     // Check emptiness for arrays
     for &(arr, name) in arrays {
         if arr.is_empty() {
-            return Err(HarmonicsError::InvalidInput(format!("{} array is empty", name)));
+            return Err(HarmonicsError::InvalidInput(format!("{name} array is empty")));
         }
     }
 
@@ -87,10 +87,10 @@ fn validate_inputs(
     // Check finite values and sortedness for arrays
     for &(arr, name) in arrays {
         if check_finite && arr.iter().any(|&v| !v.is_finite()) {
-            return Err(HarmonicsError::NonFiniteInput(format!("{} contain non-finite values", name)));
+            return Err(HarmonicsError::NonFiniteInput(format!("{name} contain non-finite values")));
         }
         if require_sorted && !arr.windows(2).all(|w| w[0] <= w[1]) {
-            return Err(HarmonicsError::InvalidInput(format!("{} must be sorted", name)));
+            return Err(HarmonicsError::InvalidInput(format!("{name} must be sorted")));
         }
     }
 
@@ -182,8 +182,11 @@ fn interpolate_at(x: &[f32], freqs: &[f32], target_freq: f32) -> Result<f32, Har
 /// assert_eq!(result[[1, 1]], 0.3);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn interp_harmonics(x: &[f32], freqs: &[f32], harmonics: &[f32]) -> Result<Array2<f32>, HarmonicsError> {
-    validate_inputs(&[(&x, "amplitudes"), (&freqs, "frequencies")], None, None, true, true, true)?;
+    validate_inputs(&[(x, "amplitudes"), (freqs, "frequencies")], None, None, true, true, true)?;
 
     let n_bins = freqs.len();
     let n_harmonics = harmonics.len();
@@ -233,8 +236,11 @@ pub fn interp_harmonics(x: &[f32], freqs: &[f32], harmonics: &[f32]) -> Result<A
 /// assert_eq!(result.shape(), &[2, 2]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn salience(s: &Array2<f32>, freqs: &[f32], harmonics: &[f32], weights: Option<&[f32]>) -> Result<Array2<f32>, HarmonicsError> {
-    validate_inputs(&[(&freqs, "frequencies")], Some(s), None, true, true, false)?;
+    validate_inputs(&[(freqs, "frequencies")], Some(s), None, true, true, false)?;
     if s.shape()[0] != freqs.len() {
         return Err(HarmonicsError::LengthMismatch(s.shape()[0], freqs.len()));
     }
@@ -294,8 +300,11 @@ pub fn salience(s: &Array2<f32>, freqs: &[f32], harmonics: &[f32], weights: Opti
 /// assert_eq!(result.shape(), &[2, 2]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn f0_harmonics(x: &[f32], f0: &[f32], freqs: &[f32], harmonics: &[f32]) -> Result<Array2<f32>, HarmonicsError> {
-    validate_inputs(&[(&x, "amplitudes"), (&f0, "f0"), (&freqs, "frequencies")], None, None, true, true, false)?;
+    validate_inputs(&[(x, "amplitudes"), (f0, "f0"), (freqs, "frequencies")], None, None, true, true, false)?;
     if x.len() != freqs.len() {
         return Err(HarmonicsError::LengthMismatch(x.len(), freqs.len()));
     }
@@ -335,9 +344,7 @@ fn unwrap_phase(delta_phase: ArrayView1<f32>) -> Vec<f32> {
 fn advance_phase(delta_phase_unwrapped: &[f32], hop: usize, rate: f32) -> Array2<f32> {
     ArrayView1::from(delta_phase_unwrapped)
         .mapv(|x| x / hop as f32 * (hop as f32 * rate))
-        .to_shape((delta_phase_unwrapped.len(), 1))
-        .unwrap()
-        .into_owned()
+        .insert_axis(Axis(1))
 }
 
 /// Performs phase vocoding for time-scale modification of a complex spectrogram.
@@ -370,6 +377,9 @@ fn advance_phase(delta_phase_unwrapped: &[f32], hop: usize, rate: f32) -> Array2
 /// assert_eq!(result.shape()[0], 1);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn phase_vocoder(
     d: &Array2<Complex<f32>>,
     rate: f32,
@@ -406,9 +416,9 @@ pub fn phase_vocoder(
             continue;
         }
 
-        let mag = d.column(orig_t).mapv(|c| c.norm());
-        let phase = d.column(orig_t).mapv(|c| c.arg());
-        let phase_next = d.column(orig_t_next).mapv(|c| c.arg());
+        let mag = d.column(orig_t).mapv(num_complex::Complex::norm);
+        let phase = d.column(orig_t).mapv(num_complex::Complex::arg);
+        let phase_next = d.column(orig_t_next).mapv(num_complex::Complex::arg);
         let delta_phase = phase_next - phase - &ArrayView1::from(&omega) * hop as f32;
 
         let delta_phase_unwrapped = unwrap_phase(delta_phase.view());
@@ -439,7 +449,7 @@ mod tests {
         assert_abs_diff_eq!(interpolate_at(&x, &freqs, 150.0).unwrap(), 0.25, epsilon = EPSILON);
         assert_abs_diff_eq!(interpolate_at(&x, &freqs, 400.0).unwrap(), 0.0, epsilon = EPSILON);
         assert_abs_diff_eq!(
-            interpolate_at(&x, &vec![100.0, 100.0], 100.0).unwrap(),
+            interpolate_at(&x, &[100.0, 100.0], 100.0).unwrap(),
             0.1,
             epsilon = EPSILON
         );
@@ -477,9 +487,7 @@ mod tests {
         let freqs = vec![0.0, 100.0];
         let harmonics = vec![1.0];
         let result = interp_harmonics(&x, &freqs, &harmonics);
-        if !matches!(result, Err(HarmonicsError::NonFiniteInput(_))) {
-            panic!("Expected NonFiniteInput error, got {:?}", result);
-        }
+        assert!(matches!(result, Err(HarmonicsError::NonFiniteInput(_))), "Expected NonFiniteInput error, got {result:?}");
     }
 
     #[test]

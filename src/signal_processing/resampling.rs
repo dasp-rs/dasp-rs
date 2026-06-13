@@ -3,11 +3,9 @@ use thiserror::Error;
 use crate::core::AudioError;
 
 /// Custom error type for resampling operations.
-///
-/// # Variants
-/// * `RubatoError(String)` - Wraps errors from the `rubato` resampling library with a descriptive message.
 #[derive(Error, Debug)]
 pub enum ResampleError {
+    /// Wraps errors from the `rubato` resampling library with a descriptive message.
     #[error("Resampling failed: {0}")]
     RubatoError(String),
 }
@@ -47,7 +45,7 @@ pub fn resample(samples: &[f32], orig_sr: u32, target_sr: u32) -> Result<Vec<f32
         return Ok(vec![]);
     }
 
-    let ratio = target_sr as f64 / orig_sr as f64;
+    let ratio = f64::from(target_sr) / f64::from(orig_sr);
 
     let sinc_len = 256;
     let f_cutoff = 0.95;
@@ -66,12 +64,12 @@ pub fn resample(samples: &[f32], orig_sr: u32, target_sr: u32) -> Result<Vec<f32
         interpolation_params,
         samples.len(),
         1,
-    ).map_err(|e: rubato::ResamplerConstructionError| ResampleError::RubatoError(format!("Resampler initialization failed: {}", e)))?;
+    ).map_err(|e: rubato::ResamplerConstructionError| ResampleError::RubatoError(format!("Resampler initialization failed: {e}")))?;
 
     let input = vec![samples.to_vec()];
 
     let output = resampler.process(&input, None)
-        .map_err(|e| ResampleError::RubatoError(format!("Resampling failed: {}", e)))?;
+        .map_err(|e| ResampleError::RubatoError(format!("Resampling failed: {e}")))?;
     Ok(output[0].clone())
 }
 

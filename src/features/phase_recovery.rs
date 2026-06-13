@@ -48,20 +48,25 @@ pub struct GriffinLimBuilder<'a> {
     hop_length: Option<usize>,
 }
 
-impl<'a> GriffinLimBuilder<'a> {
+impl GriffinLimBuilder<'_> {
     /// Set the number of iterations (default: 32).
+    #[must_use]
     pub fn n_iter(mut self, n_iter: usize) -> Self {
         self.n_iter = n_iter;
         self
     }
 
     /// Set the hop length (default: calculated from spectrogram).
+    #[must_use]
     pub fn hop_length(mut self, hop_length: usize) -> Self {
         self.hop_length = Some(hop_length);
         self
     }
 
     /// Compute the reconstructed signal with the configured parameters.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Vec<f32>, PhaseRecoveryError> {
         griffinlim_impl(self.s, self.n_iter, self.hop_length)
     }
@@ -80,7 +85,7 @@ fn griffinlim_impl(s: &Array2<f32>, n_iter: usize, hop_length: Option<usize>) ->
             .n_fft(n_fft)
             .hop_length(hop)
             .compute()
-            .map_err(|e| PhaseRecoveryError::ComputationFailed(format!("STFT computation failed: {}", e)))?;
+            .map_err(|e| PhaseRecoveryError::ComputationFailed(format!("STFT computation failed: {e}")))?;
         let (mut mag, mut phase) = crate::signal_processing::time_frequency::magphase(&stft_y, None);
         // Griffin-Lim: replace magnitude with target magnitude, keep phase from current estimate
         for ((i, j), m) in mag.indexed_iter_mut() {
@@ -92,7 +97,10 @@ fn griffinlim_impl(s: &Array2<f32>, n_iter: usize, hop_length: Option<usize>) ->
         }
         // Create complex spectrogram: magnitude * phase (element-wise)
         let new_stft = mag.mapv(|x| Complex::new(x, 0.0)) * phase;
-        y = crate::signal_processing::time_frequency::istft(&new_stft, Some(hop), None, Some(signal_len));
+        y = crate::signal_processing::time_frequency::istft(&new_stft)
+            .hop_length(hop)
+            .length(signal_len)
+            .compute();
     }
     Ok(y)
 }

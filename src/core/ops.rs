@@ -24,7 +24,6 @@ use thiserror::Error;
 /// - Division-by-zero warnings are logged using the `log` crate. Users must configure a logging
 ///   backend (e.g., `env_logger`) to see these warnings.
 #[derive(Error, Debug)]
-#[allow(dead_code)]
 pub enum SignalOpError {
     #[error("Sample length mismatch: {0} vs {1}")]
     LengthMismatch(usize, usize),
@@ -40,17 +39,15 @@ pub enum SignalOpError {
 }
 
 /// Formats a vector of indices into a comma-separated string.
-#[allow(dead_code)]
 fn format_indices(indices: &[usize]) -> String {
     indices
         .iter()
-        .map(|i| i.to_string())
+        .map(std::string::ToString::to_string)
         .collect::<Vec<String>>()
         .join(", ")
 }
 
 /// Validates that two audio signals have compatible metadata (sample rate and channels).
-#[allow(dead_code)]
 fn validate_metadata(signal1: &AudioData, signal2: &AudioData) -> Result<(), SignalOpError> {
     if signal1.sample_rate != signal2.sample_rate || signal1.channels != signal2.channels {
         return Err(SignalOpError::InvalidInput(format!(
@@ -91,7 +88,9 @@ fn validate_metadata(signal1: &AudioData, signal2: &AudioData) -> Result<(), Sig
 /// assert_eq!(mixed.channels, 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[allow(dead_code)]
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn mix_signals(signals: &[AudioData]) -> Result<AudioData, SignalOpError> {
     if signals.is_empty() {
         return Err(SignalOpError::InvalidInput(
@@ -163,7 +162,9 @@ pub fn mix_signals(signals: &[AudioData]) -> Result<AudioData, SignalOpError> {
 /// assert_eq!(result.samples, vec![2.0, 3.0]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[allow(dead_code)]
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn subtract_signals(
     signal1: &AudioData,
     signal2: &AudioData,
@@ -188,10 +189,10 @@ pub fn subtract_signals(
         .enumerate()
         .filter_map(|(i, (&s1, &s2))| {
             let result = s1 - s2;
-            if !result.is_finite() {
-                Some(i)
-            } else {
+            if result.is_finite() {
                 None
+            } else {
+                Some(i)
             }
         })
         .collect();
@@ -237,7 +238,9 @@ pub fn subtract_signals(
 /// assert_eq!(result.samples, vec![4.0, 6.0]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[allow(dead_code)]
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn multiply_signals(
     signal1: &AudioData,
     signal2: &AudioData,
@@ -262,10 +265,10 @@ pub fn multiply_signals(
         .enumerate()
         .filter_map(|(i, (&s1, &s2))| {
             let result = s1 * s2;
-            if !result.is_finite() {
-                Some(i)
-            } else {
+            if result.is_finite() {
                 None
+            } else {
+                Some(i)
             }
         })
         .collect();
@@ -311,7 +314,9 @@ pub fn multiply_signals(
 /// assert_eq!(result.samples, vec![3.0, 2.0]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[allow(dead_code)]
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn divide_signals(
     signal1: &AudioData,
     signal2: &AudioData,
@@ -336,14 +341,14 @@ pub fn divide_signals(
         .enumerate()
         .filter_map(|(i, (&s1, &s2))| {
             if s2 == 0.0 {
-                warn!("Division by zero at index {}, clamping to 0.0", i);
+                warn!("Division by zero at index {i}, clamping to 0.0");
                 return None;
             }
             let result = s1 / s2;
-            if !result.is_finite() {
-                Some(i)
-            } else {
+            if result.is_finite() {
                 None
+            } else {
+                Some(i)
             }
         })
         .collect();
@@ -368,7 +373,6 @@ pub fn divide_signals(
 
 /// Supported scalar operations for `scalar_operation`.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum ScalarOp {
     Add,
     Subtract,
@@ -379,7 +383,7 @@ pub enum ScalarOp {
 /// Applies a scalar operation to an audio signal in parallel.
 ///
 /// Performs element-wise addition, subtraction, multiplication, or division between
-/// a signalÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢s samples and a scalar value, producing a new `AudioData`. Division by zero
+/// a signal's samples and a scalar value, producing a new `AudioData`. Division by zero
 /// is explicitly rejected.
 ///
 /// # Parameters
@@ -410,7 +414,9 @@ pub enum ScalarOp {
 /// assert_eq!(scaled, vec![vec![4.0, 8.0], vec![2.0, 4.0]]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[allow(dead_code)]
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn scalar_operation(
     signal: &AudioData,
     scalar: f32,
@@ -438,10 +444,10 @@ pub fn scalar_operation(
                     s / scalar
                 }
             };
-            if !result.is_finite() {
-                Some(i)
-            } else {
+            if result.is_finite() {
                 None
+            } else {
+                Some(i)
             }
         })
         .collect();
@@ -464,7 +470,7 @@ pub fn scalar_operation(
                 ScalarOp::Add => s + scalar,
                 ScalarOp::Subtract => s - scalar,
                 ScalarOp::Multiply => s * scalar,
-                ScalarOp::Divide => s / scalar, // Already checked for zero
+                ScalarOp::Divide => s / scalar,
             }
         })
         .collect();

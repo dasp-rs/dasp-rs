@@ -46,6 +46,9 @@ pub enum PanningError {
 /// assert_eq!(panned_left.samples, vec![1.0, 0.0, 1.0, 0.0]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn stereo_pan(signal: &AudioData, pan: f32) -> Result<AudioData, PanningError> {
     if signal.channels != 1 {
         return Err(PanningError::NotMono(signal.channels));
@@ -57,7 +60,7 @@ pub fn stereo_pan(signal: &AudioData, pan: f32) -> Result<AudioData, PanningErro
     }
 
     let left_gain = (1.0 - pan) / 2.0;
-    let right_gain = (pan + 1.0) / 2.0;
+    let right_gain = f32::midpoint(pan, 1.0);
 
     let mut samples = Vec::with_capacity(signal.samples.len() * 2);
     for &sample in &signal.samples {
@@ -98,6 +101,9 @@ pub fn stereo_pan(signal: &AudioData, pan: f32) -> Result<AudioData, PanningErro
 /// assert_eq!(panned.samples[3], 0.0); // LFE off
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn multi_channel_pan(
     signal: &AudioData,
     azimuth: f32,
@@ -125,7 +131,7 @@ pub fn multi_channel_pan(
                 -1.0 + (azimuth - 270.0) / 90.0
             };
             gains[0] = (1.0 - pan) / 2.0;
-            gains[1] = (pan + 1.0) / 2.0;
+            gains[1] = f32::midpoint(pan, 1.0);
         }
         4 => {
             if azimuth <= 90.0 {
@@ -171,7 +177,7 @@ pub fn multi_channel_pan(
             }
             gains[3] = 0.0; // LFE always off
         }
-        _ => unreachable!(),
+        _ => return Err(PanningError::UnsupportedChannels(channels)),
     }
 
     let mut samples = Vec::with_capacity(signal.samples.len() * channels as usize);
