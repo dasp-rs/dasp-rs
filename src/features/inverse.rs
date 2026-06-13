@@ -1,6 +1,6 @@
 use crate::core::io::AudioData;
 use crate::features::phase_recovery::griffinlim;
-use crate::utils::frequency::{fft_frequencies, mel_frequencies};
+use crate::utils::frequency::{fft_frequencies_impl, mel_frequencies_impl};
 use ndarray::{Array2, Axis};
 use rayon::prelude::*;
 use thiserror::Error;
@@ -38,7 +38,43 @@ pub enum MfccError {
 /// # Constraints
 /// - `width` must be a positive odd integer.
 /// - `mfcc` must have at least `width` elements along the time axis.
-pub fn compute_delta(
+pub fn compute_delta(mfcc: &Array2<f32>) -> ComputeDeltaBuilder<'_> {
+    ComputeDeltaBuilder { mfcc, width: 9, axis: -1 }
+}
+
+/// Builder for [`compute_delta`].
+#[derive(Debug, Clone)]
+pub struct ComputeDeltaBuilder<'a> {
+    mfcc: &'a Array2<f32>,
+    width: usize,
+    axis: isize,
+}
+
+impl ComputeDeltaBuilder<'_> {
+    /// Set the window width (must be a positive odd integer; default: 9).
+    #[must_use]
+    pub fn width(mut self, width: usize) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// Set the time axis (-1 for frames, 0 for coefficients; default: -1).
+    #[must_use]
+    pub fn axis(mut self, axis: isize) -> Self {
+        self.axis = axis;
+        self
+    }
+
+    /// Compute the delta coefficients.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Array2<f32>, MfccError> {
+        compute_delta_impl(self.mfcc, Some(self.width), Some(self.axis))
+    }
+}
+
+fn compute_delta_impl(
     mfcc: &Array2<f32>,
     width: Option<usize>,
     axis: Option<isize>,
@@ -51,7 +87,7 @@ pub fn compute_delta(
             "Width must be a positive odd integer".to_string(),
         ));
     }
-    let ax = if axis < 0 { 1 } else { 0 };
+    let ax = usize::from(axis < 0);
     let (n_mfcc, n_frames) = if ax == 1 {
         mfcc.dim()
     } else {
@@ -64,8 +100,7 @@ pub fn compute_delta(
     }
     if n_frames < width {
         return Err(MfccError::InvalidDimensions(format!(
-            "Time axis length {} less than width {}",
-            n_frames, width
+            "Time axis length {n_frames} less than width {width}"
         )));
     }
 
@@ -115,7 +150,51 @@ pub fn compute_delta(
 /// # Returns
 /// - `Ok(Array2<f32>)`: STFT magnitude spectrogram, shape `(n_fft/2 + 1, n_frames)`.
 /// - `Err(MfccError)`: Failure due to invalid dimensions or parameters.
-pub fn mel_to_stft(
+pub fn mel_to_stft(m: &Array2<f32>) -> MelToStftBuilder<'_> {
+    MelToStftBuilder { m, sr: 44100, n_fft: 2048, power: 2.0 }
+}
+
+/// Builder for [`mel_to_stft`].
+#[derive(Debug, Clone)]
+pub struct MelToStftBuilder<'a> {
+    m: &'a Array2<f32>,
+    sr: u32,
+    n_fft: usize,
+    power: f32,
+}
+
+impl MelToStftBuilder<'_> {
+    /// Set the sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sr = sr;
+        self
+    }
+
+    /// Set the FFT size (default: 2048).
+    #[must_use]
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Set the magnitude exponent (default: 2.0).
+    #[must_use]
+    pub fn power(mut self, power: f32) -> Self {
+        self.power = power;
+        self
+    }
+
+    /// Approximate an STFT magnitude spectrogram from a mel spectrogram.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Array2<f32>, MfccError> {
+        mel_to_stft_impl(self.m, Some(self.sr), Some(self.n_fft), Some(self.power))
+    }
+}
+
+fn mel_to_stft_impl(
     m: &Array2<f32>,
     sr: Option<u32>,
     n_fft: Option<usize>,
@@ -142,8 +221,8 @@ pub fn mel_to_stft(
 
     let n_mels = m.shape()[0];
     let n_frames = m.shape()[1];
-    let mel_f = mel_frequencies(Some(n_mels + 2), None, Some(sr as f32 / 2.0), None);
-    let fft_f = fft_frequencies(Some(sr), Some(n_fft));
+    let mel_f = mel_frequencies_impl(n_mels + 2, 0.0, sr as f32 / 2.0);
+    let fft_f = fft_frequencies_impl(sr, n_fft);
     let n_bins = n_fft / 2 + 1;
 
     let mut s = Array2::zeros((n_bins, n_frames));
@@ -191,7 +270,51 @@ pub fn mel_to_stft(
 ///
 /// # Complexity
 /// - O(M * F * B + G) where G is Griffin-Lim complexity, parallelized in `mel_to_stft`.
-pub fn mel_to_audio(
+pub fn mel_to_audio(m: &Array2<f32>) -> MelToAudioBuilder<'_> {
+    MelToAudioBuilder { m, sr: 44100, n_fft: 2048, hop_length: None }
+}
+
+/// Builder for [`mel_to_audio`].
+#[derive(Debug, Clone)]
+pub struct MelToAudioBuilder<'a> {
+    m: &'a Array2<f32>,
+    sr: u32,
+    n_fft: usize,
+    hop_length: Option<usize>,
+}
+
+impl MelToAudioBuilder<'_> {
+    /// Set the sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sr = sr;
+        self
+    }
+
+    /// Set the FFT size (default: 2048).
+    #[must_use]
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Set the hop length (default: `n_fft / 4`).
+    #[must_use]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = Some(hop_length);
+        self
+    }
+
+    /// Reconstruct audio from a mel spectrogram (via Griffin-Lim).
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<AudioData, MfccError> {
+        mel_to_audio_impl(self.m, Some(self.sr), Some(self.n_fft), self.hop_length)
+    }
+}
+
+fn mel_to_audio_impl(
     m: &Array2<f32>,
     sr: Option<u32>,
     n_fft: Option<usize>,
@@ -206,11 +329,11 @@ pub fn mel_to_audio(
         ));
     }
 
-    let s = mel_to_stft(m, Some(sr), Some(n_fft), None)?;
+    let s = mel_to_stft_impl(m, Some(sr), Some(n_fft), None)?;
     let samples = griffinlim(&s)
         .hop_length(hop)
         .compute()
-        .map_err(|e| MfccError::ComputationFailed(format!("Griffin-Lim failed: {}", e)))?;
+        .map_err(|e| MfccError::ComputationFailed(format!("Griffin-Lim failed: {e}")))?;
     if samples.is_empty() {
         return Err(MfccError::ComputationFailed(
             "Griffin-Lim returned empty samples".to_string(),
@@ -221,7 +344,7 @@ pub fn mel_to_audio(
             "Non-finite samples in reconstruction".to_string(),
         ));
     }
-    Ok(AudioData::new(samples, sr, 1).map_err(|e| MfccError::ComputationFailed(e.to_string()))?)
+    AudioData::new(samples, sr, 1).map_err(|e| MfccError::ComputationFailed(e.to_string()))
 }
 
 /// Converts MFCCs back to mel spectrogram using inverse DCT.
@@ -239,7 +362,43 @@ pub fn mel_to_audio(
 ///
 /// # Complexity
 /// - O(M * F * K) where M is mel bins, F is frames, K is MFCC coefficients, parallelized over frames.
-pub fn mfcc_to_mel(
+pub fn mfcc_to_mel(mfcc: &Array2<f32>) -> MfccToMelBuilder<'_> {
+    MfccToMelBuilder { mfcc, n_mels: 128, dct_type: 2 }
+}
+
+/// Builder for [`mfcc_to_mel`].
+#[derive(Debug, Clone)]
+pub struct MfccToMelBuilder<'a> {
+    mfcc: &'a Array2<f32>,
+    n_mels: usize,
+    dct_type: i32,
+}
+
+impl MfccToMelBuilder<'_> {
+    /// Set the number of mel bins (default: 128).
+    #[must_use]
+    pub fn n_mels(mut self, n_mels: usize) -> Self {
+        self.n_mels = n_mels;
+        self
+    }
+
+    /// Set the DCT type (default: 2).
+    #[must_use]
+    pub fn dct_type(mut self, dct_type: i32) -> Self {
+        self.dct_type = dct_type;
+        self
+    }
+
+    /// Invert MFCCs back to a mel spectrogram.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Array2<f32>, MfccError> {
+        mfcc_to_mel_impl(self.mfcc, Some(self.n_mels), Some(self.dct_type))
+    }
+}
+
+fn mfcc_to_mel_impl(
     mfcc: &Array2<f32>,
     n_mels: Option<usize>,
     dct_type: Option<i32>,
@@ -253,8 +412,7 @@ pub fn mfcc_to_mel(
     }
     if ![1, 2, 3, 4].contains(&dct_type) {
         return Err(MfccError::InvalidInput(format!(
-            "Unsupported DCT type: {}",
-            dct_type
+            "Unsupported DCT type: {dct_type}"
         )));
     }
 
@@ -296,15 +454,57 @@ pub fn mfcc_to_mel(
 /// # Returns
 /// - `Ok(AudioData)`: Reconstructed audio waveform with metadata.
 /// - `Err(MfccError)`: Failure due to invalid input or reconstruction errors.
-pub fn mfcc_to_audio(
-    mfcc: &Array2<f32>,
-    n_mels: Option<usize>,
-    sr: Option<u32>,
-    n_fft: Option<usize>,
+pub fn mfcc_to_audio(mfcc: &Array2<f32>) -> MfccToAudioBuilder<'_> {
+    MfccToAudioBuilder { mfcc, n_mels: 128, sr: 44100, n_fft: 2048, hop_length: None }
+}
+
+/// Builder for [`mfcc_to_audio`].
+#[derive(Debug, Clone)]
+pub struct MfccToAudioBuilder<'a> {
+    mfcc: &'a Array2<f32>,
+    n_mels: usize,
+    sr: u32,
+    n_fft: usize,
     hop_length: Option<usize>,
-) -> Result<AudioData, MfccError> {
-    let mel = mfcc_to_mel(mfcc, n_mels, Some(2))?;
-    mel_to_audio(&mel, sr, n_fft, hop_length)
+}
+
+impl MfccToAudioBuilder<'_> {
+    /// Set the number of mel bins (default: 128).
+    #[must_use]
+    pub fn n_mels(mut self, n_mels: usize) -> Self {
+        self.n_mels = n_mels;
+        self
+    }
+
+    /// Set the sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sr = sr;
+        self
+    }
+
+    /// Set the FFT size (default: 2048).
+    #[must_use]
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Set the hop length (default: `n_fft / 4`).
+    #[must_use]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = Some(hop_length);
+        self
+    }
+
+    /// Reconstruct audio directly from MFCCs.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<AudioData, MfccError> {
+        let mel = mfcc_to_mel_impl(self.mfcc, Some(self.n_mels), Some(2))?;
+        mel_to_audio_impl(&mel, Some(self.sr), Some(self.n_fft), self.hop_length)
+    }
 }
 
 #[cfg(test)]
@@ -315,28 +515,28 @@ mod tests {
     #[test]
     fn test_compute_delta_invalid_width() {
         let mfcc = array![[0.1, 0.2], [0.3, 0.4]];
-        let result = compute_delta(&mfcc, Some(2), None); // Invalid even width
+        let result = compute_delta(&mfcc).width(2).compute(); // Invalid even width
         assert!(matches!(result, Err(MfccError::InvalidInput(_))));
     }
 
     #[test]
     fn test_compute_delta_empty_input() {
         let mfcc = array![[]]; // Empty input
-        let result = compute_delta(&mfcc, Some(3), None);
+        let result = compute_delta(&mfcc).width(3).compute();
         assert!(matches!(result, Err(MfccError::InvalidDimensions(_))));
     }
 
     #[test]
     fn test_compute_delta_insufficient_frames() {
         let mfcc = array![[0.1, 0.2], [0.3, 0.4]]; // Only 2 frames
-        let result = compute_delta(&mfcc, Some(5), None); // Width 5 requires at least 5 frames
+        let result = compute_delta(&mfcc).width(5).compute(); // Width 5 requires at least 5 frames
         assert!(matches!(result, Err(MfccError::InvalidDimensions(_))));
     }
 
     #[test]
     fn test_mfcc_to_mel() {
         let mfcc = array![[0.1, 0.2], [0.3, 0.4]];
-        let mel = mfcc_to_mel(&mfcc, Some(4), None).unwrap();
+        let mel = mfcc_to_mel(&mfcc).n_mels(4).compute().unwrap();
         assert_eq!(mel.shape(), &[4, 2]);
         assert!(mel[[0, 0]] > 0.0);
     }
@@ -345,11 +545,11 @@ mod tests {
     fn test_invalid_input() {
         let empty = array![[]];
         assert!(matches!(
-            compute_delta(&empty, None, None),
+            compute_delta(&empty).compute(),
             Err(MfccError::InvalidDimensions(_))
         ));
         assert!(matches!(
-            mel_to_stft(&empty, None, None, None),
+            mel_to_stft(&empty).compute(),
             Err(MfccError::InvalidDimensions(_))
         ));
     }
