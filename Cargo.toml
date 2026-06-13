@@ -1,10 +1,10 @@
 [package]
 name = "dasp-rs"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Pure-Rust digital audio signal processing: I/O, STFT/CQT, spectral & MIR features, pitch, and music/phonetics notation."
-authors = ["Amirhossein Ghanipour d3v1ll3n@gmail.com"]
+authors = ["Amirhossein Ghanipour <d3v1ll3n@gmail.com>"]
 license = "MIT"
 keywords = [
   "audio",
@@ -22,13 +22,33 @@ readme = "README.md"
 hound = "3.5.1"
 rustfft = "6.2.0"
 num-complex = "0.4.6"
-thiserror = "1.0"
+thiserror = "2"
 rubato = "0.16.1"
 ndarray = { version = "0.16", features = ["rayon"] }
-approx = "0.5.1"
 rayon = "1.10.0"
 nalgebra = "0.33"
 log = "0.4.27"
 
 [dev-dependencies]
+approx = "0.5.1"
 tempfile = "3.20.0"
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+similar_names = "allow"
+many_single_char_names = "allow"
+missing_const_for_fn = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+must_use_candidate = "allow"
+redundant_pub_crate = "allow"
