@@ -20,14 +20,14 @@
 //!
 //! ```toml
 //! [dependencies]
-//! dasp-rs = "0.3.1"
+//! dasp-rs = "0.4"
 //! ```
 //!
 //! ```no_run
 //! // Option 1: Use prelude for convenience
 //! use dasp_rs::prelude::*;
 //! 
-//! let audio = Decoder::from("example.wav")
+//! let audio = Decoder::new("example.wav")
 //!     .sample_rate(22050)
 //!     .mono()
 //!     .load()?;
@@ -41,7 +41,7 @@
 //! // Option 2: Explicit imports for clarity
 //! use dasp_rs::{types::AudioData, io::{Decoder, export}, util::get_duration};
 //! 
-//! let audio = Decoder::from("example.wav")
+//! let audio = Decoder::new("example.wav")
 //!     .sample_rate(22050)
 //!     .mono()
 //!     .load()?;
@@ -54,7 +54,7 @@
 //! ## API Structure
 //! The API is organized by concern for clarity and discoverability:
 //! - `prelude` - Convenient imports for common use cases
-//! - `types` - Core audio data types (AudioData, AudioError)
+//! - `types` - Core audio data types (`AudioData`, `AudioError`)
 //! - `io` - Audio input/output operations
 //! - `proc` - Signal processing algorithms
 //! - `feat` - Audio feature extraction
@@ -62,8 +62,6 @@
 //! - `pitch` - Pitch detection and conversion
 //! - `mag` - Magnitude spectrum operations
 //! - `generate` - Signal generation
-
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
 // Internal modules
 mod core;
@@ -149,7 +147,7 @@ pub mod generate {
 /// use dasp_rs::prelude::*;
 /// 
 /// // Now you can use common items directly
-/// let audio = Decoder::from("file.wav").mono().load()?;
+/// let audio = Decoder::new("file.wav").mono().load()?;
 /// let duration = get_duration(&audio);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -176,8 +174,8 @@ pub mod prelude {
         harmonics::salience,
         rhythm::tempo,
     };
-    pub use crate::features::spectral::spectral_centroid;
-    
+    pub use crate::features::spectral::spectral;
+
     // Pitch operations
     pub use crate::pitch_core::*;
 }
