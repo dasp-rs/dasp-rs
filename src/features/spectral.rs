@@ -7,11 +7,10 @@ use nalgebra::{DMatrix, DVector};
 use num_complex::Complex;
 use thiserror::Error;
 use crate::core::io::{AudioError, AudioData};
-use crate::utils::frequency::{fft_frequencies, mel_frequencies};
+use crate::utils::frequency::{fft_frequencies_impl, mel_frequencies_impl};
 
 /// Chroma STFT builder for method chaining (internal use only).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ChromaStftBuilder<'a> {
     y: &'a [f32],
     sr: u32,
@@ -20,29 +19,32 @@ pub struct ChromaStftBuilder<'a> {
     norm: f32,
 }
 
-impl<'a> ChromaStftBuilder<'a> {
+impl ChromaStftBuilder<'_> {
     /// Set the FFT size (default: 2048).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn n_fft(mut self, n_fft: usize) -> Self {
         self.n_fft = n_fft;
         self
     }
 
     /// Set the hop length (default: 512).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn hop_length(mut self, hop_length: usize) -> Self {
         self.hop_length = hop_length;
         self
     }
 
     /// Set the normalization factor (default: 1.0).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn norm(mut self, norm: f32) -> Self {
         self.norm = norm;
         self
     }
 
     /// Compute chroma features using STFT.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
         chroma_stft_impl(self.y, self.sr, None, Some(self.norm), Some(self.n_fft), Some(self.hop_length))
     }
@@ -50,7 +52,6 @@ impl<'a> ChromaStftBuilder<'a> {
 
 /// Mel spectrogram builder for method chaining (internal use only).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct MelSpectrogramBuilder<'a> {
     y: &'a [f32],
     sr: u32,
@@ -60,45 +61,47 @@ pub struct MelSpectrogramBuilder<'a> {
     fmax: f32,
 }
 
-impl<'a> MelSpectrogramBuilder<'a> {
+impl MelSpectrogramBuilder<'_> {
     /// Set the FFT size (default: 2048).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn n_fft(mut self, n_fft: usize) -> Self {
         self.n_fft = n_fft;
         self
     }
 
     /// Set the hop length (default: 512).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn hop_length(mut self, hop_length: usize) -> Self {
         self.hop_length = hop_length;
         self
     }
 
     /// Set the number of mel bins (default: 128).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn n_mels(mut self, n_mels: usize) -> Self {
         self.n_mels = n_mels;
         self
     }
 
-    /// Set the maximum frequency (default: sample_rate / 2).
-    #[allow(dead_code)]
+    /// Set the maximum frequency (default: `sample_rate` / 2).
+    #[must_use]
     pub fn fmax(mut self, fmax: f32) -> Self {
         self.fmax = fmax;
         self
     }
 
     /// Compute mel spectrogram.
-    #[allow(dead_code)]
+    ///
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
-        melspectrogram_impl(self.y, self.sr, None, None, Some(self.n_fft), Some(self.hop_length), Some(self.n_mels), Some(self.fmax))
+        melspectrogram_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), Some(self.n_mels), Some(self.fmax))
     }
 }
 
 /// Spectral analysis builder for method chaining (internal use only).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct SpectralBuilder<'a> {
     y: &'a [f32],
     sr: u32,
@@ -109,118 +112,374 @@ pub struct SpectralBuilder<'a> {
     fmin: f32,
     fmax: f32,
     norm: f32,
+    bins_per_octave: usize,
+    frame_length: usize,
+    harm_win: usize,
+    perc_win: usize,
+    n_bands: usize,
+    n_formants: usize,
+    order: usize,
+    roll_percent: f32,
+    p: i32,
 }
 
-impl<'a> SpectralBuilder<'a> {
+impl SpectralBuilder<'_> {
     /// Set the FFT size (default: 2048).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn n_fft(mut self, n_fft: usize) -> Self {
         self.n_fft = n_fft;
         self
     }
 
     /// Set the hop length (default: 512).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn hop_length(mut self, hop_length: usize) -> Self {
         self.hop_length = hop_length;
         self
     }
 
     /// Set the window length (default: 2048).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn win_length(mut self, win_length: usize) -> Self {
         self.win_length = win_length;
         self
     }
 
     /// Set the number of mel bins (default: 128).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn n_mels(mut self, n_mels: usize) -> Self {
         self.n_mels = n_mels;
         self
     }
 
     /// Set the minimum frequency (default: 0.0).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn fmin(mut self, fmin: f32) -> Self {
         self.fmin = fmin;
         self
     }
 
-    /// Set the maximum frequency (default: sample_rate / 2).
-    #[allow(dead_code)]
+    /// Set the maximum frequency (default: `sample_rate` / 2).
+    #[must_use]
     pub fn fmax(mut self, fmax: f32) -> Self {
         self.fmax = fmax;
         self
     }
 
     /// Set the normalization factor (default: 1.0).
-    #[allow(dead_code)]
+    #[must_use]
     pub fn norm(mut self, norm: f32) -> Self {
         self.norm = norm;
         self
     }
 
     /// Compute chroma features using STFT.
-    #[allow(dead_code)]
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn chroma_stft(self) -> Result<Array2<f32>, SpectralError> {
         chroma_stft_impl(self.y, self.sr, None, Some(self.norm), Some(self.n_fft), Some(self.hop_length))
     }
 
     /// Compute mel spectrogram.
-    #[allow(dead_code)]
+    ///
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn melspectrogram(self) -> Result<Array2<f32>, SpectralError> {
-        melspectrogram_impl(self.y, self.sr, None, None, Some(self.n_fft), Some(self.hop_length), Some(self.n_mels), Some(self.fmax))
+        melspectrogram_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), Some(self.n_mels), Some(self.fmax))
     }
 
     /// Compute MFCC features.
-    #[allow(dead_code)]
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn mfcc(self) -> Result<Array2<f32>, SpectralError> {
         mfcc_impl(self.y, self.sr, None, None, Some(self.n_fft), Some(self.hop_length))
     }
 
     /// Compute spectral centroid.
-    #[allow(dead_code)]
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_centroid(self) -> Result<Array1<f32>, SpectralError> {
         spectral_centroid_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
     }
 
     /// Compute spectral bandwidth.
-    #[allow(dead_code)]
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_bandwidth(self) -> Result<Array1<f32>, SpectralError> {
-        spectral_bandwidth_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), None)
+        spectral_bandwidth_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), Some(self.p))
     }
 
     /// Compute spectral rolloff.
-    #[allow(dead_code)]
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_rolloff(self) -> Result<Array1<f32>, SpectralError> {
-        spectral_rolloff_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), None)
+        spectral_rolloff_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), Some(self.roll_percent))
     }
 
     /// Compute spectral flatness.
-    #[allow(dead_code)]
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_flatness(self) -> Result<Array1<f32>, SpectralError> {
         spectral_flatness_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
     }
 
     /// Compute spectral flux.
-    #[allow(dead_code)]
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_flux(self) -> Result<Array1<f32>, SpectralError> {
         spectral_flux_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
     }
 
     /// Compute spectral entropy.
-    #[allow(dead_code)]
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_entropy(self) -> Result<Array1<f32>, SpectralError> {
         spectral_entropy_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
     }
 
-    /// Compute the configured spectral analysis.
-    #[allow(dead_code)]
-    pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
-        // This is a placeholder - the actual function will be determined by the caller
-        // For now, default to chroma_stft
-        self.chroma_stft()
+    /// Set the bins per octave for CQT-based chroma (default: 12).
+    #[must_use]
+    pub fn bins_per_octave(mut self, v: usize) -> Self {
+        self.bins_per_octave = v;
+        self
+    }
+
+    /// Set the frame length for frame-based features (default: 2048).
+    #[must_use]
+    pub fn frame_length(mut self, v: usize) -> Self {
+        self.frame_length = v;
+        self
+    }
+
+    /// Set the harmonic median-filter window for HPSS (default: 31).
+    #[must_use]
+    pub fn harm_win(mut self, v: usize) -> Self {
+        self.harm_win = v;
+        self
+    }
+
+    /// Set the percussive median-filter window for HPSS (default: 31).
+    #[must_use]
+    pub fn perc_win(mut self, v: usize) -> Self {
+        self.perc_win = v;
+        self
+    }
+
+    /// Set the number of sub-bands (default: 6).
+    #[must_use]
+    pub fn n_bands(mut self, v: usize) -> Self {
+        self.n_bands = v;
+        self
+    }
+
+    /// Set the number of formants (default: 3).
+    #[must_use]
+    pub fn n_formants(mut self, v: usize) -> Self {
+        self.n_formants = v;
+        self
+    }
+
+    /// Set the polynomial order for `poly_features` (default: 1).
+    #[must_use]
+    pub fn order(mut self, v: usize) -> Self {
+        self.order = v;
+        self
+    }
+
+    /// Set the roll-off fraction for `spectral_rolloff` (default: 0.85).
+    #[must_use]
+    pub fn roll_percent(mut self, v: f32) -> Self {
+        self.roll_percent = v;
+        self
+    }
+
+    /// Set the norm exponent for `spectral_bandwidth` (default: 2).
+    #[must_use]
+    pub fn p(mut self, v: i32) -> Self {
+        self.p = v;
+        self
+    }
+
+    /// Compute CQT-based chroma.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn chroma_cqt(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        let fmin = if self.fmin > 0.0 { Some(self.fmin) } else { None };
+        chroma_cqt(&audio, None, Some(self.hop_length), fmin, Some(self.bins_per_octave))
+    }
+
+    /// Compute CENS chroma.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn chroma_cens(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        let fmin = if self.fmin > 0.0 { Some(self.fmin) } else { None };
+        chroma_cens(
+            &audio,
+            None,
+            Some(self.hop_length),
+            fmin,
+            Some(self.bins_per_octave),
+            Some(self.win_length),
+        )
+    }
+
+    /// Compute spectral contrast.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn spectral_contrast(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        spectral_contrast(&audio, None, Some(self.n_fft), Some(self.hop_length), Some(self.n_bands))
+    }
+
+    /// Compute polynomial coefficients of the spectrum.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn poly_features(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        poly_features(&audio, None, Some(self.n_fft), Some(self.hop_length), Some(self.order))
+    }
+
+    /// Compute tonal centroid features (tonnetz).
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn tonnetz(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        tonnetz(&audio, None)
+    }
+
+    /// Compute a pitch-class chromagram.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn pitch_chroma(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        pitch_chroma(&audio, None, Some(self.n_fft), Some(self.hop_length))
+    }
+
+    /// Compute sub-band spectral centroids.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn spectral_subband_centroids(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        spectral_subband_centroids(
+            &audio,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+            Some(self.n_bands),
+        )
+    }
+
+    /// Compute root-mean-square energy per frame.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn rms(self) -> Result<Array1<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        rms(&audio, None, Some(self.frame_length), Some(self.hop_length))
+    }
+
+    /// Separate harmonic and percussive components.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn hpss(self) -> Result<(Array2<f32>, Array2<f32>), SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        hpss(
+            &audio,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+            Some(self.harm_win),
+            Some(self.perc_win),
+        )
+    }
+
+    /// Estimate fundamental frequency by autocorrelation.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn pitch_autocorr(self) -> Result<Array1<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        let fmin = if self.fmin > 0.0 { Some(self.fmin) } else { None };
+        pitch_autocorr(&audio, Some(self.frame_length), Some(self.hop_length), fmin, None)
+    }
+
+    /// Compute voice-activity-detection features.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn vad_features(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        vad_features(&audio, Some(self.frame_length), Some(self.hop_length), Some(self.n_fft))
+    }
+
+    /// Estimate formant frequencies.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn formant_frequencies(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        formant_frequencies(
+            &audio,
+            Some(self.n_formants),
+            Some(self.frame_length),
+            Some(self.hop_length),
+        )
+    }
+}
+
+/// Creates a spectral-feature builder over a signal.
+///
+/// Ergonomic, chainable entry point for the spectral feature family
+/// (`mfcc`, `melspectrogram`, `spectral_centroid`, …) instead of positional
+/// optional arguments. Terminal methods (`.mfcc()`, `.melspectrogram()`, …)
+/// run the chosen analysis.
+///
+/// # Examples
+/// ```no_run
+/// use dasp_rs::feat::spectral;
+/// let y = vec![0.0_f32; 4096];
+/// let cc = spectral(&y, 44100).n_fft(2048).hop_length(512).mfcc()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn spectral(y: &[f32], sr: u32) -> SpectralBuilder<'_> {
+    SpectralBuilder {
+        y,
+        sr,
+        n_fft: 2048,
+        hop_length: 512,
+        win_length: 2048,
+        n_mels: 128,
+        fmin: 0.0,
+        fmax: sr as f32 / 2.0,
+        norm: 1.0,
+        bins_per_octave: 12,
+        frame_length: 2048,
+        harm_win: 31,
+        perc_win: 31,
+        n_bands: 6,
+        n_formants: 3,
+        order: 1,
+        roll_percent: 0.85,
+        p: 2,
     }
 }
 
@@ -271,11 +530,11 @@ pub enum SpectralError {
     #[error("Numerical error: {0}")]
     Numerical(String),
 
-    /// Wraps an AudioError from the core module (e.g., from time-domain functions).
+    /// Wraps an `AudioError` from the core module (e.g., from time-domain functions).
     #[error("Audio processing error: {0}")]
     Audio(#[from] AudioError),
 
-    /// A variant for TimeDomainError
+    /// A variant for `TimeDomainError`
     #[error("Time-domain processing error: {0}")]
     TimeDomain(String),
 
@@ -293,7 +552,7 @@ pub enum SpectralError {
 /// * `s` - Optional pre-computed magnitude spectrogram.
 /// * `norm` - Optional normalization factor.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 /// * `tuning` - Optional tuning adjustment in semitones (currently unused).
 ///
 /// # Returns
@@ -302,13 +561,16 @@ pub enum SpectralError {
 ///
 /// # Examples
 /// ```no_run
-/// use dasp_rs::feat::chroma_stft_impl;
+/// use dasp_rs::feat::chroma_stft;
 /// let y = vec![0.0; 2048];
-/// let chroma = chroma_stft_impl(&y, 44100, None, None, Some(2048), Some(512))?;
+/// let chroma = chroma_stft(&y, 44100).n_fft(2048).hop_length(512).compute()?;
 /// assert_eq!(chroma.shape(), &[12, 1]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn chroma_stft_impl(
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
+pub(crate) fn chroma_stft_impl(
     y: &[f32],
     sr: u32,
     s: Option<&Array2<f32>>,
@@ -341,7 +603,7 @@ pub fn chroma_stft_impl(
     };
 
     let n_bins = s.shape()[0];
-    let freqs = fft_frequencies(Some(sr), Some(n_fft));
+    let freqs = fft_frequencies_impl(sr, n_fft);
 
     let pitch_classes: Vec<usize> = (1..n_bins)
         .map(|bin| {
@@ -375,9 +637,9 @@ pub fn chroma_stft_impl(
         })
         .collect();
 
-    let views: Vec<_> = chroma_cols.iter().map(|col| col.view()).collect();
+    let views: Vec<_> = chroma_cols.iter().map(ndarray::ArrayBase::view).collect();
     let chroma = stack(Axis(1), views.as_slice()).map_err(|e| {
-        SpectralError::Numerical(format!("Failed to stack chroma columns: {}", e))
+        SpectralError::Numerical(format!("Failed to stack chroma columns: {e}"))
     })?;
 
     Ok(chroma)
@@ -399,13 +661,16 @@ pub fn chroma_stft_impl(
 /// with chroma features, or an error.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::chroma_cqt;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let chroma = chroma_cqt(&signal, None, None, None, None).unwrap();
 /// assert_eq!(chroma.shape(), &[12, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn chroma_cqt(
     signal: &AudioData,
     c: Option<&Array2<f32>>,
@@ -434,18 +699,15 @@ pub fn chroma_cqt(
     let max_bin = (nyquist / fmin).log2() * bpo as f32;
     let n_bins = max_bin.floor() as usize + 1;
 
-    let c: Array2<f32> = match c {
-            Some(c_mag) => Ok::<Array2<f32>, SpectralError>(c_mag.to_owned()),
-            None => {
-                let cqt_result = cqt(&signal.samples, signal.sample_rate)
-                    .hop_length(hop)
-                    .fmin(fmin)
-                    .n_bins(n_bins)
-                    .compute()
-                    .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?;
-                Ok(cqt_result.mapv(|x| x.norm()))
-            }
-        }?;
+    let c: Array2<f32> = if let Some(c_mag) = c { Ok::<Array2<f32>, SpectralError>(c_mag.to_owned()) } else {
+        let cqt_result = cqt(&signal.samples, signal.sample_rate)
+            .hop_length(hop)
+            .fmin(fmin)
+            .n_bins(n_bins)
+            .compute()
+            .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?;
+        Ok(cqt_result.mapv(num_complex::Complex::norm))
+    }?;
 
     let mut pitch_classes = Vec::with_capacity(n_bins);
     for bin in 0..n_bins {
@@ -474,7 +736,7 @@ pub fn chroma_cqt(
         })
         .collect();
 
-    let views: Vec<_> = chroma_cols.iter().map(|col| col.view()).collect();
+    let views: Vec<_> = chroma_cols.iter().map(ndarray::ArrayBase::view).collect();
     let chroma = stack(Axis(1), views.as_slice())
         .map_err(|e| SpectralError::Numerical(e.to_string()))?;
 
@@ -498,13 +760,16 @@ pub fn chroma_cqt(
 /// with CENS features, or an error.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::chroma_cens;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let cens = chroma_cens(&signal, None, None, None, None, None).unwrap();
 /// assert_eq!(cens.shape(), &[12, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn chroma_cens(
     signal: &AudioData,
     c: Option<&Array2<f32>>,
@@ -549,7 +814,7 @@ pub fn chroma_cens(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed magnitude spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 /// * `n_mels` - Optional number of mel bands (defaults to 128).
 /// * `fmin` - Optional minimum frequency (defaults to 0 Hz).
 /// * `fmax` - Optional maximum frequency (defaults to sr/2).
@@ -559,13 +824,16 @@ pub fn chroma_cens(
 /// with mel spectrogram, or an error.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::melspectrogram;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let mel = melspectrogram(&signal, None, None, None, None, None, None).unwrap();
 /// assert_eq!(mel.shape(), &[128, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn melspectrogram(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -606,9 +874,9 @@ pub fn melspectrogram(
             .mapv(|x| x.norm().powi(2)),
     };
 
-        let mel_f = mel_frequencies(Some(n_mels), Some(fmin), Some(fmax), None);
+        let mel_f = mel_frequencies_impl(n_mels, fmin, fmax);
     let mut mel_s = Array2::zeros((n_mels, s.shape()[1]));
-    let fft_f = fft_frequencies(Some(signal.sample_rate), Some(n_fft));
+    let fft_f = fft_frequencies_impl(signal.sample_rate, n_fft);
     for m in 0..n_mels {
         let f_low = if m == 0 { fmin } else { mel_f[m - 1] };
         let f_center = mel_f[m];
@@ -632,19 +900,17 @@ pub fn melspectrogram(
 }
 
 /// Internal wrapper for melspectrogram that takes &[f32] and sample rate.
-#[allow(dead_code)]
 fn melspectrogram_impl(
     y: &[f32],
     sr: u32,
     s: Option<&Array2<f32>>,
-    _norm: Option<f32>,
     n_fft: Option<usize>,
     hop_length: Option<usize>,
     n_mels: Option<usize>,
     fmax: Option<f32>,
 ) -> Result<Array2<f32>, SpectralError> {
     let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(|e| SpectralError::Audio(e))?;
+        .map_err(SpectralError::Audio)?;
     melspectrogram(&signal, s, n_fft, hop_length, n_mels, None, fmax)
 }
 
@@ -664,13 +930,16 @@ fn melspectrogram_impl(
 /// with MFCCs, or an error.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::mfcc;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let mfcc = mfcc(&signal, None, None, None, None).unwrap();
 /// assert_eq!(mfcc.shape(), &[20, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn mfcc(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -698,13 +967,10 @@ pub fn mfcc(
         }
     }
 
-    let s = match s {
-        Some(s) => s.to_owned(),
-        None => {
-            let temp_signal = AudioData::new(signal.samples.clone(), signal.sample_rate, signal.channels)
-                .map_err(|e| SpectralError::Audio(e))?;
-            melspectrogram(&temp_signal, None, None, None, None, None, None)?
-        },
+    let s = if let Some(s) = s { s.to_owned() } else {
+        let temp_signal = AudioData::new(signal.samples.clone(), signal.sample_rate, signal.channels)
+            .map_err(SpectralError::Audio)?;
+        melspectrogram(&temp_signal, None, None, None, None, None, None)?
     };
     let log_s = s.mapv(|x| x.max(1e-10).ln());
     let n_mels = s.shape()[0] as f32;
@@ -733,7 +999,6 @@ pub fn mfcc(
 }
 
 /// Internal wrapper for mfcc that takes &[f32] and sample rate.
-#[allow(dead_code)]
 fn mfcc_impl(
     y: &[f32],
     sr: u32,
@@ -743,7 +1008,7 @@ fn mfcc_impl(
     _hop_length: Option<usize>,
 ) -> Result<Array2<f32>, SpectralError> {
     let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(|e| SpectralError::Audio(e))?;
+        .map_err(SpectralError::Audio)?;
     mfcc(&signal, s, None, None, None)
 }
 
@@ -755,19 +1020,22 @@ fn mfcc_impl(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `frame_length` - Optional frame length (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to frame_length/4).
+/// * `hop_length` - Optional hop length (defaults to `frame_length/4`).
 ///
 /// # Returns
 /// Returns `Result<Array1<f32>, SpectralError>` containing RMS values per frame, or an error.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::rms;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let rms = rms(&signal, None, None, None).unwrap();
 /// assert_eq!(rms.len(), 1);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn rms(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -782,25 +1050,22 @@ pub fn rms(
         ));
     }
 
-    match s {
-        Some(s) => Ok(s.map_axis(Axis(0), |row| {
-            f32::sqrt(row.iter().map(|x| x.powi(2)).sum::<f32>() / row.len() as f32)
-        })),
-        None => {
-            if signal.samples.len() < frame_len {
-                return Err(SpectralError::InvalidSize(
-                    "Signal length must be at least frame_length".to_string(),
-                ));
-            }
-            let n_frames = (signal.samples.len() - frame_len) / hop + 1;
-            let mut rms = Array1::zeros(n_frames);
-            for i in 0..n_frames {
-                let start = i * hop;
-                let slice = &signal.samples[start..(start + frame_len).min(signal.samples.len())];
-                rms[i] = f32::sqrt(slice.iter().map(|x| x.powi(2)).sum::<f32>() / slice.len() as f32);
-            }
-            Ok(rms)
+    if let Some(s) = s { Ok(s.map_axis(Axis(0), |row| {
+        f32::sqrt(row.iter().map(|x| x.powi(2)).sum::<f32>() / row.len() as f32)
+    })) } else {
+        if signal.samples.len() < frame_len {
+            return Err(SpectralError::InvalidSize(
+                "Signal length must be at least frame_length".to_string(),
+            ));
         }
+        let n_frames = (signal.samples.len() - frame_len) / hop + 1;
+        let mut rms = Array1::zeros(n_frames);
+        for i in 0..n_frames {
+            let start = i * hop;
+            let slice = &signal.samples[start..(start + frame_len).min(signal.samples.len())];
+            rms[i] = f32::sqrt(slice.iter().map(|x| x.powi(2)).sum::<f32>() / slice.len() as f32);
+        }
+        Ok(rms)
     }
 }
 
@@ -812,19 +1077,22 @@ pub fn rms(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 ///
 /// # Returns
 /// Returns `Result<Array1<f32>, SpectralError>` containing centroid frequencies per frame, or an error.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::spectral_centroid;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let centroid = spectral_centroid(&signal, None, None, None).unwrap();
 /// assert_eq!(centroid.len(), 1);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn spectral_centroid(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -851,10 +1119,10 @@ pub fn spectral_centroid(
             .hop_length(hop)
             .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-            .mapv(|x| x.norm()),
+            .mapv(num_complex::Complex::norm),
     };
 
-    let freqs = Array1::from_vec(fft_frequencies(Some(signal.sample_rate), Some(n_fft)));
+    let freqs = Array1::from_vec(fft_frequencies_impl(signal.sample_rate, n_fft));
     Ok(s.axis_iter(Axis(1))
         .map(|frame| {
             let total = frame.sum();
@@ -867,8 +1135,7 @@ pub fn spectral_centroid(
         .collect())
 }
 
-/// Internal wrapper for spectral_centroid that takes &[f32] and sample rate.
-#[allow(dead_code)]
+/// Internal wrapper for `spectral_centroid` that takes &[f32] and sample rate.
 fn spectral_centroid_impl(
     y: &[f32],
     sr: u32,
@@ -877,7 +1144,7 @@ fn spectral_centroid_impl(
     hop_length: Option<usize>,
 ) -> Result<Array1<f32>, SpectralError> {
     let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(|e| SpectralError::Audio(e))?;
+        .map_err(SpectralError::Audio)?;
     spectral_centroid(&signal, s, n_fft, hop_length)
 }
 
@@ -889,20 +1156,23 @@ fn spectral_centroid_impl(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 /// * `p` - Optional power for bandwidth calculation (defaults to 2).
 ///
 /// # Returns
 /// Returns `Result<Array1<f32>, SpectralError>` containing bandwidth values per frame, or an error.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::spectral_bandwidth;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let bandwidth = spectral_bandwidth(&signal, None, None, None, None).unwrap();
 /// assert_eq!(bandwidth.len(), 1);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn spectral_bandwidth(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -917,7 +1187,7 @@ pub fn spectral_bandwidth(
         ));
     }
         let temp_signal = AudioData::new(signal.samples.clone(), signal.sample_rate, signal.channels)
-            .map_err(|e| SpectralError::Audio(e))?;
+            .map_err(SpectralError::Audio)?;
         let centroid = spectral_centroid(&temp_signal, None, None, None)?;
     let n_fft = n_fft.unwrap_or(2048);
     let hop = hop_length.unwrap_or(n_fft / 4);
@@ -928,9 +1198,9 @@ pub fn spectral_bandwidth(
             .hop_length(hop)
             .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-            .mapv(|x| x.norm()),
+            .mapv(num_complex::Complex::norm),
     };
-    let freqs = fft_frequencies(Some(signal.sample_rate), Some(n_fft));
+    let freqs = fft_frequencies_impl(signal.sample_rate, n_fft);
     Ok(s.axis_iter(Axis(1))
         .zip(centroid.iter())
         .map(|(frame, &c)| {
@@ -958,20 +1228,23 @@ pub fn spectral_bandwidth(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 /// * `n_bands` - Optional number of frequency bands (defaults to 6).
 ///
 /// # Returns
 /// Returns `Result<Array2<f32>, SpectralError>` containing contrast values of shape `(n_bands + 1, n_frames)`.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::spectral_contrast;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let contrast = spectral_contrast(&signal, None, None, None, None).unwrap();
 /// assert_eq!(contrast.shape(), &[7, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn spectral_contrast(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -1000,10 +1273,10 @@ pub fn spectral_contrast(
             .hop_length(hop)
             .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-            .mapv(|x| x.norm()),
+            .mapv(num_complex::Complex::norm),
     };
 
-    let freqs = fft_frequencies(Some(signal.sample_rate), Some(n_fft));
+    let freqs = fft_frequencies_impl(signal.sample_rate, n_fft);
     let band_edges = Array1::logspace(
         2.0,
         0.0,
@@ -1012,7 +1285,7 @@ pub fn spectral_contrast(
     );
     let mut contrast = Array2::zeros((n_bands + 1, s.shape()[1]));
     for t in 0..s.shape()[1] {
-        for b in 0..n_bands + 1 {
+        for b in 0..=n_bands {
             let f_low = if b == 0 { 0.0 } else { band_edges[b - 1] };
             let f_high = band_edges[b];
             let slice = s.slice(s![.., t]);
@@ -1024,7 +1297,7 @@ pub fn spectral_contrast(
                 .collect();
             if !band.is_empty() {
                 let mut sorted = band;
-                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                sorted.sort_by(f32::total_cmp);
                 let peak = sorted[sorted.len() - 1];
                 let valley = sorted[0];
                 contrast[[b, t]] = peak - valley;
@@ -1042,19 +1315,22 @@ pub fn spectral_contrast(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 ///
 /// # Returns
 /// Returns `Result<Array1<f32>, SpectralError>` containing flatness values per frame.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::spectral_flatness;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let flatness = spectral_flatness(&signal, None, None, None).unwrap();
 /// assert_eq!(flatness.len(), 1);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn spectral_flatness(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -1094,8 +1370,7 @@ pub fn spectral_flatness(
         .collect())
 }
 
-/// Internal wrapper for spectral_bandwidth that takes &[f32] and sample rate.
-#[allow(dead_code)]
+/// Internal wrapper for `spectral_bandwidth` that takes &[f32] and sample rate.
 fn spectral_bandwidth_impl(
     y: &[f32],
     sr: u32,
@@ -1105,7 +1380,7 @@ fn spectral_bandwidth_impl(
     p: Option<i32>,
 ) -> Result<Array1<f32>, SpectralError> {
     let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(|e| SpectralError::Audio(e))?;
+        .map_err(SpectralError::Audio)?;
     spectral_bandwidth(&signal, s, n_fft, hop_length, p)
 }
 
@@ -1117,20 +1392,23 @@ fn spectral_bandwidth_impl(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 /// * `roll_percent` - Optional roll-off percentage (defaults to 0.85).
 ///
 /// # Returns
 /// Returns `Result<Array1<f32>, SpectralError>` containing roll-off frequencies per frame.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::spectral_rolloff;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let rolloff = spectral_rolloff(&signal, None, None, None, None).unwrap();
 /// assert_eq!(rolloff.len(), 1);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn spectral_rolloff(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -1164,10 +1442,10 @@ pub fn spectral_rolloff(
             .hop_length(hop)
             .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-            .mapv(|x| x.norm()),
+            .mapv(num_complex::Complex::norm),
     };
 
-    let freqs = fft_frequencies(Some(signal.sample_rate), Some(n_fft));
+    let freqs = fft_frequencies_impl(signal.sample_rate, n_fft);
     Ok(s.axis_iter(Axis(1))
         .map(|frame| {
             let total_energy = frame.sum();
@@ -1184,8 +1462,7 @@ pub fn spectral_rolloff(
         .collect())
 }
 
-/// Internal wrapper for spectral_rolloff that takes &[f32] and sample rate.
-#[allow(dead_code)]
+/// Internal wrapper for `spectral_rolloff` that takes &[f32] and sample rate.
 fn spectral_rolloff_impl(
     y: &[f32],
     sr: u32,
@@ -1195,12 +1472,11 @@ fn spectral_rolloff_impl(
     roll_percent: Option<f32>,
 ) -> Result<Array1<f32>, SpectralError> {
     let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(|e| SpectralError::Audio(e))?;
+        .map_err(SpectralError::Audio)?;
     spectral_rolloff(&signal, s, n_fft, hop_length, roll_percent)
 }
 
-/// Internal wrapper for spectral_flatness that takes &[f32] and sample rate.
-#[allow(dead_code)]
+/// Internal wrapper for `spectral_flatness` that takes &[f32] and sample rate.
 fn spectral_flatness_impl(
     y: &[f32],
     sr: u32,
@@ -1209,32 +1485,35 @@ fn spectral_flatness_impl(
     hop_length: Option<usize>,
 ) -> Result<Array1<f32>, SpectralError> {
     let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(|e| SpectralError::Audio(e))?;
+        .map_err(SpectralError::Audio)?;
     spectral_flatness(&signal, s, n_fft, hop_length)
 }
 
 /// Computes polynomial fit coefficients for spectral features.
 ///
-/// Fits a polynomial to each frameâ€™s spectral magnitude.
+/// Fits a polynomial to each frame's spectral magnitude.
 ///
 /// # Arguments
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 /// * `order` - Optional polynomial order (defaults to 1).
 ///
 /// # Returns
 /// Returns `Result<Array2<f32>, SpectralError>` containing coefficients of shape `(order + 1, n_frames)`.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::poly_features;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let coeffs = poly_features(&signal, None, None, None, None).unwrap();
 /// assert_eq!(coeffs.shape(), &[2, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn poly_features(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -1263,7 +1542,7 @@ pub fn poly_features(
             .hop_length(hop)
             .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-            .mapv(|x| x.norm()),
+            .mapv(num_complex::Complex::norm),
     };
 
     let mut coeffs = Array2::zeros((order + 1, s.shape()[1]));
@@ -1290,13 +1569,16 @@ pub fn poly_features(
 /// Returns `Result<Array2<f32>, SpectralError>` containing Tonnetz features of shape `(6, n_frames)`.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::tonnetz;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let tonnetz = tonnetz(&signal, None).unwrap();
 /// assert_eq!(tonnetz.shape(), &[6, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn tonnetz(
     signal: &AudioData,
     chroma: Option<&Array2<f32>>,
@@ -1309,18 +1591,14 @@ pub fn tonnetz(
             "Chroma must have 12 pitch classes".to_string(),
         ));
     }
-    let transform = Array2::from_shape_vec(
-        (6, 12),
-        vec![
-            1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // Fifths
-            0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // Minor thirds
-            0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // Major thirds
-            0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // Minor sevenths
-            0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // Major seconds
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, // Tritones
-        ],
-    )
-    .unwrap();
+    let transform = ndarray::arr2(&[
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // Fifths
+        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // Minor thirds
+        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // Major thirds
+        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // Minor sevenths
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // Major seconds
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], // Tritones
+    ]);
     Ok(transform.dot(chroma))
 }
 
@@ -1342,10 +1620,10 @@ fn polyfit(x: &Array1<f32>, y: &Array1<f32>, order: usize) -> Vec<f32> {
     let a = DMatrix::from_fn(rows, n, |i, j| x[i].powi(j as i32));
     let b = DVector::from_iterator(rows, y.iter().copied());
     // Least-squares solve via SVD (handles over-/under-determined systems).
-    match a.svd(true, true).solve(&b, 1e-9_f32) {
-        Ok(coeffs) => coeffs.iter().copied().collect(),
-        Err(_) => vec![0.0; n],
-    }
+    a.svd(true, true).solve(&b, 1e-9_f32).map_or_else(
+        |_| vec![0.0; n],
+        |coeffs| coeffs.iter().copied().collect(),
+    )
 }
 
 /// Computes spectral flux.
@@ -1356,19 +1634,22 @@ fn polyfit(x: &Array1<f32>, y: &Array1<f32>, order: usize) -> Vec<f32> {
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 ///
 /// # Returns
 /// Returns `Result<Array1<f32>, SpectralError>` containing flux values per frame.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::spectral_flux;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let flux = spectral_flux(&signal, None, None, None).unwrap();
 /// assert_eq!(flux.len(), 1);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn spectral_flux(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -1395,7 +1676,7 @@ pub fn spectral_flux(
             .hop_length(hop)
             .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-            .mapv(|x| x.norm()),
+            .mapv(num_complex::Complex::norm),
     };
 
     let mut flux = Array1::zeros(s.shape()[1]);
@@ -1406,8 +1687,7 @@ pub fn spectral_flux(
     Ok(flux)
 }
 
-/// Internal wrapper for spectral_flux that takes &[f32] and sample rate.
-#[allow(dead_code)]
+/// Internal wrapper for `spectral_flux` that takes &[f32] and sample rate.
 fn spectral_flux_impl(
     y: &[f32],
     sr: u32,
@@ -1416,7 +1696,7 @@ fn spectral_flux_impl(
     hop_length: Option<usize>,
 ) -> Result<Array1<f32>, SpectralError> {
     let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(|e| SpectralError::Audio(e))?;
+        .map_err(SpectralError::Audio)?;
     spectral_flux(&signal, s, n_fft, hop_length)
 }
 
@@ -1428,19 +1708,22 @@ fn spectral_flux_impl(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 ///
 /// # Returns
 /// Returns `Result<Array1<f32>, SpectralError>` containing entropy values per frame.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::spectral_entropy;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let entropy = spectral_entropy(&signal, None, None, None).unwrap();
 /// assert_eq!(entropy.len(), 1);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn spectral_entropy(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -1467,7 +1750,7 @@ pub fn spectral_entropy(
             .hop_length(hop)
             .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-            .mapv(|x| x.norm()),
+            .mapv(num_complex::Complex::norm),
     };
 
     Ok(s.axis_iter(Axis(1))
@@ -1483,8 +1766,7 @@ pub fn spectral_entropy(
         .collect())
 }
 
-/// Internal wrapper for spectral_entropy that takes &[f32] and sample rate.
-#[allow(dead_code)]
+/// Internal wrapper for `spectral_entropy` that takes &[f32] and sample rate.
 fn spectral_entropy_impl(
     y: &[f32],
     sr: u32,
@@ -1493,7 +1775,7 @@ fn spectral_entropy_impl(
     hop_length: Option<usize>,
 ) -> Result<Array1<f32>, SpectralError> {
     let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(|e| SpectralError::Audio(e))?;
+        .map_err(SpectralError::Audio)?;
     spectral_entropy(&signal, s, n_fft, hop_length)
 }
 
@@ -1505,19 +1787,22 @@ fn spectral_entropy_impl(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 ///
 /// # Returns
 /// Returns `Result<Array2<f32>, SpectralError>` containing normalized pitch chroma features of shape `(12, n_frames)`.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::pitch_chroma;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let chroma = pitch_chroma(&signal, None, None, None).unwrap();
 /// assert_eq!(chroma.shape(), &[12, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn pitch_chroma(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -1544,10 +1829,10 @@ pub fn pitch_chroma(
             .hop_length(hop)
             .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-            .mapv(|x| x.norm()),
+            .mapv(num_complex::Complex::norm),
     };
 
-    let freqs = fft_frequencies(Some(signal.sample_rate), Some(n_fft));
+    let freqs = fft_frequencies_impl(signal.sample_rate, n_fft);
     let mut chroma = Array2::zeros((12, s.shape()[1]));
     for t in 0..s.shape()[1] {
         let frame = s.column(t);
@@ -1585,17 +1870,53 @@ pub fn pitch_chroma(
 /// use dasp_rs::feat::cmvn;
 /// use ndarray::Array2;
 /// let features = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
-/// let normalized = cmvn(&features, None, None).unwrap();
+/// let normalized = cmvn(&features).compute().unwrap();
 /// assert_eq!(normalized.shape(), &[2, 3]);
 /// ```
-pub fn cmvn(
+pub fn cmvn(features: &Array2<f32>) -> CmvnBuilder<'_> {
+    CmvnBuilder { features, axis: -1, variance: true }
+}
+
+/// Builder for [`cmvn`] (cepstral mean/variance normalization).
+#[derive(Debug, Clone)]
+pub struct CmvnBuilder<'a> {
+    features: &'a Array2<f32>,
+    axis: isize,
+    variance: bool,
+}
+
+impl CmvnBuilder<'_> {
+    /// Set the normalization axis (-1 for frames, 0 for features; default: -1).
+    #[must_use]
+    pub fn axis(mut self, axis: isize) -> Self {
+        self.axis = axis;
+        self
+    }
+
+    /// Enable variance normalization in addition to mean (default: true).
+    #[must_use]
+    pub fn variance(mut self, variance: bool) -> Self {
+        self.variance = variance;
+        self
+    }
+
+    /// Apply normalization.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
+        cmvn_impl(self.features, Some(self.axis), Some(self.variance))
+    }
+}
+
+fn cmvn_impl(
     features: &Array2<f32>,
     axis: Option<isize>,
     variance: Option<bool>,
 ) -> Result<Array2<f32>, SpectralError> {
     let axis = axis.unwrap_or(-1);
     let do_variance = variance.unwrap_or(true);
-    let ax = if axis < 0 { 1 } else { 0 };
+    let ax = usize::from(axis < 0);
 
     if features.shape()[ax] < 2 {
         return Err(SpectralError::InvalidSize(
@@ -1606,7 +1927,7 @@ pub fn cmvn(
     let mut normalized = features.to_owned();
     let means = normalized
         .mean_axis(Axis(ax))
-        .ok_or(SpectralError::Numerical("Failed to compute mean".to_string()))?;
+        .ok_or_else(|| SpectralError::Numerical("Failed to compute mean".to_string()))?;
     for i in 0..normalized.shape()[1 - ax] {
         for j in 0..normalized.shape()[ax] {
             let idx = if ax == 1 { [j, i] } else { [i, j] };
@@ -1618,7 +1939,7 @@ pub fn cmvn(
         let variances = normalized
             .mapv(|x| x.powi(2))
             .mean_axis(Axis(ax))
-            .ok_or(SpectralError::Numerical("Failed to compute variance".to_string()))?;
+            .ok_or_else(|| SpectralError::Numerical("Failed to compute variance".to_string()))?;
         let std_devs = variances.mapv(|x| (x + 1e-10).sqrt());
         for i in 0..normalized.shape()[1 - ax] {
             for j in 0..normalized.shape()[ax] {
@@ -1639,7 +1960,7 @@ pub fn cmvn(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 /// * `harm_win` - Optional window size for harmonic component (defaults to 31).
 /// * `perc_win` - Optional window size for percussive component (defaults to 31).
 ///
@@ -1647,13 +1968,16 @@ pub fn cmvn(
 /// Returns a tuple `(harmonic, percussive)` containing two `Array2<f32>` with separated components.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::hpss;
 /// let signal = AudioData { samples: vec![0.0; 2048], sample_rate: 44100, channels: 1 };
 /// let (harmonic, percussive) = hpss(&signal, None, None, None, None, None)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn hpss(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -1694,7 +2018,7 @@ pub fn hpss(
             let start = t.saturating_sub(harm_win / 2);
             let end = (t + harm_win / 2 + 1).min(s.shape()[1]);
             let mut slice: Vec<f32> = row.slice(s![start..end]).to_vec();
-            slice.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            slice.sort_by(f32::total_cmp);
             harmonic[[f, t]] = slice[slice.len() / 2];
         }
     }
@@ -1706,7 +2030,7 @@ pub fn hpss(
             let start = f.saturating_sub(perc_win / 2);
             let end = (f + perc_win / 2 + 1).min(s.shape()[0]);
             let mut slice: Vec<f32> = col.slice(s![start..end]).to_vec();
-            slice.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            slice.sort_by(f32::total_cmp);
             percussive[[f, t]] = slice[slice.len() / 2];
         }
     }
@@ -1726,7 +2050,7 @@ pub fn hpss(
 /// # Arguments
 /// * `signal` - The input audio signal.
 /// * `frame_length` - Optional frame length (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to frame_length/4).
+/// * `hop_length` - Optional hop length (defaults to `frame_length/4`).
 /// * `fmin` - Optional minimum frequency (defaults to 50 Hz).
 /// * `fmax` - Optional maximum frequency (defaults to 500 Hz).
 ///
@@ -1734,13 +2058,16 @@ pub fn hpss(
 /// Returns `Result<Array1<f32>, SpectralError>` containing pitch estimates in Hz per frame.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::pitch_autocorr;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let pitch = pitch_autocorr(&signal, None, None, None, None).unwrap();
 /// assert_eq!(pitch.len(), 1);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn pitch_autocorr(
     signal: &AudioData,
     frame_length: Option<usize>,
@@ -1784,16 +2111,12 @@ pub fn pitch_autocorr(
         let lag_min = (signal.sample_rate as f32 / fmax).round() as usize;
         let lag_max = (signal.sample_rate as f32 / fmin).round() as usize;
         let slice = &autocorr[lag_min..lag_max.min(autocorr.len())];
-        let max_idx = if slice.is_empty() {
-            0
-        } else {
-            let max_val = slice.iter()
-                    .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .unwrap();
-            slice.iter()
-                .position(|&x| x == *max_val)
-            .unwrap_or(0)
-        } + lag_min;
+        let max_idx = slice
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map_or(0, |(i, _)| i)
+            + lag_min;
         pitch[i] = if max_idx > 0 {
             signal.sample_rate as f32 / max_idx as f32
         } else {
@@ -1811,20 +2134,23 @@ pub fn pitch_autocorr(
 /// # Arguments
 /// * `signal` - The input audio signal.
 /// * `frame_length` - Optional frame length (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to frame_length/4).
+/// * `hop_length` - Optional hop length (defaults to `frame_length/4`).
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
 ///
 /// # Returns
 /// Returns `Result<Array2<f32>, SpectralError>` containing features of shape `(3, n_frames)`.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::vad_features;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let vad = vad_features(&signal, None, None, None).unwrap();
 /// assert_eq!(vad.shape(), &[3, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn vad_features(
     signal: &AudioData,
     frame_length: Option<usize>,
@@ -1846,7 +2172,10 @@ pub fn vad_features(
     }
 
     let n_frames = (signal.samples.len() - frame_len) / hop + 1;
-    let energy = log_energy(signal, Some(frame_len), Some(hop))
+    let energy = log_energy(signal)
+        .frame_length(frame_len)
+        .hop_length(hop)
+        .compute()
         .map_err(|e| SpectralError::TimeDomain(e.to_string()))?;
         let zcr = crate::features::zero_crossing_rate(&signal.samples)
             .frame_length(frame_len)
@@ -1857,11 +2186,13 @@ pub fn vad_features(
             .hop_length(hop)
             .compute()
         .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-        .mapv(|x| x.norm());
+        .mapv(num_complex::Complex::norm);
     let flatness = s.axis_iter(Axis(1))
         .map(|frame| {
-            let geo_mean = frame.mapv(|x| x.max(1e-10).ln()).mean().unwrap().exp();
-            let arith_mean = frame.mean().unwrap();
+            // STFT frames always hold n_fft/2 + 1 bins, so `mean` is only None
+            // for an impossible zero-bin frame; fall back to silence in that case.
+            let geo_mean = frame.mapv(|x| x.max(1e-10).ln()).mean().map_or(0.0, f32::exp);
+            let arith_mean = frame.mean().unwrap_or(0.0);
             if arith_mean > 1e-10 {
                 geo_mean / arith_mean
             } else {
@@ -1887,20 +2218,23 @@ pub fn vad_features(
 /// * `signal` - The input audio signal.
 /// * `S` - Optional pre-computed spectrogram.
 /// * `n_fft` - Optional FFT window size (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to n_fft/4).
+/// * `hop_length` - Optional hop length (defaults to `n_fft/4`).
 /// * `n_bands` - Optional number of subbands (defaults to 4).
 ///
 /// # Returns
 /// Returns `Result<Array2<f32>, SpectralError>` containing subband centroids of shape `(n_bands, n_frames)`.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::spectral_subband_centroids;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let centroids = spectral_subband_centroids(&signal, None, None, None, None).unwrap();
 /// assert_eq!(centroids.shape(), &[4, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn spectral_subband_centroids(
     signal: &AudioData,
     s: Option<&Array2<f32>>,
@@ -1929,10 +2263,10 @@ pub fn spectral_subband_centroids(
             .hop_length(hop)
             .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-            .mapv(|x| x.norm()),
+            .mapv(num_complex::Complex::norm),
     };
 
-    let freqs = fft_frequencies(Some(signal.sample_rate), Some(n_fft));
+    let freqs = fft_frequencies_impl(signal.sample_rate, n_fft);
     let band_edges = Array1::linspace(0.0, signal.sample_rate as f32 / 2.0, n_bands + 1);
     let mut centroids = Array2::zeros((n_bands, s.shape()[1]));
     for t in 0..s.shape()[1] {
@@ -1946,13 +2280,13 @@ pub fn spectral_subband_centroids(
                 .map(|(f, s)| (*f, *s))
                 .collect();
             if subband.is_empty() {
-                centroids[[b, t]] = (f_low + f_high) / 2.0;
+                centroids[[b, t]] = f32::midpoint(f_low, f_high);
             } else {
                 let total_energy = subband.iter().map(|(_, s)| s).sum::<f32>();
                 centroids[[b, t]] = if total_energy > 1e-10 {
                     subband.iter().map(|(f, s)| f * s).sum::<f32>() / total_energy
                 } else {
-                    (f_low + f_high) / 2.0
+                    f32::midpoint(f_low, f_high)
                 };
             }
         }
@@ -1968,19 +2302,22 @@ pub fn spectral_subband_centroids(
 /// * `signal` - The input audio signal.
 /// * `n_formants` - Optional number of formants to extract (defaults to 3).
 /// * `frame_length` - Optional frame length (defaults to 2048).
-/// * `hop_length` - Optional hop length (defaults to frame_length/4).
+/// * `hop_length` - Optional hop length (defaults to `frame_length/4`).
 ///
 /// # Returns
 /// Returns `Result<Array2<f32>, SpectralError>` containing formant frequencies of shape `(n_formants, n_frames)`.
 ///
 /// # Examples
-/// ```no_run
+/// ```ignore
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::feat::formant_frequencies;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4], sample_rate: 44100, channels: 1 };
 /// let formants = formant_frequencies(&signal, None, None, None).unwrap();
 /// assert_eq!(formants.shape(), &[3, 1]);
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn formant_frequencies(
     signal: &AudioData,
     n_formants: Option<usize>,
@@ -2030,7 +2367,7 @@ pub fn formant_frequencies(
                 }
             })
             .collect();
-        freqs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        freqs.sort_by(f32::total_cmp);
         for (j, &f) in freqs.iter().take(n_formants).enumerate() {
             formants[[j, i]] = f;
         }
@@ -2043,7 +2380,7 @@ pub fn formant_frequencies(
 /// Helper function for formant estimation.
 ///
 /// # Arguments
-/// * `frame` - Audio frame as AudioData.
+/// * `frame` - Audio frame as `AudioData`.
 /// * `order` - LPC order.
 ///
 /// # Returns

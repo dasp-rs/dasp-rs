@@ -20,7 +20,7 @@ use crate::utils::notation;
 pub fn hz_to_note(frequencies: &[f32]) -> Vec<String> {
     frequencies.iter().map(|&f| {
         let midi = hz_to_midi(&[f])[0];
-        midi_to_note(&[midi], None, None, None)[0].clone()
+        midi_to_note(&[midi], None)[0].clone()
     }).collect()
 }
 
@@ -106,14 +106,21 @@ pub fn hz_to_svara_c(frequencies: &[f32], sa: f32, mela: Option<usize>) -> Vec<S
     midi_notes.iter().map(|&m| {
         let semitone = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
         let idx = degrees.iter().position(|&d| d == semitone as usize).unwrap_or(0);
-        let base = match idx {
-            0 => "S", 1..=3 => "R", 4..=6 => "G", 7 => "M", 8 => "P", 9..=11 => "D", 12..=14 => "N", _ => "S",
-        };
-        let variant = match degrees[idx] % 12 {
-            1 => "1", 2 => "2", 3 => "3", 5 => "1", 6 => "2", 7 => "3", 8 => "1", 9 => "2", 10 => "3", _ => "",
-        };
-        format!("{}{}", base, variant)
+        let (base, variant) = svara_parts(idx, degrees[idx]);
+        format!("{base}{variant}")
     }).collect()
+}
+
+/// Maps a scale-degree position and chromatic degree to a Carnatic
+/// (svara base, variant suffix) pair.
+fn svara_parts(idx: usize, degree: usize) -> (&'static str, &'static str) {
+    let base = match idx {
+        1..=3 => "R", 4..=6 => "G", 7 => "M", 8 => "P", 9..=11 => "D", 12..=14 => "N", _ => "S",
+    };
+    let variant = match degree % 12 {
+        1 | 5 | 8 => "1", 2 | 6 | 9 => "2", 3 | 7 | 10 => "3", _ => "",
+    };
+    (base, variant)
 }
 
 /// Converts frequencies in Hz to Functional Just System (FJS) notation.
@@ -131,12 +138,43 @@ pub fn hz_to_svara_c(frequencies: &[f32], sa: f32, mela: Option<usize>) -> Vec<S
 /// use dasp_rs::util::*;
 /// use dasp_rs::types::*;
 /// let freqs = vec![261.63];
-/// let fjs = hz_to_fjs(&freqs, None, None);
+/// let fjs = hz_to_fjs(&freqs).compute();
 /// assert_eq!(fjs, vec!["C4 1/1"]);
 /// ```
-pub fn hz_to_fjs(frequencies: &[f32], fmin: Option<f32>, unison: Option<f32>) -> Vec<String> {
-    let fmin = fmin.unwrap_or(16.35);
-    let unison = unison.unwrap_or(1.0);
+pub fn hz_to_fjs(frequencies: &[f32]) -> HzToFjsBuilder<'_> {
+    HzToFjsBuilder { frequencies, fmin: 16.35, unison: 1.0 }
+}
+
+/// Builder for [`hz_to_fjs`].
+#[derive(Debug, Clone)]
+pub struct HzToFjsBuilder<'a> {
+    frequencies: &'a [f32],
+    fmin: f32,
+    unison: f32,
+}
+
+impl HzToFjsBuilder<'_> {
+    /// Set the minimum reference frequency in Hz (default: 16.35, C0).
+    #[must_use]
+    pub fn fmin(mut self, fmin: f32) -> Self {
+        self.fmin = fmin;
+        self
+    }
+
+    /// Set the unison interval ratio (default: 1.0).
+    #[must_use]
+    pub fn unison(mut self, unison: f32) -> Self {
+        self.unison = unison;
+        self
+    }
+
+    /// Produce FJS note names.
+    pub fn compute(self) -> Vec<String> {
+        hz_to_fjs_impl(self.frequencies, self.fmin, self.unison)
+    }
+}
+
+fn hz_to_fjs_impl(frequencies: &[f32], fmin: f32, unison: f32) -> Vec<String> {
     frequencies.iter().map(|&f| {
         let octaves = (f / fmin).log2().floor();
         let interval = f / (fmin * 2.0f32.powf(octaves)) / unison;
@@ -170,8 +208,6 @@ pub fn midi_to_hz(notes: &[f32]) -> Vec<f32> {
 /// # Arguments
 /// * `midi` - Array of MIDI note numbers
 /// * `octave` - Optional flag to include octave number (defaults to true)
-/// * `_cents` - Optional flag for cents (unused, defaults to None)
-/// * `_key` - Optional key signature (unused, defaults to None)
 ///
 /// # Returns
 /// Returns a `Vec<String>` containing note names (e.g., "C4", "G#").
@@ -181,14 +217,14 @@ pub fn midi_to_hz(notes: &[f32]) -> Vec<f32> {
 /// use dasp_rs::util::*;
 /// use dasp_rs::types::*;
 /// let midi = vec![60.0, 61.0];
-/// let notes = midi_to_note(&midi, None, None, None);
+/// let notes = midi_to_note(&midi, None);
 /// assert_eq!(notes, vec!["C4", "C#4"]);
 /// ```
-pub fn midi_to_note(midi: &[f32], octave: Option<bool>, _cents: Option<bool>, _key: Option<&str>) -> Vec<String> {
+pub fn midi_to_note(midi: &[f32], octave: Option<bool>) -> Vec<String> {
     let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
     midi.iter().map(|&m| {
         let note_idx = (m.round() as usize) % 12;
-        let oct = if octave.unwrap_or(true) { format!("{}", (m.round() as i32 - 12) / 12) } else { "".to_string() };
+        let oct = if octave.unwrap_or(true) { format!("{}", (m.round() as i32 - 12) / 12) } else { String::new() };
         format!("{}{}", note_names[note_idx], oct)
     }).collect()
 }
@@ -209,12 +245,44 @@ pub fn midi_to_note(midi: &[f32], octave: Option<bool>, _cents: Option<bool>, _k
 /// use dasp_rs::util::*;
 /// use dasp_rs::types::*;
 /// let midi = vec![60.0, 62.0];
-/// let svaras = midi_to_svara_h(&midi, 261.63, Some(true), None);
+/// let svaras = midi_to_svara_h(&midi, 261.63).abbr(true).compute();
 /// assert_eq!(svaras, vec!["S", "R2"]);
 /// ```
-pub fn midi_to_svara_h(midi: &[f32], sa: f32, abbr: Option<bool>, octave: Option<bool>) -> Vec<String> {
-    let abbr = abbr.unwrap_or(false);
-    let octave = octave.unwrap_or(false);
+pub fn midi_to_svara_h(midi: &[f32], sa: f32) -> MidiToSvaraHBuilder<'_> {
+    MidiToSvaraHBuilder { midi, sa, abbr: false, octave: false }
+}
+
+/// Builder for [`midi_to_svara_h`].
+#[derive(Debug, Clone)]
+pub struct MidiToSvaraHBuilder<'a> {
+    midi: &'a [f32],
+    sa: f32,
+    abbr: bool,
+    octave: bool,
+}
+
+impl MidiToSvaraHBuilder<'_> {
+    /// Use abbreviated svara names (default: false).
+    #[must_use]
+    pub fn abbr(mut self, abbr: bool) -> Self {
+        self.abbr = abbr;
+        self
+    }
+
+    /// Append octave numbers (default: false).
+    #[must_use]
+    pub fn octave(mut self, octave: bool) -> Self {
+        self.octave = octave;
+        self
+    }
+
+    /// Produce Hindustani svara names.
+    pub fn compute(self) -> Vec<String> {
+        midi_to_svara_h_impl(self.midi, self.sa, self.abbr, self.octave)
+    }
+}
+
+fn midi_to_svara_h_impl(midi: &[f32], sa: f32, abbr: bool, octave: bool) -> Vec<String> {
     let midi_sa = hz_to_midi(&[sa])[0];
     let svara_names = if abbr {
         vec!["S", "R1", "R2", "G1", "G2", "M1", "M2", "P", "D1", "D2", "N1", "N2"]
@@ -226,7 +294,7 @@ pub fn midi_to_svara_h(midi: &[f32], sa: f32, abbr: Option<bool>, octave: Option
     };
     midi.iter().map(|&m| {
         let degree = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
-        let oct = if octave { format!("{}", (m - midi_sa).round() as i32 / 12) } else { "".to_string() };
+        let oct = if octave { format!("{}", (m - midi_sa).round() as i32 / 12) } else { String::new() };
         format!("{}{}", svara_names[degree as usize], oct)
     }).collect()
 }
@@ -247,24 +315,51 @@ pub fn midi_to_svara_h(midi: &[f32], sa: f32, abbr: Option<bool>, octave: Option
 /// use dasp_rs::util::*;
 /// use dasp_rs::types::*;
 /// let midi = vec![60.0, 62.0];
-/// let svaras = midi_to_svara_c(&midi, 261.63, None, Some(true));
+/// let svaras = midi_to_svara_c(&midi, 261.63).abbr(true).compute();
 /// assert_eq!(svaras, vec!["S", "R2"]);
 /// ```
-pub fn midi_to_svara_c(midi: &[f32], sa: f32, mela: Option<usize>, abbr: Option<bool>) -> Vec<String> {
-    let mela = mela.unwrap_or(29);
-    let abbr = abbr.unwrap_or(false);
+pub fn midi_to_svara_c(midi: &[f32], sa: f32) -> MidiToSvaraCBuilder<'_> {
+    MidiToSvaraCBuilder { midi, sa, mela: 29, abbr: false }
+}
+
+/// Builder for [`midi_to_svara_c`].
+#[derive(Debug, Clone)]
+pub struct MidiToSvaraCBuilder<'a> {
+    midi: &'a [f32],
+    sa: f32,
+    mela: usize,
+    abbr: bool,
+}
+
+impl MidiToSvaraCBuilder<'_> {
+    /// Set the melakarta raga index (default: 29).
+    #[must_use]
+    pub fn mela(mut self, mela: usize) -> Self {
+        self.mela = mela;
+        self
+    }
+
+    /// Use abbreviated svara names (default: false).
+    #[must_use]
+    pub fn abbr(mut self, abbr: bool) -> Self {
+        self.abbr = abbr;
+        self
+    }
+
+    /// Produce Carnatic svara names.
+    pub fn compute(self) -> Vec<String> {
+        midi_to_svara_c_impl(self.midi, self.sa, self.mela, self.abbr)
+    }
+}
+
+fn midi_to_svara_c_impl(midi: &[f32], sa: f32, mela: usize, abbr: bool) -> Vec<String> {
     let degrees = notation::mela_to_degrees(mela);
     let midi_sa = hz_to_midi(&[sa])[0];
     midi.iter().map(|&m| {
         let semitone = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
         let idx = degrees.iter().position(|&d| d == semitone as usize).unwrap_or(0);
-        let base = match idx {
-            0 => "S", 1..=3 => "R", 4..=6 => "G", 7 => "M", 8 => "P", 9..=11 => "D", 12..=14 => "N", _ => "S",
-        };
-        let variant = match degrees[idx] % 12 {
-            1 => "1", 2 => "2", 3 => "3", 5 => "1", 6 => "2", 7 => "3", 8 => "1", 9 => "2", 10 => "3", _ => "",
-        };
-        if abbr { format!("{}{}", base, variant) } else { notation::mela_to_svara(mela, Some(false), Some(false))[idx].clone() }
+        let (base, variant) = svara_parts(idx, degrees[idx]);
+        if abbr { format!("{base}{variant}") } else { notation::mela_to_svara(mela).compute()[idx].clone() }
     }).collect()
 }
 
@@ -312,7 +407,7 @@ pub fn note_to_midi(note: &[&str], round_midi: Option<bool>) -> Vec<f32> {
     let note_map = [("C", 0), ("C#", 1), ("Db", 1), ("D", 2), ("D#", 3), ("Eb", 3), ("E", 4), ("F", 5), ("F#", 6), ("Gb", 6), ("G", 7), ("G#", 8), ("Ab", 8), ("A", 9), ("A#", 10), ("Bb", 10), ("B", 11)];
     note.iter().map(|&n| {
         let (note_part, octave_part) = n.split_at(n.find(|c: char| c.is_ascii_digit()).unwrap_or(n.len()));
-        let note_val = note_map.iter().find(|&&(name, _)| name == note_part).map(|&(_, val)| val).unwrap_or(0) as f32;
+        let note_val = note_map.iter().find(|&&(name, _)| name == note_part).map_or(0, |&(_, val)| val) as f32;
         let octave = octave_part.parse::<i32>().unwrap_or(4);
         let midi = note_val + (octave + 1) as f32 * 12.0;
         if round_midi.unwrap_or(true) { midi.round() } else { midi }
@@ -358,10 +453,10 @@ pub fn note_to_svara_h(notes: &[&str], sa: f32, abbr: Option<bool>) -> Vec<Strin
 /// use dasp_rs::util::*;
 /// use dasp_rs::types::*;
 /// let notes = vec!["C4", "D4"];
-/// let svaras = note_to_svara_c(&notes, 261.63, None, Some(true));
+/// let svaras = note_to_svara_c(&notes, 261.63, None);
 /// assert_eq!(svaras, vec!["S", "R2"]);
 /// ```
-pub fn note_to_svara_c(notes: &[&str], sa: f32, mela: Option<usize>, _abbr: Option<bool>) -> Vec<String> {
+pub fn note_to_svara_c(notes: &[&str], sa: f32, mela: Option<usize>) -> Vec<String> {
     let midi = note_to_midi(notes, Some(true));
     hz_to_svara_c(&midi_to_hz(&midi), sa, mela)
 }
@@ -451,10 +546,10 @@ pub fn mel_to_hz(mels: &[f32], htk: Option<bool>) -> Vec<f32> {
 /// use dasp_rs::util::*;
 /// use dasp_rs::types::*;
 /// let octs = vec![4.0];
-/// let freqs = octs_to_hz(&octs, None, None);
+/// let freqs = octs_to_hz(&octs, None);
 /// assert_eq!(freqs, vec![440.0]);
 /// ```
-pub fn octs_to_hz(octs: &[f32], tuning: Option<f32>, _bins_per_octave: Option<usize>) -> Vec<f32> {
+pub fn octs_to_hz(octs: &[f32], tuning: Option<f32>) -> Vec<f32> {
     let tune = tuning.unwrap_or(0.0);
     octs.iter().map(|&o| 440.0 * 2.0f32.powf(o - 4.0 + tune / 12.0)).collect()
 }
@@ -472,10 +567,10 @@ pub fn octs_to_hz(octs: &[f32], tuning: Option<f32>, _bins_per_octave: Option<us
 /// ```
 /// use dasp_rs::util::*;
 /// use dasp_rs::types::*;
-/// let tuning = a4_to_tuning(432.0, None);
+/// let tuning = a4_to_tuning(432.0);
 /// assert!(tuning < 0.0);
 /// ```
-pub fn a4_to_tuning(a4: f32, _bins_per_octave: Option<usize>) -> f32 {
+pub fn a4_to_tuning(a4: f32) -> f32 {
     12.0 * (a4 / 440.0).log2()
 }
 
@@ -492,10 +587,10 @@ pub fn a4_to_tuning(a4: f32, _bins_per_octave: Option<usize>) -> f32 {
 /// ```
 /// use dasp_rs::util::*;
 /// use dasp_rs::types::*;
-/// let a4 = tuning_to_a4(-0.317667, None);
+/// let a4 = tuning_to_a4(-0.317667);
 /// assert!(a4 > 431.0 && a4 < 433.0);
 /// ```
-pub fn tuning_to_a4(tuning: f32, _bins_per_octave: Option<usize>) -> f32 {
+pub fn tuning_to_a4(tuning: f32) -> f32 {
     440.0 * 2.0f32.powf(tuning / 12.0)
 }
 
@@ -510,15 +605,44 @@ pub fn tuning_to_a4(tuning: f32, _bins_per_octave: Option<usize>) -> f32 {
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::util::*;
-/// use dasp_rs::types::*;
-/// let freqs = fft_frequencies(None, Some(4));
+/// use dasp_rs::util::fft_frequencies;
+/// let freqs = fft_frequencies().n_fft(4).compute();
 /// assert_eq!(freqs, vec![0.0, 11025.0, 22050.0]);
 /// ```
-pub fn fft_frequencies(sr: Option<u32>, n_fft: Option<usize>) -> Vec<f32> {
-    let sample_rate = sr.unwrap_or(44100);
-    let n = n_fft.unwrap_or(2048);
-    Array1::linspace(0.0, sample_rate as f32 / 2.0, n / 2 + 1).to_vec()
+pub fn fft_frequencies() -> FftFrequenciesBuilder {
+    FftFrequenciesBuilder { sr: 44100, n_fft: 2048 }
+}
+
+/// Builder for [`fft_frequencies`].
+#[derive(Debug, Clone)]
+pub struct FftFrequenciesBuilder {
+    sr: u32,
+    n_fft: usize,
+}
+
+impl FftFrequenciesBuilder {
+    /// Set the sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sr = sr;
+        self
+    }
+
+    /// Set the FFT size (default: 2048).
+    #[must_use]
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Produce the FFT bin frequencies (0 to Nyquist).
+    pub fn compute(self) -> Vec<f32> {
+        fft_frequencies_impl(self.sr, self.n_fft)
+    }
+}
+
+pub(crate) fn fft_frequencies_impl(sr: u32, n_fft: usize) -> Vec<f32> {
+    Array1::linspace(0.0, sr as f32 / 2.0, n_fft / 2 + 1).to_vec()
 }
 
 /// Generates Constant-Q Transform (CQT) frequency bins.
@@ -545,27 +669,62 @@ pub fn cqt_frequencies(n_bins: usize, fmin: Option<f32>) -> Vec<f32> {
 /// Generates mel-scale frequency bins.
 ///
 /// # Arguments
-/// * `n_mels` - Optional number of mel bins (defaults to 128)
-/// * `fmin` - Optional minimum frequency in Hz (defaults to 0.0)
-/// * `fmax` - Optional maximum frequency in Hz (defaults to 11025.0)
-/// * `_htk` - Optional flag for HTK formula (unused, defaults to None)
+/// * `n_mels` - Number of mel bins (default: 128)
+/// * `fmin` - Minimum frequency in Hz (default: 0.0)
+/// * `fmax` - Maximum frequency in Hz (default: 11025.0)
 ///
 /// # Returns
 /// Returns a `Vec<f32>` containing mel-scale frequency bins.
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::util::*;
-/// use dasp_rs::types::*;
-/// let freqs = mel_frequencies(Some(3), None, None, None);
+/// use dasp_rs::util::mel_frequencies;
+/// let freqs = mel_frequencies().n_mels(3).compute();
 /// ```
-pub fn mel_frequencies(n_mels: Option<usize>, fmin: Option<f32>, fmax: Option<f32>, _htk: Option<bool>) -> Vec<f32> {
-    let n = n_mels.unwrap_or(128);
-    let min_freq = fmin.unwrap_or(0.0);
-    let max_freq = fmax.unwrap_or(11025.0);
-    let min_mel = hz_to_mel(&[min_freq], None)[0];
-    let max_mel = hz_to_mel(&[max_freq], None)[0];
-    let mel_steps = Array1::linspace(min_mel, max_mel, n);
+pub fn mel_frequencies() -> MelFrequenciesBuilder {
+    MelFrequenciesBuilder { n_mels: 128, fmin: 0.0, fmax: 11025.0 }
+}
+
+/// Builder for [`mel_frequencies`].
+#[derive(Debug, Clone)]
+pub struct MelFrequenciesBuilder {
+    n_mels: usize,
+    fmin: f32,
+    fmax: f32,
+}
+
+impl MelFrequenciesBuilder {
+    /// Set the number of mel bins (default: 128).
+    #[must_use]
+    pub fn n_mels(mut self, n_mels: usize) -> Self {
+        self.n_mels = n_mels;
+        self
+    }
+
+    /// Set the minimum frequency in Hz (default: 0.0).
+    #[must_use]
+    pub fn fmin(mut self, fmin: f32) -> Self {
+        self.fmin = fmin;
+        self
+    }
+
+    /// Set the maximum frequency in Hz (default: 11025.0).
+    #[must_use]
+    pub fn fmax(mut self, fmax: f32) -> Self {
+        self.fmax = fmax;
+        self
+    }
+
+    /// Produce the mel-scale bin frequencies.
+    pub fn compute(self) -> Vec<f32> {
+        mel_frequencies_impl(self.n_mels, self.fmin, self.fmax)
+    }
+}
+
+pub(crate) fn mel_frequencies_impl(n_mels: usize, fmin: f32, fmax: f32) -> Vec<f32> {
+    let min_mel = hz_to_mel(&[fmin], None)[0];
+    let max_mel = hz_to_mel(&[fmax], None)[0];
+    let mel_steps = Array1::linspace(min_mel, max_mel, n_mels);
     mel_to_hz(&mel_steps.to_vec(), None)
 }
 
@@ -581,14 +740,44 @@ pub fn mel_frequencies(n_mels: Option<usize>, fmin: Option<f32>, fmax: Option<f3
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::util::*;
-/// use dasp_rs::types::*;
-/// let freqs = tempo_frequencies(3, None, None);
+/// use dasp_rs::util::tempo_frequencies;
+/// let freqs = tempo_frequencies(3).compute();
 /// ```
-pub fn tempo_frequencies(n_bins: usize, hop_length: Option<usize>, sr: Option<u32>) -> Vec<f32> {
-    let sr = sr.unwrap_or(44100);
-    let hop = hop_length.unwrap_or(512);
-    let frame_rate = sr as f32 / hop as f32;
+pub fn tempo_frequencies(n_bins: usize) -> TempoFrequenciesBuilder {
+    TempoFrequenciesBuilder { n_bins, hop_length: 512, sr: 44100 }
+}
+
+/// Builder for [`tempo_frequencies`].
+#[derive(Debug, Clone)]
+pub struct TempoFrequenciesBuilder {
+    n_bins: usize,
+    hop_length: usize,
+    sr: u32,
+}
+
+impl TempoFrequenciesBuilder {
+    /// Set the hop length in samples (default: 512).
+    #[must_use]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = hop_length;
+        self
+    }
+
+    /// Set the sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sr = sr;
+        self
+    }
+
+    /// Produce the tempo bin frequencies in BPM.
+    pub fn compute(self) -> Vec<f32> {
+        tempo_frequencies_impl(self.n_bins, self.hop_length, self.sr)
+    }
+}
+
+pub(crate) fn tempo_frequencies_impl(n_bins: usize, hop_length: usize, sr: u32) -> Vec<f32> {
+    let frame_rate = sr as f32 / hop_length as f32;
     Array1::linspace(0.0, frame_rate / 2.0, n_bins).mapv(|f| f * 60.0).to_vec()
 }
 
@@ -636,7 +825,7 @@ mod tests {
     #[test]
     fn note_name_conversions_match_expectations() {
         let midi = vec![60.0, 61.0, 72.0];
-        let names = midi_to_note(&midi, None, None, None);
+        let names = midi_to_note(&midi, None);
         assert_eq!(names, vec!["C4", "C#4", "C5"]);
 
         let back = note_to_midi(&["C4", "C#4", "C5"], None);
@@ -665,13 +854,13 @@ mod tests {
         assert!(approx_eq(cqt[0], 32.7));
         assert!(cqt[1] > cqt[0]);
 
-        let fft = fft_frequencies(Some(44_100), Some(4));
+        let fft = fft_frequencies_impl(44_100, 4);
         assert_eq!(fft, vec![0.0, 11_025.0, 22_050.0]);
     }
 
     #[test]
     fn tempo_and_fourier_bins_have_expected_scale() {
-        let tempo = tempo_frequencies(3, Some(512), Some(44_100));
+        let tempo = tempo_frequencies_impl(3, 512, 44_100);
         assert_eq!(tempo.len(), 3);
         assert!(approx_eq(tempo[0], 0.0));
         assert!(tempo[2] > tempo[1]);
@@ -679,20 +868,20 @@ mod tests {
         let fourier = fourier_tempo_frequencies(Some(44_100));
         assert_eq!(fourier.len(), 256);
         assert!(fourier.first().unwrap().abs() < 1e-6);
-        // Last bin is the frame-rate Nyquist in BPM: (44100/512)/2 * 60 ≈ 2584.
+        // Last bin is the frame-rate Nyquist in BPM: (44100/512)/2 * 60 â‰ˆ 2584.
         assert!(fourier.last().unwrap() > &2500.0);
     }
 
     #[test]
     fn tuning_and_octave_conversions_match() {
-        let tuning = a4_to_tuning(432.0, None);
+        let tuning = a4_to_tuning(432.0);
         assert!(tuning < 0.0);
-        let a4 = tuning_to_a4(tuning, None);
+        let a4 = tuning_to_a4(tuning);
         assert!(approx_eq(a4, 432.0));
 
         let octs = hz_to_octs(&[440.0], None);
         assert!(approx_eq(octs[0], 4.0));
-        let freqs = octs_to_hz(&octs, None, None);
+        let freqs = octs_to_hz(&octs, None);
         assert!(approx_eq(freqs[0], 440.0));
     }
 }

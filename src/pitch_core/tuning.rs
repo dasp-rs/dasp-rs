@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::signal_processing::time_frequency::stft;
 use crate::core::AudioError;
-use crate::utils::frequency::fft_frequencies;
+use crate::utils::frequency::fft_frequencies_impl;
 
 /// Errors specific to pitch and tuning operations.
 #[derive(Error, Debug)]
@@ -28,54 +28,95 @@ pub enum TuningError {
 impl From<TuningError> for AudioError {
     fn from(err: TuningError) -> Self {
         match err {
-            TuningError::InvalidFrequencyRange(msg) => AudioError::InvalidInput(msg),
-            TuningError::InsufficientData(msg) => AudioError::InsufficientData(msg),
-            TuningError::ComputationFailed(msg) => AudioError::ComputationFailed(msg),
-            TuningError::InvalidInput(msg) => AudioError::InvalidInput(msg),
+            TuningError::InvalidFrequencyRange(msg) | TuningError::InvalidInput(msg) => {
+                Self::InvalidInput(msg)
+            }
+            TuningError::InsufficientData(msg) => Self::InsufficientData(msg),
+            TuningError::ComputationFailed(msg) => Self::ComputationFailed(msg),
         }
     }
 }
 
-/// Computes pitch estimates using the pYIN algorithm (probabilistic YIN).
+/// Builder for the pYIN pitch tracker (probabilistic YIN).
+#[derive(Debug, Clone)]
+pub struct PyinBuilder<'a> {
+    signal: &'a [f32],
+    fmin: f32,
+    fmax: f32,
+    sample_rate: u32,
+    frame_length: usize,
+    hop_length: Option<usize>,
+}
+
+impl PyinBuilder<'_> {
+    /// Set the sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sample_rate = sr;
+        self
+    }
+
+    /// Set the frame length in samples (default: 2048).
+    #[must_use]
+    pub fn frame_length(mut self, frame_length: usize) -> Self {
+        self.frame_length = frame_length;
+        self
+    }
+
+    /// Set the hop length in samples (default: `frame_length / 4`).
+    #[must_use]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = Some(hop_length);
+        self
+    }
+
+    /// Compute per-frame pitch estimates in Hz.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Vec<f32>, TuningError> {
+        pyin_impl(
+            self.signal,
+            self.fmin,
+            self.fmax,
+            self.sample_rate,
+            self.frame_length,
+            self.hop_length,
+        )
+    }
+}
+
+/// Estimates pitch using the pYIN algorithm (probabilistic YIN).
 ///
-/// The pYIN algorithm extends the YIN algorithm by incorporating probabilistic modeling
-/// to improve robustness in noisy conditions. It estimates pitch by analyzing
-/// cumulative mean normalized difference functions across frames.
-///
-/// # Arguments
-/// * `signal` - Audio time series as a slice of `f32` samples.
-/// * `fmin` - Minimum frequency in Hz (must be positive).
-/// * `fmax` - Maximum frequency in Hz (must be less than Nyquist frequency).
-/// * `sample_rate` - Sample rate in Hz (defaults to 44100 if `None`).
-/// * `frame_length` - Frame length in samples (defaults to 2048 if `None`).
-/// * `hop_length` - Hop length in samples between frames (defaults to `frame_length / 4` if `None`).
-///
-/// # Returns
-/// A `Result` containing a `Vec<f32>` of pitch estimates in Hz for each frame.
-/// Returns 0.0 for frames where no valid pitch is detected.
-/// Errors if inputs are invalid or insufficient.
-///
-/// # Errors
-/// * `TuningError::InvalidFrequencyRange` - If `fmin >= fmax`, `fmin < 0`, or `fmax > sample_rate/2`.
-/// * `TuningError::InsufficientData` - If signal length is less than frame length.
+/// Returns a builder. `fmin`/`fmax` (Hz) are required; sample rate, frame
+/// length, and hop length have defaults (44100, 2048, `frame_length / 4`).
 ///
 /// # Example
 /// ```no_run
 /// use dasp_rs::pitch::pyin;
-/// let signal = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]; // Short signal
-/// let pitches = pyin(&signal, 50.0, 500.0, None, Some(4), None).unwrap();
-/// assert_eq!(pitches.len(), 1); // Single frame due to short signal
+/// let signal = vec![0.0_f32; 4096];
+/// let pitches = pyin(&signal, 50.0, 500.0).sample_rate(44100).compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn pyin(
+pub fn pyin(signal: &[f32], fmin: f32, fmax: f32) -> PyinBuilder<'_> {
+    PyinBuilder {
+        signal,
+        fmin,
+        fmax,
+        sample_rate: 44_100,
+        frame_length: 2048,
+        hop_length: None,
+    }
+}
+
+fn pyin_impl(
     signal: &[f32],
     fmin: f32,
     fmax: f32,
-    sample_rate: Option<u32>,
-    frame_length: Option<usize>,
+    sr: u32,
+    frame_len: usize,
     hop_length: Option<usize>,
 ) -> Result<Vec<f32>, TuningError> {
-    let sr = sample_rate.unwrap_or(44_100);
-    let frame_len = frame_length.unwrap_or(2048);
     validate_inputs(fmin, fmax, sr, frame_len, signal.len())?;
 
     let hop_length = hop_length.unwrap_or(frame_len / 4).max(1);
@@ -87,53 +128,93 @@ pub fn pyin(
     for i in 0..n_frames {
         let start = i * hop_length;
         let frame = &signal[start..(start + frame_len).min(signal.len())];
-        let pitch = compute_pyin_frame(frame, lag_min, lag_max, sr, fmin, fmax)?;
+        let pitch = compute_pyin_frame(frame, lag_min, lag_max, sr, fmin, fmax);
         pitches.push(pitch);
     }
 
     Ok(pitches)
 }
 
-/// Computes pitch estimates using the YIN algorithm.
+/// Builder for the YIN pitch tracker.
+#[derive(Debug, Clone)]
+pub struct YinBuilder<'a> {
+    signal: &'a [f32],
+    fmin: f32,
+    fmax: f32,
+    sample_rate: u32,
+    frame_length: usize,
+    hop_length: Option<usize>,
+}
+
+impl YinBuilder<'_> {
+    /// Set the sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sample_rate = sr;
+        self
+    }
+
+    /// Set the frame length in samples (default: 2048).
+    #[must_use]
+    pub fn frame_length(mut self, frame_length: usize) -> Self {
+        self.frame_length = frame_length;
+        self
+    }
+
+    /// Set the hop length in samples (default: `frame_length / 4`).
+    #[must_use]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = Some(hop_length);
+        self
+    }
+
+    /// Compute per-frame pitch estimates in Hz.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Vec<f32>, TuningError> {
+        yin_impl(
+            self.signal,
+            self.fmin,
+            self.fmax,
+            self.sample_rate,
+            self.frame_length,
+            self.hop_length,
+        )
+    }
+}
+
+/// Estimates pitch using the YIN algorithm.
 ///
-/// The YIN algorithm detects pitch by computing the cumulative mean normalized
-/// difference function and finding the lag with the minimum value, corresponding
-/// to the fundamental period.
-///
-/// # Arguments
-/// * `signal` - Audio time series as a slice of `f32` samples.
-/// * `fmin` - Minimum frequency in Hz (must be positive).
-/// * `fmax` - Maximum frequency in Hz (must be less than Nyquist frequency).
-/// * `sample_rate` - Sample rate in Hz (defaults to 44100 if `None`).
-/// * `frame_length` - Frame length in samples (defaults to 2048 if `None`).
-/// * `hop_length` - Hop length in samples between frames (defaults to `frame_length / 4` if `None`).
-///
-/// # Returns
-/// A `Result` containing a `Vec<f32>` of pitch estimates in Hz for each frame.
-/// Returns 0.0 for frames where no valid pitch is detected.
-/// Errors if inputs are invalid or insufficient.
-///
-/// # Errors
-/// * `TuningError::InvalidFrequencyRange` - If `fmin >= fmax`, `fmin < 0`, or `fmax > sample_rate/2`.
-/// * `TuningError::InsufficientData` - If signal length is less than frame length.
+/// Returns a builder. `fmin`/`fmax` (Hz) are required; sample rate, frame
+/// length, and hop length have defaults (44100, 2048, `frame_length / 4`).
 ///
 /// # Example
 /// ```no_run
 /// use dasp_rs::pitch::yin;
-/// let signal = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
-/// let pitches = yin(&signal, 50.0, 500.0, None, Some(4), None).unwrap();
-/// assert_eq!(pitches.len(), 1);
+/// let signal = vec![0.0_f32; 4096];
+/// let pitches = yin(&signal, 50.0, 500.0).sample_rate(44100).compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn yin(
+pub fn yin(signal: &[f32], fmin: f32, fmax: f32) -> YinBuilder<'_> {
+    YinBuilder {
+        signal,
+        fmin,
+        fmax,
+        sample_rate: 44_100,
+        frame_length: 2048,
+        hop_length: None,
+    }
+}
+
+fn yin_impl(
     signal: &[f32],
     fmin: f32,
     fmax: f32,
-    sample_rate: Option<u32>,
-    frame_length: Option<usize>,
+    sr: u32,
+    frame_len: usize,
     hop_length: Option<usize>,
 ) -> Result<Vec<f32>, TuningError> {
-    let sr = sample_rate.unwrap_or(44_100);
-    let frame_len = frame_length.unwrap_or(2048);
     validate_inputs(fmin, fmax, sr, frame_len, signal.len())?;
 
     let hop_length = hop_length.unwrap_or(frame_len / 4).max(1);
@@ -145,7 +226,7 @@ pub fn yin(
     for i in 0..n_frames {
         let start = i * hop_length;
         let frame = &signal[start..(start + frame_len).min(signal.len())];
-        let pitch = compute_yin_frame(frame, lag_min, lag_max, sr, fmin, fmax)?;
+        let pitch = compute_yin_frame(frame, lag_min, lag_max, sr, fmin, fmax);
         pitches.push(pitch);
     }
 
@@ -177,11 +258,75 @@ pub fn yin(
 /// # Example
 /// ```no_run
 /// use dasp_rs::pitch::estimate_tuning;
-/// let signal = vec![0.1, 0.2, 0.3, 0.4];
-/// let tuning = estimate_tuning(Some(&signal), None, None, Some(4), None).unwrap();
-/// assert_eq!(tuning, 0.0); // No valid pitches in short signal
+/// let signal = vec![0.0_f32; 4096];
+/// let tuning = estimate_tuning(&signal).n_fft(2048).compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn estimate_tuning(
+pub fn estimate_tuning(signal: &[f32]) -> TuningBuilder<'_> {
+    TuningBuilder {
+        signal,
+        spectrogram: None,
+        sample_rate: 44_100,
+        n_fft: 2048,
+        hop_length: None,
+    }
+}
+
+/// Builder for [`estimate_tuning`].
+#[derive(Debug, Clone)]
+pub struct TuningBuilder<'a> {
+    signal: &'a [f32],
+    spectrogram: Option<&'a Array2<f32>>,
+    sample_rate: u32,
+    n_fft: usize,
+    hop_length: Option<usize>,
+}
+
+impl<'a> TuningBuilder<'a> {
+    /// Set the sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sample_rate = sr;
+        self
+    }
+
+    /// Set the FFT size (default: 2048).
+    #[must_use]
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Set the hop length (default: `n_fft / 4`).
+    #[must_use]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = Some(hop_length);
+        self
+    }
+
+    /// Use a precomputed magnitude spectrogram instead of computing one.
+    #[must_use]
+    pub fn spectrogram(mut self, spectrogram: &'a Array2<f32>) -> Self {
+        self.spectrogram = Some(spectrogram);
+        self
+    }
+
+    /// Compute the tuning deviation in cents.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<f32, TuningError> {
+        estimate_tuning_impl(
+            Some(self.signal),
+            Some(self.sample_rate),
+            self.spectrogram,
+            Some(self.n_fft),
+            self.hop_length,
+        )
+    }
+}
+
+fn estimate_tuning_impl(
     signal: Option<&[f32]>,
     sample_rate: Option<u32>,
     spectrogram: Option<&Array2<f32>>,
@@ -193,7 +338,8 @@ pub fn estimate_tuning(
     let hop_length = hop_length.unwrap_or(n_fft / 4).max(1);
 
     let s = compute_spectrogram(signal, spectrogram, n_fft, hop_length)?;
-    let (pitches, mags) = piptrack(signal, Some(sr), Some(&s), Some(n_fft), Some(hop_length))?;
+    // The spectrogram is already computed; pass it (not the signal) to piptrack.
+    let (pitches, mags) = piptrack_impl(None, Some(sr), Some(&s), Some(n_fft), Some(hop_length))?;
 
     let mut total_deviation = 0.0;
     let mut total_weight = 0.0;
@@ -280,13 +426,12 @@ pub fn pitch_tuning(frequencies: &[f32], resolution: Option<f32>) -> Result<f32,
 /// * `sample_rate` - Sample rate in Hz (defaults to 44100 if `None`).
 /// * `spectrogram` - Optional pre-computed magnitude spectrogram as `Array2<f32>`.
 /// * `n_fft` - FFT window size in samples (defaults to 2048 if `None`).
-/// * `hop_length` - Hop length in samples (defaults to n_fft/4 if `None`).
+/// * `hop_length` - Hop length in samples (defaults to `n_fft/4` if `None`).
 ///
 /// # Returns
 /// A `Result` containing a tuple of:
 /// * `pitches` - 2D array of pitch estimates in Hz (`Array2<f32>`).
 /// * `magnitudes` - 2D array of corresponding peak magnitudes (`Array2<f32>`).
-/// Errors if inputs are invalid or computation fails.
 ///
 /// # Errors
 /// * `TuningError::InsufficientData` - If signal length is less than `n_fft`.
@@ -296,11 +441,76 @@ pub fn pitch_tuning(frequencies: &[f32], resolution: Option<f32>) -> Result<f32,
 /// # Example
 /// ```no_run
 /// use dasp_rs::pitch::piptrack;
-/// let signal = vec![0.1, 0.2, 0.3, 0.4];
-/// let (pitches, mags) = piptrack(Some(&signal), None, None, Some(4), None).unwrap();
-/// assert_eq!(pitches.shape(), &[3, 1]); // n_fft/2 + 1, n_frames
+/// let signal = vec![0.0_f32; 4096];
+/// let (pitches, mags) = piptrack(&signal).n_fft(2048).compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn piptrack(
+pub fn piptrack(signal: &[f32]) -> PiptrackBuilder<'_> {
+    PiptrackBuilder {
+        signal,
+        spectrogram: None,
+        sample_rate: 44_100,
+        n_fft: 2048,
+        hop_length: None,
+    }
+}
+
+/// Builder for [`piptrack`].
+#[derive(Debug, Clone)]
+pub struct PiptrackBuilder<'a> {
+    signal: &'a [f32],
+    spectrogram: Option<&'a Array2<f32>>,
+    sample_rate: u32,
+    n_fft: usize,
+    hop_length: Option<usize>,
+}
+
+impl<'a> PiptrackBuilder<'a> {
+    /// Set the sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sample_rate = sr;
+        self
+    }
+
+    /// Set the FFT size (default: 2048).
+    #[must_use]
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = n_fft;
+        self
+    }
+
+    /// Set the hop length (default: `n_fft / 4`).
+    #[must_use]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = Some(hop_length);
+        self
+    }
+
+    /// Use a precomputed magnitude spectrogram instead of the signal.
+    #[must_use]
+    pub fn spectrogram(mut self, spectrogram: &'a Array2<f32>) -> Self {
+        self.spectrogram = Some(spectrogram);
+        self
+    }
+
+    /// Compute `(pitches, magnitudes)`.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<(Array2<f32>, Array2<f32>), TuningError> {
+        let signal = if self.spectrogram.is_some() { None } else { Some(self.signal) };
+        piptrack_impl(
+            signal,
+            Some(self.sample_rate),
+            self.spectrogram,
+            Some(self.n_fft),
+            self.hop_length,
+        )
+    }
+}
+
+fn piptrack_impl(
     signal: Option<&[f32]>,
     sample_rate: Option<u32>,
     spectrogram: Option<&Array2<f32>>,
@@ -312,7 +522,7 @@ pub fn piptrack(
     let hop_length = hop_length.unwrap_or(n_fft / 4);
 
     let s = compute_spectrogram(signal, spectrogram, n_fft, hop_length)?;
-    let freqs = fft_frequencies(Some(sr), Some(n_fft));
+    let freqs = fft_frequencies_impl(sr, n_fft);
     if freqs.len() != s.shape()[0] {
         return Err(TuningError::ComputationFailed(
             "Frequency bins mismatch with spectrogram".to_string(),
@@ -409,15 +619,12 @@ fn compute_cmnd(diff: &[f32], lag_max: usize) -> Vec<f32> {
 }
 
 fn find_min_cmnd(cmnd: &[f32], lag_min: usize, lag_max: usize) -> (usize, f32) {
-    let mut min_idx = lag_min;
-    let mut min_val = cmnd[lag_min];
-    for tau in lag_min + 1..lag_max {
-        if cmnd[tau] < min_val {
-            min_val = cmnd[tau];
-            min_idx = tau;
-        }
-    }
-    (min_idx, min_val)
+    cmnd[lag_min..lag_max]
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (lag_min + i, v))
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
+        .unwrap_or((lag_min, cmnd[lag_min]))
 }
 
 fn compute_pyin_frame(
@@ -427,7 +634,7 @@ fn compute_pyin_frame(
     sample_rate: u32,
     fmin: f32,
     fmax: f32,
-) -> Result<f32, TuningError> {
+) -> f32 {
     let diff = compute_diff_function(frame, lag_max);
     let cmnd = compute_cmnd(&diff, lag_max);
     let (min_idx, min_val) = find_min_cmnd(&cmnd, lag_min, lag_max);
@@ -442,7 +649,7 @@ fn compute_pyin_frame(
         0.0
     };
 
-    Ok(if pitch >= fmin && pitch <= fmax { pitch } else { 0.0 })
+    if pitch >= fmin && pitch <= fmax { pitch } else { 0.0 }
 }
 
 fn compute_yin_frame(
@@ -452,7 +659,7 @@ fn compute_yin_frame(
     sample_rate: u32,
     fmin: f32,
     fmax: f32,
-) -> Result<f32, TuningError> {
+) -> f32 {
     let diff = compute_diff_function(frame, lag_max);
     let cmnd = compute_cmnd(&diff, lag_max);
     let (min_idx, min_val) = find_min_cmnd(&cmnd, lag_min, lag_max);
@@ -463,7 +670,7 @@ fn compute_yin_frame(
         0.0
     };
 
-    Ok(if pitch >= fmin && pitch <= fmax { pitch } else { 0.0 })
+    if pitch >= fmin && pitch <= fmax { pitch } else { 0.0 }
 }
 
 fn compute_spectrogram(
@@ -484,9 +691,9 @@ fn compute_spectrogram(
                 .hop_length(hop_length)
                 .compute()
                 .map_err(|e| {
-                    TuningError::ComputationFailed(format!("STFT computation failed: {}", e))
+                    TuningError::ComputationFailed(format!("STFT computation failed: {e}"))
                 })
-                .map(|s| s.mapv(|x| x.norm()))
+                .map(|s| s.mapv(num_complex::Complex::norm))
         }
         (None, Some(s)) => Ok(s.to_owned()),
         _ => Err(TuningError::InvalidInput(
@@ -505,12 +712,12 @@ mod tests {
         let signal = vec![0.1, 0.2, 0.3];
         // Invalid frequency range
         assert!(matches!(
-            pyin(&signal, 500.0, 50.0, None, None, None),
+            pyin(&signal, 500.0, 50.0).compute(),
             Err(TuningError::InvalidFrequencyRange(_))
         ));
         // Signal too short
         assert!(matches!(
-            pyin(&signal, 50.0, 500.0, None, Some(10), None),
+            pyin(&signal, 50.0, 500.0).frame_length(10).compute(),
             Err(TuningError::InsufficientData(_))
         ));
     }
@@ -518,16 +725,15 @@ mod tests {
     #[test]
     fn test_yin_short_signal() {
         let signal = vec![0.1, 0.2, 0.3, 0.4];
-        let pitches = yin(&signal, 50.0, 500.0, None, Some(4), None).unwrap();
+        let pitches = yin(&signal, 50.0, 500.0).frame_length(4).compute().unwrap();
         assert_eq!(pitches, vec![0.0]);
     }
 
     #[test]
-    fn test_estimate_tuning_no_input() {
-        assert!(matches!(
-            estimate_tuning(None, None, None, None, None),
-            Err(TuningError::InvalidInput(_))
-        ));
+    fn test_estimate_tuning_short_signal_returns_zero() {
+        let signal = vec![0.0_f32; 4096];
+        let tuning = estimate_tuning(&signal).n_fft(2048).compute().unwrap();
+        assert!(tuning.abs() < f32::EPSILON);
     }
 
     #[test]
@@ -542,7 +748,7 @@ mod tests {
     #[test]
     fn test_piptrack_spectrogram() {
         let s = Array2::from_elem((3, 2), 1.0);
-        let (pitches, mags) = piptrack(None, None, Some(&s), Some(4), None).unwrap();
+        let (pitches, mags) = piptrack(&[]).n_fft(4).spectrogram(&s).compute().unwrap();
         assert_eq!(pitches.shape(), &[3, 2]);
         assert_eq!(mags.shape(), &[3, 2]);
     }
@@ -551,7 +757,7 @@ mod tests {
     fn test_piptrack_invalid_spectrogram() {
         let signal = vec![0.1, 0.2, 0.3];
         assert!(matches!(
-            piptrack(Some(&signal), None, None, Some(10), None),
+            piptrack(&signal).n_fft(10).compute(),
             Err(TuningError::InsufficientData(_))
         ));
     }

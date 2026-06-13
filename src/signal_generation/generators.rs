@@ -8,31 +8,70 @@ pub enum GeneratorError {
     InvalidInput(String),
 }
 
+/// Builder for a click track.
+#[derive(Debug, Clone, Default)]
+pub struct ClicksBuilder<'a> {
+    times: Option<&'a [f32]>,
+    frames: Option<&'a [usize]>,
+    sr: Option<u32>,
+    hop_length: Option<usize>,
+}
+
+impl<'a> ClicksBuilder<'a> {
+    /// Place clicks at the given times in seconds (takes precedence over frames).
+    #[must_use]
+    pub fn times(mut self, times: &'a [f32]) -> Self {
+        self.times = Some(times);
+        self
+    }
+
+    /// Place clicks at the given frame indices.
+    #[must_use]
+    pub fn frames(mut self, frames: &'a [usize]) -> Self {
+        self.frames = Some(frames);
+        self
+    }
+
+    /// Set the sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sr = Some(sr);
+        self
+    }
+
+    /// Set the hop length in samples, used with `frames` (default: 512).
+    #[must_use]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = Some(hop_length);
+        self
+    }
+
+    /// Render the click track.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Vec<f32>, GeneratorError> {
+        clicks_impl(self.times, self.frames, self.sr, self.hop_length)
+    }
+}
+
 /// Generates a click signal at specified times or frame indices.
 ///
-/// # Arguments
-/// * `times` - Optional array of times in seconds where clicks should occur
-/// * `frames` - Optional array of frame indices where clicks should occur
-/// * `sr` - Optional sample rate in Hz (defaults to 44100 Hz)
-/// * `hop_length` - Optional hop length in samples (defaults to 512)
-///
-/// # Returns
-/// Returns a `Vec<f32>` representing the click signal, with 1.0 at click positions and 0.0 elsewhere.
-///
-/// # Notes
-/// - If both `times` and `frames` are provided, `times` takes precedence.
-/// - The signal length is determined by the maximum time or frame index, defaulting to 44100 samples if neither is provided.
-/// - Clicks beyond the signal length are ignored.
+/// Returns a builder. Configure with [`ClicksBuilder::times`] or
+/// [`ClicksBuilder::frames`], then call `.compute()`.
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::generate::*;
-/// use dasp_rs::types::*;
-/// let times = vec![0.1, 0.2, 0.3];
-/// let signal = clicks(Some(&times), None, None, None)?;
+/// use dasp_rs::generate::clicks;
+/// let times = [0.1, 0.2, 0.3];
+/// let signal = clicks().times(&times).compute()?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn clicks(
+pub fn clicks<'a>() -> ClicksBuilder<'a> {
+    ClicksBuilder::default()
+}
+
+fn clicks_impl(
     times: Option<&[f32]>,
     frames: Option<&[usize]>,
     sr: Option<u32>,
@@ -41,19 +80,15 @@ pub fn clicks(
     let sample_rate = sr.unwrap_or(44100);
     let hop = hop_length.unwrap_or(512);
     let max_samples = if let Some(t) = times {
-        if t.is_empty() {
-            return Err(GeneratorError::InvalidInput("Times array cannot be empty".to_string()));
-        }
-        ((t.iter()
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap()
-            * sample_rate as f32) as usize)
-            + 1
+        let max_time = t.iter().copied().max_by(f32::total_cmp).ok_or_else(|| {
+            GeneratorError::InvalidInput("Times array cannot be empty".to_string())
+        })?;
+        (max_time * sample_rate as f32) as usize + 1
     } else if let Some(f) = frames {
-        if f.is_empty() {
-            return Err(GeneratorError::InvalidInput("Frames array cannot be empty".to_string()));
-        }
-        f.iter().max().unwrap() * hop + 1
+        let max_frame = f.iter().copied().max().ok_or_else(|| {
+            GeneratorError::InvalidInput("Frames array cannot be empty".to_string())
+        })?;
+        max_frame * hop + 1
     } else {
         44100
     };
@@ -115,12 +150,14 @@ pub struct ToneBuilder {
 
 impl ToneBuilder {
     /// Set the duration in seconds (default: 1.0).
+    #[must_use]
     pub fn duration(mut self, duration: f32) -> Self {
         self.duration = duration;
         self
     }
 
     /// Set the initial phase in radians (default: 0.0).
+    #[must_use]
     pub fn phase(mut self, phase: f32) -> Self {
         self.phase = phase;
         self
@@ -180,6 +217,7 @@ pub struct ChirpBuilder {
 
 impl ChirpBuilder {
     /// Set the duration in seconds (default: 1.0).
+    #[must_use]
     pub fn duration(mut self, duration: f32) -> Self {
         self.duration = duration;
         self
@@ -218,14 +256,14 @@ mod tests {
 
     #[test]
     fn clicks_from_times_and_frames() {
-        let signal = clicks(Some(&[0.0, 0.001]), None, Some(1000), None).unwrap();
+        let signal = clicks().times(&[0.0, 0.001]).sample_rate(1000).compute().unwrap();
         assert_eq!(signal.len(), 2);
         assert_eq!(signal, vec![1.0, 1.0]);
 
-        let frames = clicks(None, Some(&[0, 2]), Some(8000), Some(2)).unwrap();
+        let frames = clicks().frames(&[0, 2]).sample_rate(8000).hop_length(2).compute().unwrap();
         assert_eq!(frames.len(), 5);
-        assert_eq!(frames[0], 1.0);
-        assert_eq!(frames[4], 1.0);
+        assert!(approx_eq(frames[0], 1.0, f32::EPSILON));
+        assert!(approx_eq(frames[4], 1.0, f32::EPSILON));
         assert!(frames[1].abs() < f32::EPSILON);
         assert!(frames[2].abs() < f32::EPSILON);
         assert!(frames[3].abs() < f32::EPSILON);
@@ -233,8 +271,8 @@ mod tests {
 
     #[test]
     fn clicks_rejects_empty_inputs() {
-        assert!(clicks(Some(&[]), None, None, None).is_err());
-        assert!(clicks(None, Some(&[]), None, None).is_err());
+        assert!(clicks().times(&[]).compute().is_err());
+        assert!(clicks().frames(&[]).compute().is_err());
     }
 
     #[test]

@@ -48,6 +48,9 @@ pub enum MixingError {
 /// assert_eq!(stereo.channels, 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn stereo_mix(left: &AudioData, right: &AudioData) -> Result<AudioData, MixingError> {
     if left.channels != 1 || right.channels != 1 {
         return Err(MixingError::IncompatibleFormat(
@@ -104,6 +107,9 @@ pub fn stereo_mix(left: &AudioData, right: &AudioData) -> Result<AudioData, Mixi
 /// assert_eq!(stereo.channels, 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn multi_channel_mix(signals: &[&AudioData], channels: u16) -> Result<AudioData, MixingError> {
     if signals.is_empty() {
         return Err(MixingError::InvalidSignalCount(
@@ -175,6 +181,9 @@ pub fn multi_channel_mix(signals: &[&AudioData], channels: u16) -> Result<AudioD
 /// assert_eq!(mixed.samples, vec![1.5, 1.5]); // (1.0 * 0.5) + (2.0 * 0.5)
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn dry_wet_mix(dry: &AudioData, wet: &AudioData, wet_mix: f32) -> Result<AudioData, MixingError> {
     if !(0.0..=1.0).contains(&wet_mix) {
         return Err(MixingError::InvalidParameter(

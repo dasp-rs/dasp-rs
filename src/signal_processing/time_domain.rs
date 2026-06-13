@@ -20,7 +20,7 @@ pub enum TimeDomainError {
     #[error("Invalid signal length: {0}")]
     InvalidLength(String),
 
-    /// Wraps an AudioError from the core module (e.g., for LPC).
+    /// Wraps an `AudioError` from the core module (e.g., for LPC).
     #[error("Audio processing error: {0}")]
     Audio(#[from] AudioError),
 }
@@ -47,13 +47,42 @@ pub enum TimeDomainError {
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::proc::delay;
 /// let signal = AudioData { samples: vec![1.0, 2.0, 3.0], sample_rate: 3, channels: 1 };
-/// let delayed = delay(&signal, 1.0, true).unwrap(); // 1s = 3 samples
+/// let delayed = delay(&signal, 1.0).preserve_length(true).compute().unwrap(); // 1s = 3 samples
 /// assert_eq!(delayed.samples, vec![0.0, 0.0, 1.0]);
 ///
-/// let extended = delay(&signal, 1.0, false).unwrap();
+/// let extended = delay(&signal, 1.0).compute().unwrap();
 /// assert_eq!(extended.samples, vec![0.0, 0.0, 0.0, 1.0, 2.0, 3.0]);
 /// ```
-pub fn delay(
+pub fn delay(signal: &AudioData, delay_seconds: f32) -> DelayBuilder<'_> {
+    DelayBuilder { signal, delay_seconds, preserve_length: false }
+}
+
+/// Builder for [`delay`].
+#[derive(Debug, Clone)]
+pub struct DelayBuilder<'a> {
+    signal: &'a AudioData,
+    delay_seconds: f32,
+    preserve_length: bool,
+}
+
+impl DelayBuilder<'_> {
+    /// Trim the end to keep the original length instead of extending (default: false).
+    #[must_use]
+    pub fn preserve_length(mut self, preserve_length: bool) -> Self {
+        self.preserve_length = preserve_length;
+        self
+    }
+
+    /// Apply the delay.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<AudioData, TimeDomainError> {
+        delay_impl(self.signal, self.delay_seconds, self.preserve_length)
+    }
+}
+
+fn delay_impl(
     signal: &AudioData,
     delay_seconds: f32,
     preserve_length: bool,
@@ -363,10 +392,46 @@ pub fn lpc(signal: &AudioData, order: usize) -> Result<Vec<f32>, TimeDomainError
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::proc::zero_crossings;
 /// let signal = AudioData { samples: vec![1.0, -1.0, 2.0, -2.0], sample_rate: 44100, channels: 1 };
-/// let crossings = zero_crossings(&signal, None, None).unwrap();
+/// let crossings = zero_crossings(&signal).compute().unwrap();
 /// assert_eq!(crossings, vec![1, 3]);
 /// ```
-pub fn zero_crossings(
+pub fn zero_crossings(signal: &AudioData) -> ZeroCrossingsBuilder<'_> {
+    ZeroCrossingsBuilder { signal, threshold: None, pad: None }
+}
+
+/// Builder for [`zero_crossings`].
+#[derive(Debug, Clone)]
+pub struct ZeroCrossingsBuilder<'a> {
+    signal: &'a AudioData,
+    threshold: Option<f32>,
+    pad: Option<bool>,
+}
+
+impl ZeroCrossingsBuilder<'_> {
+    /// Set the amplitude threshold for detecting a crossing.
+    #[must_use]
+    pub fn threshold(mut self, threshold: f32) -> Self {
+        self.threshold = Some(threshold);
+        self
+    }
+
+    /// Pad the output so its length matches the number of frames.
+    #[must_use]
+    pub fn pad(mut self, pad: bool) -> Self {
+        self.pad = Some(pad);
+        self
+    }
+
+    /// Compute the zero-crossing indices.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Vec<usize>, TimeDomainError> {
+        zero_crossings_impl(self.signal, self.threshold, self.pad)
+    }
+}
+
+fn zero_crossings_impl(
     signal: &AudioData,
     threshold: Option<f32>,
     pad: Option<bool>,
@@ -415,10 +480,46 @@ pub fn zero_crossings(
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::proc::mu_compress;
 /// let signal = AudioData { samples: vec![0.5, -0.5], sample_rate: 44100, channels: 1 };
-/// let compressed = mu_compress(&signal, None, None).unwrap();
+/// let compressed = mu_compress(&signal).compute().unwrap();
 /// assert!(compressed[0] > 0.0 && compressed[1] < 0.0);
 /// ```
-pub fn mu_compress(
+pub fn mu_compress(signal: &AudioData) -> MuCompressBuilder<'_> {
+    MuCompressBuilder { signal, mu: 255.0, quantize: false }
+}
+
+/// Builder for [`mu_compress`].
+#[derive(Debug, Clone)]
+pub struct MuCompressBuilder<'a> {
+    signal: &'a AudioData,
+    mu: f32,
+    quantize: bool,
+}
+
+impl MuCompressBuilder<'_> {
+    /// Set the mu parameter (default: 255.0).
+    #[must_use]
+    pub fn mu(mut self, mu: f32) -> Self {
+        self.mu = mu;
+        self
+    }
+
+    /// Quantize the output to integer mu-law levels (default: false).
+    #[must_use]
+    pub fn quantize(mut self, quantize: bool) -> Self {
+        self.quantize = quantize;
+        self
+    }
+
+    /// Apply mu-law compression.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Vec<f32>, TimeDomainError> {
+        mu_compress_impl(self.signal, Some(self.mu), Some(self.quantize))
+    }
+}
+
+fn mu_compress_impl(
     signal: &AudioData,
     mu: Option<f32>,
     quantize: Option<bool>,
@@ -476,10 +577,46 @@ pub fn mu_compress(
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::proc::mu_expand;
 /// let signal = AudioData { samples: vec![0.5, -0.5], sample_rate: 44100, channels: 1 };
-/// let expanded = mu_expand(&signal, None, None).unwrap();
+/// let expanded = mu_expand(&signal).compute().unwrap();
 /// assert!(expanded[0] > 0.0 && expanded[1] < 0.0);
 /// ```
-pub fn mu_expand(
+pub fn mu_expand(signal: &AudioData) -> MuExpandBuilder<'_> {
+    MuExpandBuilder { signal, mu: 255.0, quantize: false }
+}
+
+/// Builder for [`mu_expand`].
+#[derive(Debug, Clone)]
+pub struct MuExpandBuilder<'a> {
+    signal: &'a AudioData,
+    mu: f32,
+    quantize: bool,
+}
+
+impl MuExpandBuilder<'_> {
+    /// Set the mu parameter (default: 255.0).
+    #[must_use]
+    pub fn mu(mut self, mu: f32) -> Self {
+        self.mu = mu;
+        self
+    }
+
+    /// Treat the input as quantized mu-law levels (default: false).
+    #[must_use]
+    pub fn quantize(mut self, quantize: bool) -> Self {
+        self.quantize = quantize;
+        self
+    }
+
+    /// Apply mu-law expansion.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Vec<f32>, TimeDomainError> {
+        mu_expand_impl(self.signal, Some(self.mu), Some(self.quantize))
+    }
+}
+
+fn mu_expand_impl(
     signal: &AudioData,
     mu: Option<f32>,
     _quantize: Option<bool>,
@@ -531,10 +668,46 @@ pub fn mu_expand(
 /// use dasp_rs::types::AudioData;
 /// use dasp_rs::proc::log_energy;
 /// let signal = AudioData { samples: vec![0.1, 0.2, 0.3, 0.4, 0.5], sample_rate: 44100, channels: 1 };
-/// let energy = log_energy(&signal, Some(2), Some(1)).unwrap();
+/// let energy = log_energy(&signal).frame_length(2).hop_length(1).compute().unwrap();
 /// assert_eq!(energy.len(), 4); // (5 - 2) / 1 + 1
 /// ```
-pub fn log_energy(
+pub fn log_energy(signal: &AudioData) -> LogEnergyBuilder<'_> {
+    LogEnergyBuilder { signal, frame_length: None, hop_length: None }
+}
+
+/// Builder for [`log_energy`].
+#[derive(Debug, Clone)]
+pub struct LogEnergyBuilder<'a> {
+    signal: &'a AudioData,
+    frame_length: Option<usize>,
+    hop_length: Option<usize>,
+}
+
+impl LogEnergyBuilder<'_> {
+    /// Set the frame length in samples.
+    #[must_use]
+    pub fn frame_length(mut self, frame_length: usize) -> Self {
+        self.frame_length = Some(frame_length);
+        self
+    }
+
+    /// Set the hop length in samples.
+    #[must_use]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = Some(hop_length);
+        self
+    }
+
+    /// Compute per-frame log energy.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Array1<f32>, TimeDomainError> {
+        log_energy_impl(self.signal, self.frame_length, self.hop_length)
+    }
+}
+
+fn log_energy_impl(
     signal: &AudioData,
     frame_length: Option<usize>,
     hop_length: Option<usize>,

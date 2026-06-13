@@ -11,20 +11,25 @@ pub struct TempoBuilder<'a> {
     win_length: usize,
 }
 
-impl<'a> TempoBuilder<'a> {
+impl TempoBuilder<'_> {
     /// Set the hop length (default: 512).
+    #[must_use]
     pub fn hop_length(mut self, hop_length: usize) -> Self {
         self.hop_length = hop_length;
         self
     }
 
     /// Set the window length (default: 2048).
+    #[must_use]
     pub fn win_length(mut self, win_length: usize) -> Self {
         self.win_length = win_length;
         self
     }
 
     /// Compute tempo.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<f32, RhythmError> {
         tempo_impl(Some(self.y), Some(self.sr), None, Some(self.hop_length))
     }
@@ -97,7 +102,7 @@ pub enum RhythmError {
 ///     .compute()?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn tempo_impl(
+pub(crate) fn tempo_impl(
     y: Option<&[f32]>,
     sr: Option<u32>,
     onset_envelope: Option<&Array1<f32>>,
@@ -105,24 +110,36 @@ pub fn tempo_impl(
 ) -> Result<f32, RhythmError> {
     let sr = sr.unwrap_or(44100);
     let hop = hop_length.unwrap_or(512);
-    let onset_owned = if onset_envelope.is_none() {
-        let y = y.ok_or(RhythmError::InvalidInput("Audio signal required when onset_envelope is None".to_string()))?;
+    let onset_owned = if let Some(envelope) = onset_envelope {
+        envelope.to_owned()
+    } else {
+        let y = y.ok_or_else(|| {
+            RhythmError::InvalidInput(
+                "Audio signal required when onset_envelope is None".to_string(),
+            )
+        })?;
         let s = stft(y)
             .hop_length(hop)
             .compute()
-            .map_err(|e| RhythmError::ComputationFailed(format!("STFT computation failed: {}", e)))?
-            .mapv(|x| x.norm());
+            .map_err(|e| RhythmError::ComputationFailed(format!("STFT computation failed: {e}")))?
+            .mapv(num_complex::Complex::norm);
         s.map_axis(Axis(0), |row| row.iter().map(|&x| x.max(0.0)).sum::<f32>())
-    } else {
-        onset_envelope.unwrap().to_owned()
     };
     let onset = &onset_owned;
-        let tempogram = tempogram_impl(None, Some(sr), Some(onset), hop_length, None)?;
-    Ok(tempogram.axis_iter(Axis(1)).map(|col| {
-        let max_val = col.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0.0);
-        let max_idx = col.iter().position(|&x| x == *max_val).unwrap_or(0);
-        crate::utils::frequency::tempo_frequencies(tempogram.shape()[0], Some(hop), Some(sr))[max_idx]
-    }).sum::<f32>() / tempogram.shape()[1] as f32)
+    let tempogram = tempogram(None, Some(sr), Some(onset), hop_length, None)?;
+    let freqs = crate::utils::frequency::tempo_frequencies_impl(tempogram.shape()[0], hop, sr);
+    Ok(tempogram
+        .axis_iter(Axis(1))
+        .map(|col| {
+            let max_idx = col
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                .map_or(0, |(i, _)| i);
+            freqs[max_idx]
+        })
+        .sum::<f32>()
+        / tempogram.shape()[1] as f32)
 }
 
 /// Computes a tempogram (local autocorrelation of onset strength).
@@ -137,17 +154,18 @@ pub fn tempo_impl(
 /// # Returns
 /// Returns a 2D array of shape `(win_length/2 + 1, n_frames)` representing the tempogram.
 ///
-/// # Panics
-/// Panics if `y` is None and `onset_envelope` is None, or if STFT computation fails when `y` is provided.
+/// # Errors
+/// Returns [`RhythmError::InvalidInput`] if both `y` and `onset_envelope` are `None`,
+/// or [`RhythmError::ComputationFailed`] if the STFT cannot be computed.
 ///
 /// # Examples
 /// ```no_run
-/// use dasp_rs::feat::tempogram_impl;
+/// use dasp_rs::feat::tempogram;
 /// let y = vec![0.0; 2048];
-/// let tgram = tempogram_impl(Some(&y), Some(44100), None, Some(512), Some(384))?;
+/// let tgram = tempogram(Some(&y), Some(44100), None, Some(512), Some(384))?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn tempogram_impl(
+pub fn tempogram(
     y: Option<&[f32]>,
     sr: Option<u32>,
     onset_envelope: Option<&Array1<f32>>,
@@ -157,21 +175,25 @@ pub fn tempogram_impl(
     let _sr = sr.unwrap_or(44100);
     let hop = hop_length.unwrap_or(512);
     let win = win_length.unwrap_or(384);
-    let onset_owned = if onset_envelope.is_none() {
-        let y = y.ok_or(RhythmError::InvalidInput("Audio signal required when onset_envelope is None".to_string()))?;
+    let onset_owned = if let Some(envelope) = onset_envelope {
+        envelope.to_owned()
+    } else {
+        let y = y.ok_or_else(|| {
+            RhythmError::InvalidInput(
+                "Audio signal required when onset_envelope is None".to_string(),
+            )
+        })?;
         let s = stft(y)
             .hop_length(hop)
             .compute()
-            .map_err(|e| RhythmError::ComputationFailed(format!("STFT computation failed: {}", e)))?
-            .mapv(|x| x.norm());
+            .map_err(|e| RhythmError::ComputationFailed(format!("STFT computation failed: {e}")))?
+            .mapv(num_complex::Complex::norm);
         s.map_axis(Axis(0), |row| row.iter().map(|&x| x.max(0.0)).sum::<f32>())
-    } else {
-        onset_envelope.unwrap().to_owned()
     };
     let onset = &onset_owned;
     let mut tempogram = Array2::zeros((win / 2 + 1, onset.len()));
     for t in 0..onset.len() {
-        for lag in 0..(win / 2 + 1) {
+        for lag in 0..=(win / 2) {
             let past = (t as isize - lag as isize).max(0) as usize;
             tempogram[[lag, t]] = onset[t] * onset[past];
         }
@@ -191,24 +213,25 @@ pub fn tempogram_impl(
 /// # Returns
 /// Returns a 2D array of shape `(n_ratios, n_frames)` representing the ratio tempogram.
 ///
-/// # Panics
-/// Panics if `y` is None and `onset_envelope` is None, or if STFT computation fails when `y` is provided.
+/// # Errors
+/// Returns [`RhythmError::InvalidInput`] if both `y` and `onset_envelope` are `None`,
+/// or [`RhythmError::ComputationFailed`] if the STFT cannot be computed.
 ///
 /// # Examples
 /// ```no_run
-/// use dasp_rs::feat::tempogram_ratio_impl;
+/// use dasp_rs::feat::tempogram_ratio;
 /// let y = vec![0.0; 2048];
-/// let ratio_tgram = tempogram_ratio_impl(Some(&y), Some(44100), None, Some(512), Some(&[2.0, 3.0, 4.0]))?;
+/// let ratio_tgram = tempogram_ratio(Some(&y), Some(44100), None, Some(512), Some(&[2.0, 3.0, 4.0]))?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn tempogram_ratio_impl(
+pub fn tempogram_ratio(
     y: Option<&[f32]>,
     sr: Option<u32>,
     onset_envelope: Option<&Array1<f32>>,
     hop_length: Option<usize>,
     ratios: Option<&[f32]>,
 ) -> Result<Array2<f32>, RhythmError> {
-        let tempogram = tempogram_impl(y, sr, onset_envelope, hop_length, None)?;
+    let tempogram = tempogram(y, sr, onset_envelope, hop_length, None)?;
     let ratios = ratios.unwrap_or(&[2.0, 3.0, 4.0]);
     let mut ratio_map = Array2::zeros((ratios.len(), tempogram.shape()[1]));
     for (r_idx, &r) in ratios.iter().enumerate() {

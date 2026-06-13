@@ -18,8 +18,8 @@ pub enum ScalingError {
 impl From<ScalingError> for AudioError {
     fn from(err: ScalingError) -> Self {
         match err {
-            ScalingError::InsufficientData(msg) => AudioError::InsufficientData(msg),
-            ScalingError::InvalidInput(msg) => AudioError::InvalidInput(msg),
+            ScalingError::InsufficientData(msg) => Self::InsufficientData(msg),
+            ScalingError::InvalidInput(msg) => Self::InvalidInput(msg),
         }
     }
 }
@@ -49,21 +49,66 @@ impl From<ScalingError> for AudioError {
 /// use ndarray::arr2;
 /// use dasp_rs::mag::amplitude_to_db;
 /// let s = arr2(&[[1.0, 2.0], [0.1, 0.01]]);
-/// let s_db = amplitude_to_db(&s, None, None, None)?;
+/// let s_db = amplitude_to_db(&s).compute()?;
 /// assert_eq!(s_db[[0, 0]], 0.0); // 20 * log10(1.0 / 1.0)
 /// assert!((s_db[[0, 1]] - 6.0206).abs() < 1e-4); // 20 * log10(2.0 / 1.0)
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn amplitude_to_db(
-    spectrogram: &Array2<f32>,
-    ref_val: Option<f32>,
-    amin: Option<f32>,
-    top_db: Option<f32>,
-) -> Result<Array2<f32>, ScalingError> {
-    let ref_val = ref_val.unwrap_or(1.0);
-    let amin = amin.unwrap_or(1e-5);
-    let top_db = top_db.unwrap_or(80.0);
+pub fn amplitude_to_db(spectrogram: &Array2<f32>) -> AmplitudeToDbBuilder<'_> {
+    AmplitudeToDbBuilder {
+        spectrogram,
+        ref_val: 1.0,
+        amin: 1e-5,
+        top_db: 80.0,
+    }
+}
 
+/// Builder for [`amplitude_to_db`].
+#[derive(Debug, Clone)]
+pub struct AmplitudeToDbBuilder<'a> {
+    spectrogram: &'a Array2<f32>,
+    ref_val: f32,
+    amin: f32,
+    top_db: f32,
+}
+
+impl AmplitudeToDbBuilder<'_> {
+    /// Reference amplitude mapped to 0 dB (default: 1.0).
+    #[must_use]
+    pub fn ref_val(mut self, ref_val: f32) -> Self {
+        self.ref_val = ref_val;
+        self
+    }
+
+    /// Minimum amplitude floor to avoid log of zero (default: 1e-5).
+    #[must_use]
+    pub fn amin(mut self, amin: f32) -> Self {
+        self.amin = amin;
+        self
+    }
+
+    /// Maximum dB below the peak (default: 80.0).
+    #[must_use]
+    pub fn top_db(mut self, top_db: f32) -> Self {
+        self.top_db = top_db;
+        self
+    }
+
+    /// Compute the decibel spectrogram.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Array2<f32>, ScalingError> {
+        amplitude_to_db_impl(self.spectrogram, self.ref_val, self.amin, self.top_db)
+    }
+}
+
+fn amplitude_to_db_impl(
+    spectrogram: &Array2<f32>,
+    ref_val: f32,
+    amin: f32,
+    top_db: f32,
+) -> Result<Array2<f32>, ScalingError> {
     validate_spectrogram(spectrogram, "amplitude")?;
     validate_positive_params(ref_val, amin, top_db, "Reference value", "Minimum amplitude", "Top dB")?;
 
@@ -142,20 +187,66 @@ pub fn db_to_amplitude(
 /// use ndarray::arr2;
 /// use dasp_rs::mag::power_to_db;
 /// let s = arr2(&[[1.0, 4.0], [0.1, 0.01]]);
-/// let s_db = power_to_db(&s, None, None, None)?;
+/// let s_db = power_to_db(&s).compute()?;
 /// assert_eq!(s_db[[0, 0]], 0.0); // 10 * log10(1.0 / 1.0)
 /// assert!((s_db[[0, 1]] - 6.0206).abs() < 1e-4); // 10 * log10(4.0 / 1.0)
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn power_to_db(
+pub fn power_to_db(spectrogram: &Array2<f32>) -> PowerToDbBuilder<'_> {
+    PowerToDbBuilder {
+        spectrogram,
+        ref_val: 1.0,
+        amin: 1e-10,
+        top_db: 80.0,
+    }
+}
+
+/// Builder for [`power_to_db`].
+#[derive(Debug, Clone)]
+pub struct PowerToDbBuilder<'a> {
+    spectrogram: &'a Array2<f32>,
+    ref_val: f32,
+    amin: f32,
+    top_db: f32,
+}
+
+impl PowerToDbBuilder<'_> {
+    /// Reference power mapped to 0 dB (default: 1.0).
+    #[must_use]
+    pub fn ref_val(mut self, ref_val: f32) -> Self {
+        self.ref_val = ref_val;
+        self
+    }
+
+    /// Minimum power floor to avoid log of zero (default: 1e-10).
+    #[must_use]
+    pub fn amin(mut self, amin: f32) -> Self {
+        self.amin = amin;
+        self
+    }
+
+    /// Maximum dB below the peak (default: 80.0).
+    #[must_use]
+    pub fn top_db(mut self, top_db: f32) -> Self {
+        self.top_db = top_db;
+        self
+    }
+
+    /// Compute the decibel spectrogram.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Array2<f32>, ScalingError> {
+        power_to_db_impl(self.spectrogram, self.ref_val, self.amin, self.top_db)
+    }
+}
+
+fn power_to_db_impl(
     spectrogram: &Array2<f32>,
-    ref_val: Option<f32>,
-    amin: Option<f32>,
-    top_db: Option<f32>,
+    ref_val: f32,
+    amin: f32,
+    top_db: f32,
 ) -> Result<Array2<f32>, ScalingError> {
-    let ref_val = ref_val.unwrap_or(1.0);
-    let amin = amin.unwrap_or(1e-10);
-    let top_db = top_db.unwrap_or(80.0);
 
     validate_spectrogram(spectrogram, "power")?;
     validate_positive_params(ref_val, amin, top_db, "Reference value", "Minimum power", "Top dB")?;
@@ -216,7 +307,7 @@ pub fn db_to_power(
 /// perceptually relevant frequencies. The spectrogram is multiplied by weights computed for each frequency bin.
 ///
 /// # Arguments
-/// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies Ãƒâ€” time).
+/// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies × time).
 /// * `frequencies` - Slice of frequencies (Hz) corresponding to spectrogram rows.
 /// * `kind` - Weighting type ("A", "B", "C", or "D"; defaults to "A" if `None`).
 ///
@@ -250,7 +341,7 @@ pub fn perceptual_weighting(
     let weights_2d = weights_array
             .clone()
             .into_shape_with_order((weights_array.len(), 1))
-            .map_err(|e| ScalingError::InvalidInput(format!("Failed to reshape weights: {}", e)))?;
+            .map_err(|e| ScalingError::InvalidInput(format!("Failed to reshape weights: {e}")))?;
 
     // Broadcasting weights across time dimension
     let s_weighted = spectrogram * &weights_2d;
@@ -273,7 +364,7 @@ pub fn perceptual_weighting(
 /// # Errors
 /// * `ScalingError::InvalidInput` - If `kind` is not "A", "B", "C", or "D".
 ///
-/// # pÃƒÂ©lda
+/// # Example
 /// ```
 /// use dasp_rs::mag::frequency_weighting;
 /// let freqs = vec![1000.0, 2000.0];
@@ -291,7 +382,7 @@ pub fn frequency_weighting(
         "B" => b_weighting(frequencies, None),
         "C" => c_weighting(frequencies, None),
         "D" => d_weighting(frequencies, None),
-        k => Err(ScalingError::InvalidInput(format!("Unknown weighting kind: {}", k))),
+        k => Err(ScalingError::InvalidInput(format!("Unknown weighting kind: {k}"))),
     }
 }
 
@@ -301,7 +392,7 @@ pub fn frequency_weighting(
 ///
 /// # Arguments
 /// * `frequencies` - Slice of frequencies in Hz.
-/// * `kinds` - Slice of weighting types (e.g., ["A", "C"]).
+/// * `kinds` - Slice of weighting types (e.g., `["A", "C"]`).
 ///
 /// # Returns
 /// A `Result` containing a `Vec<Vec<f32>>`, where each inner vector corresponds to the weights for one kind.
@@ -495,7 +586,7 @@ pub fn d_weighting(
 /// `M[f, t]` is an exponentially smoothed version of the spectrogram.
 ///
 /// # Arguments
-/// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies Ãƒâ€” time).
+/// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies × time).
 /// * `sample_rate` - Sample rate in Hz (defaults to 44100 if `None`).
 /// * `hop_length` - Hop length in samples (defaults to 512 if `None`).
 /// * `gain` - Gain exponent for normalization (defaults to 0.8 if `None`).
@@ -513,24 +604,77 @@ pub fn d_weighting(
 /// use ndarray::arr2;
 /// use dasp_rs::mag::pcen;
 /// let s = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
-/// let p = pcen(&s, None, None, None, None)?;
+/// let p = pcen(&s).compute()?;
 /// assert_eq!(p.shape(), s.shape());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn pcen(
+pub fn pcen(spectrogram: &Array2<f32>) -> PcenBuilder<'_> {
+    PcenBuilder {
+        spectrogram,
+        sample_rate: 44_100,
+        hop_length: 512,
+        gain: 0.8,
+        bias: 10.0,
+    }
+}
+
+/// Builder for [`pcen`] (per-channel energy normalization).
+#[derive(Debug, Clone)]
+pub struct PcenBuilder<'a> {
+    spectrogram: &'a Array2<f32>,
+    sample_rate: u32,
+    hop_length: usize,
+    gain: f32,
+    bias: f32,
+}
+
+impl PcenBuilder<'_> {
+    /// Sample rate in Hz (default: 44100).
+    #[must_use]
+    pub fn sample_rate(mut self, sr: u32) -> Self {
+        self.sample_rate = sr;
+        self
+    }
+
+    /// Hop length in samples (default: 512).
+    #[must_use]
+    pub fn hop_length(mut self, hop_length: usize) -> Self {
+        self.hop_length = hop_length;
+        self
+    }
+
+    /// Gain exponent (default: 0.8).
+    #[must_use]
+    pub fn gain(mut self, gain: f32) -> Self {
+        self.gain = gain;
+        self
+    }
+
+    /// Bias added before exponentiation (default: 10.0).
+    #[must_use]
+    pub fn bias(mut self, bias: f32) -> Self {
+        self.bias = bias;
+        self
+    }
+
+    /// Compute the PCEN-normalized spectrogram.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<Array2<f32>, ScalingError> {
+        pcen_impl(self.spectrogram, self.sample_rate, self.hop_length, self.gain, self.bias)
+    }
+}
+
+fn pcen_impl(
     spectrogram: &Array2<f32>,
-    sample_rate: Option<u32>,
-    hop_length: Option<usize>,
-    gain: Option<f32>,
-    bias: Option<f32>,
+    sr: u32,
+    hop_length: usize,
+    gain: f32,
+    bias: f32,
 ) -> Result<Array2<f32>, ScalingError> {
     const EPS: f32 = 1e-6;
     const SMOOTH_COEF: f32 = 0.025;
-
-    let sr = sample_rate.unwrap_or(44_100);
-    let hop_length = hop_length.unwrap_or(512);
-    let gain = gain.unwrap_or(0.8);
-    let bias = bias.unwrap_or(10.0);
 
     validate_spectrogram(spectrogram, "spectrogram")?;
     if gain < 0.0 || bias < 0.0 {
@@ -568,14 +712,12 @@ pub fn pcen(
 fn validate_spectrogram(spectrogram: &Array2<f32>, context: &str) -> Result<(), ScalingError> {
     if spectrogram.is_empty() {
         return Err(ScalingError::InsufficientData(format!(
-            "{} spectrogram is empty",
-            context
+            "{context} spectrogram is empty"
         )));
     }
     if context != "decibel" && spectrogram.iter().any(|&x| x < 0.0) {
         return Err(ScalingError::InvalidInput(format!(
-            "{} spectrogram contains negative values",
-            context
+            "{context} spectrogram contains negative values"
         )));
     }
     Ok(())
@@ -591,20 +733,17 @@ fn validate_positive_params(
 ) -> Result<(), ScalingError> {
     if ref_val <= 0.0 {
         return Err(ScalingError::InvalidInput(format!(
-            "{} must be positive",
-            ref_name
+            "{ref_name} must be positive"
         )));
     }
     if amin <= 0.0 {
         return Err(ScalingError::InvalidInput(format!(
-            "{} must be positive",
-            amin_name
+            "{amin_name} must be positive"
         )));
     }
     if top_db <= 0.0 {
         return Err(ScalingError::InvalidInput(format!(
-            "{} must be positive",
-            top_db_name
+            "{top_db_name} must be positive"
         )));
     }
     Ok(())
@@ -675,13 +814,13 @@ mod tests {
     #[test]
     fn test_amplitude_to_db_invalid_inputs() {
         let s = arr2(&[[1.0, 2.0]]);
-        assert!(amplitude_to_db(&s, Some(0.0), None, None).is_err());
-        assert!(amplitude_to_db(&s, None, Some(-1e-5), None).is_err());
-        assert!(amplitude_to_db(&s, None, None, Some(0.0)).is_err());
+        assert!(amplitude_to_db(&s).ref_val(0.0).compute().is_err());
+        assert!(amplitude_to_db(&s).amin(-1e-5).compute().is_err());
+        assert!(amplitude_to_db(&s).top_db(0.0).compute().is_err());
         let s_neg = arr2(&[[-1.0, 2.0]]);
-        assert!(amplitude_to_db(&s_neg, None, None, None).is_err());
+        assert!(amplitude_to_db(&s_neg).compute().is_err());
         let s_empty = Array2::zeros((0, 0));
-        assert!(amplitude_to_db(&s_empty, None, None, None).is_err());
+        assert!(amplitude_to_db(&s_empty).compute().is_err());
     }
 
     #[test]
@@ -693,8 +832,8 @@ mod tests {
     #[test]
     fn test_power_to_db_accuracy() {
         let s = arr2(&[[1.0, 4.0], [0.1, 0.01]]);
-        let s_db = power_to_db(&s, None, None, None).unwrap();
-        assert_eq!(s_db[[0, 0]], 0.0);
+        let s_db = power_to_db(&s).compute().unwrap();
+        assert!(s_db[[0, 0]].abs() < 1e-6);
         assert!((s_db[[0, 1]] - 6.0206).abs() < 1e-4);
         assert!((s_db[[1, 0]] - (-10.0)).abs() < 1e-4);
     }
@@ -732,6 +871,6 @@ mod tests {
     #[test]
     fn test_pcen_negative_gain() {
         let s = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
-        assert!(pcen(&s, None, None, Some(-0.8), None).is_err());
+        assert!(pcen(&s).gain(-0.8).compute().is_err());
     }
 }

@@ -86,20 +86,25 @@ pub struct TemporalKurtosisBuilder<'a> {
     hop_length: usize,
 }
 
-impl<'a> TemporalKurtosisBuilder<'a> {
+impl TemporalKurtosisBuilder<'_> {
     /// Set the frame length (default: 2048).
+    #[must_use]
     pub fn frame_length(mut self, frame_length: usize) -> Self {
         self.frame_length = frame_length;
         self
     }
 
     /// Set the hop length (default: 512).
+    #[must_use]
     pub fn hop_length(mut self, hop_length: usize) -> Self {
         self.hop_length = hop_length;
         self
     }
 
     /// Compute temporal kurtosis with the configured parameters.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array1<f32>, ManipulationError> {
         temporal_kurtosis_impl(self.y, self.frame_length, self.hop_length)
     }
@@ -113,6 +118,12 @@ fn temporal_kurtosis_impl(
 ) -> Result<Array1<f32>, ManipulationError> {
     let frame_len = frame_length;
     let hop = hop_length;
+    if frame_len == 0 || hop == 0 || y.len() < frame_len {
+        return Err(ManipulationError::InvalidInput(format!(
+            "Signal length {} must be at least frame_length {frame_len}, with non-zero frame and hop lengths",
+            y.len()
+        )));
+    }
     let n_frames = (y.len() - frame_len) / hop + 1;
     let mut kurtosis = Array1::zeros(n_frames);
     for i in 0..n_frames {
@@ -162,14 +173,16 @@ pub struct ZeroCrossingRateBuilder<'a> {
     hop_length: usize,
 }
 
-impl<'a> ZeroCrossingRateBuilder<'a> {
+impl ZeroCrossingRateBuilder<'_> {
     /// Set the frame length (default: 2048).
+    #[must_use]
     pub fn frame_length(mut self, frame_length: usize) -> Self {
         self.frame_length = frame_length;
         self
     }
 
     /// Set the hop length (default: 512).
+    #[must_use]
     pub fn hop_length(mut self, hop_length: usize) -> Self {
         self.hop_length = hop_length;
         self
@@ -189,6 +202,9 @@ fn zero_crossing_rate_impl(
 ) -> Array1<f32> {
     let frame_len = frame_length;
     let hop = hop_length;
+    if frame_len == 0 || hop == 0 || y.len() < frame_len {
+        return Array1::zeros(0);
+    }
     let n_frames = (y.len() - frame_len) / hop + 1;
     let mut zcr = Array1::zeros(n_frames);
     for i in 0..n_frames {

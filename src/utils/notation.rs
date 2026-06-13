@@ -2,20 +2,17 @@
 ///
 /// # Arguments
 /// * `key` - Key signature (currently unused, e.g., "C:maj")
-/// * `_unicode` - Optional flag for Unicode accidentals (unused, defaults to None)
-/// * `_natural` - Optional flag for natural notes only (unused, defaults to None)
 ///
 /// # Returns
 /// Returns a `Vec<String>` containing all 12 chromatic note names (C through B).
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::util::*;
-/// use dasp_rs::types::*;
-/// let notes = key_to_notes("C:maj", None, None);
+/// use dasp_rs::util::key_to_notes;
+/// let notes = key_to_notes("C:maj");
 /// assert_eq!(notes, vec!["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]);
 /// ```
-pub fn key_to_notes(_key: &str, _unicode: Option<bool>, _natural: Option<bool>) -> Vec<String> {
+pub fn key_to_notes(_key: &str) -> Vec<String> {
     let notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
     notes.iter().map(|&n| n.to_string()).collect()
 }
@@ -45,19 +42,22 @@ pub fn key_to_notes(_key: &str, _unicode: Option<bool>, _natural: Option<bool>) 
 pub fn key_to_degrees(key: &str) -> Vec<usize> {
     let key = key.to_lowercase();
     let (tonic, mode) = key.split_once(':').unwrap_or((&key, "maj"));
-    let tonic_shift = match tonic {
-        "c" => 0, "c#" | "db" => 1, "d" => 2, "d#" | "eb" => 3, "e" => 4,
-        "f" => 5, "f#" | "gb" => 6, "g" => 7, "g#" | "ab" => 8, "a" => 9,
-        "a#" | "bb" => 10, "b" => 11, _ => 0,
-    };
-    let major = vec![0, 2, 4, 5, 7, 9, 11];
-    let minor = vec![0, 2, 3, 5, 7, 8, 10];
-    let degrees = match mode {
-        "maj" | "major" => major,
-        "min" | "minor" => minor,
-        _ => major,
+    let tonic_shift = note_to_semitone(tonic);
+    let degrees = if matches!(mode, "min" | "minor") {
+        vec![0, 2, 3, 5, 7, 8, 10]
+    } else {
+        vec![0, 2, 4, 5, 7, 9, 11]
     };
     degrees.into_iter().map(|d| (d + tonic_shift) % 12).collect()
+}
+
+/// Maps a lowercase note name to its chromatic semitone index; unknown names map to 0 (C).
+fn note_to_semitone(note: &str) -> usize {
+    match note {
+        "c#" | "db" => 1, "d" => 2, "d#" | "eb" => 3, "e" => 4,
+        "f" => 5, "f#" | "gb" => 6, "g" => 7, "g#" | "ab" => 8, "a" => 9,
+        "a#" | "bb" => 10, "b" => 11, _ => 0,
+    }
 }
 
 /// Converts a melakarta raga index to Carnatic svara names.
@@ -76,16 +76,46 @@ pub fn key_to_degrees(key: &str) -> Vec<usize> {
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::util::*;
-/// use dasp_rs::types::*;
-/// let svaras = mela_to_svara(29, Some(true), None); // Dheerashankarabharanam
+/// use dasp_rs::util::mela_to_svara;
+/// let svaras = mela_to_svara(29).abbr(true).compute(); // Dheerasankarabharanam
 /// assert_eq!(svaras, vec!["S", "R2", "G3", "M1", "P", "D2", "N3"]);
-/// let svaras = mela_to_svara(1, None, None); // Kanakangi
+/// let svaras = mela_to_svara(1).compute(); // Kanakangi
 /// assert_eq!(svaras, vec!["shadjam", "rishabham1", "gandharam1", "madhyamam1", "panchamam", "dhaivatam1", "nishadam1"]);
 /// ```
-pub fn mela_to_svara(mela: usize, abbr: Option<bool>, unicode: Option<bool>) -> Vec<String> {
-    let abbr = abbr.unwrap_or(false);
-    let unicode = unicode.unwrap_or(false);
+pub fn mela_to_svara(mela: usize) -> MelaToSvaraBuilder {
+    MelaToSvaraBuilder { mela, abbr: false, unicode: false }
+}
+
+/// Builder for [`mela_to_svara`].
+#[derive(Debug, Clone)]
+pub struct MelaToSvaraBuilder {
+    mela: usize,
+    abbr: bool,
+    unicode: bool,
+}
+
+impl MelaToSvaraBuilder {
+    /// Use abbreviated svara names ("S", "R1", …) instead of full names (default: false).
+    #[must_use]
+    pub fn abbr(mut self, abbr: bool) -> Self {
+        self.abbr = abbr;
+        self
+    }
+
+    /// Use Unicode transliteration for full names (default: false).
+    #[must_use]
+    pub fn unicode(mut self, unicode: bool) -> Self {
+        self.unicode = unicode;
+        self
+    }
+
+    /// Produce the svara names.
+    pub fn compute(self) -> Vec<String> {
+        mela_to_svara_impl(self.mela, self.abbr, self.unicode)
+    }
+}
+
+fn mela_to_svara_impl(mela: usize, abbr: bool, unicode: bool) -> Vec<String> {
     let degrees = mela_to_degrees(mela);
     let svara_full = if unicode {
         vec!["ṣaḍjam", "ṛṣabham", "gāndhāram", "madhyamam", "pañcamam", "dhaivatam", "niṣādam"]
@@ -95,7 +125,6 @@ pub fn mela_to_svara(mela: usize, abbr: Option<bool>, unicode: Option<bool>) -> 
     let mut result = Vec::new();
     for (i, &deg) in degrees.iter().enumerate() {
         let (base, variant) = match i {
-            0 => ("S", ""),
             1 => ("R", match deg { 1 => "1", 2 => "2", 3 => "3", _ => "" }),
             2 => ("G", match deg { 2 => "1", 3 => "2", 4 => "3", _ => "" }),
             3 => ("M", match deg { 5 => "1", 6 => "2", _ => "" }),
@@ -105,10 +134,10 @@ pub fn mela_to_svara(mela: usize, abbr: Option<bool>, unicode: Option<bool>) -> 
             _ => ("S", ""),
         };
         let name = if abbr {
-            format!("{}{}", base, variant)
+            format!("{base}{variant}")
         } else {
             let idx = match base {
-                "S" => 0, "R" => 1, "G" => 2, "M" => 3, "P" => 4, "D" => 5, "N" => 6, _ => 0,
+                "R" => 1, "G" => 2, "M" => 3, "P" => 4, "D" => 5, "N" => 6, _ => 0,
             };
             format!("{}{}", svara_full[idx], variant)
         };
@@ -184,7 +213,6 @@ pub fn mela_to_degrees(mela: usize) -> Vec<usize> {
 /// ```
 pub fn thaat_to_degrees(thaat: &str) -> Vec<usize> {
     match thaat.to_lowercase().as_str() {
-        "bilaval" => vec![0, 2, 4, 5, 7, 9, 11],
         "kalyani" => vec![0, 2, 4, 6, 7, 9, 11],
         "khamaj" => vec![0, 2, 4, 5, 7, 9, 10],
         "bhairav" => vec![0, 1, 4, 5, 6, 9, 11],
@@ -194,6 +222,7 @@ pub fn thaat_to_degrees(thaat: &str) -> Vec<usize> {
         "asavari" => vec![0, 2, 3, 5, 7, 8, 10],
         "todi" => vec![0, 1, 3, 6, 7, 8, 11],
         "bhoopali" => vec![0, 2, 4, 7, 9],
+        // Bilaval, and the documented fallback for unrecognized thaats.
         _ => vec![0, 2, 4, 5, 7, 9, 11],
     }
 }
@@ -281,21 +310,17 @@ pub fn fifths_to_note(unison: &str, fifths: i32, unicode: Option<bool>) -> Strin
     let unicode = unicode.unwrap_or(false);
     let semitones = (fifths * 7) % 12;
     let octave_shift = (fifths * 7) / 12;
-    let base = match unison.to_lowercase().as_str() {
-        "c" => 0, "c#" | "db" => 1, "d" => 2, "d#" | "eb" => 3, "e" => 4,
-        "f" => 5, "f#" | "gb" => 6, "g" => 7, "g#" | "ab" => 8, "a" => 9,
-        "a#" | "bb" => 10, "b" => 11, _ => 0,
-    };
+    let base = note_to_semitone(&unison.to_lowercase()) as i32;
     let note_idx = (base + semitones + 12) % 12;
     let note = match note_idx {
-        0 => "C", 1 => if unicode { "C♯" } else { "C#" }, 2 => "D",
+        1 => if unicode { "C♯" } else { "C#" }, 2 => "D",
         3 => if unicode { "D♯" } else { "D#" }, 4 => "E", 5 => "F",
         6 => if unicode { "F♯" } else { "F#" }, 7 => "G",
         8 => if unicode { "G♯" } else { "G#" }, 9 => "A",
         10 => if unicode { "A♯" } else { "A#" }, 11 => "B",
         _ => "C",
     };
-    format!("{}{}", note, if octave_shift != 0 { octave_shift.to_string() } else { "".to_string() })
+    format!("{}{}", note, if octave_shift != 0 { octave_shift.to_string() } else { String::new() })
 }
 
 /// Converts an interval ratio to Functional Just System (FJS) notation.
@@ -328,7 +353,7 @@ pub fn interval_to_fjs(interval: f32, unison: Option<f32>) -> String {
         r if (r - 4.0/3.0).abs() < 1e-6 => "4/3".to_string(),
         r if (r - 5.0/4.0).abs() < 1e-6 => "5/4".to_string(),
         r if (r - 6.0/5.0).abs() < 1e-6 => "6/5".to_string(),
-        _ => format!("{:.2}/1", ratio),
+        _ => format!("{ratio:.2}/1"),
     }
 }
 
@@ -353,11 +378,9 @@ pub fn interval_to_fjs(interval: f32, unison: Option<f32>) -> String {
 pub fn interval_frequencies(n_bins: usize, fmin: f32, intervals: &[f32]) -> Vec<f32> {
     let mut freqs = Vec::with_capacity(n_bins);
     let mut f = fmin;
-    let mut interval_idx = 0;
-    for _ in 0..n_bins {
+    for i in 0..n_bins {
         freqs.push(f);
-        f *= intervals[interval_idx % intervals.len()];
-        interval_idx += 1;
+        f *= intervals[i % intervals.len()];
     }
     freqs
 }
@@ -377,6 +400,9 @@ pub fn interval_frequencies(n_bins: usize, fmin: f32, intervals: &[f32]) -> Vec<
 /// let intervals = pythagorean_intervals(Some(3));
 /// assert_eq!(intervals, vec![1.0, 1.5, 1.125]); // 1/1, 3/2, 9/8 adjusted
 /// ```
+// Repeated halving/doubling keeps the exact powers-of-two arithmetic of the
+// classical derivation; a log2-based rewrite would change rounding.
+#[expect(clippy::while_float, reason = "octave folding is exact in binary floating point")]
 pub fn pythagorean_intervals(bins_per_octave: Option<usize>) -> Vec<f32> {
     let bins = bins_per_octave.unwrap_or(12);
     let mut intervals = Vec::with_capacity(bins);
@@ -388,7 +414,7 @@ pub fn pythagorean_intervals(bins_per_octave: Option<usize>) -> Vec<f32> {
         while ratio > 2.0 { ratio /= 2.0; }
         while ratio < 1.0 { ratio *= 2.0; }
     }
-    intervals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    intervals.sort_by(f32::total_cmp);
     intervals
 }
 
@@ -409,6 +435,7 @@ pub fn pythagorean_intervals(bins_per_octave: Option<usize>) -> Vec<f32> {
 /// assert!(intervals.contains(&1.5));
 /// assert!(intervals.contains(&1.3333333)); // ~4/3
 /// ```
+#[expect(clippy::while_float, reason = "ratio expansion terminates on float bounds by construction")]
 pub fn plimit_intervals(primes: &[usize]) -> Vec<f32> {
     let mut intervals = vec![1.0];
     for &p in primes {
@@ -427,7 +454,7 @@ pub fn plimit_intervals(primes: &[usize]) -> Vec<f32> {
         }
         intervals.extend(new_intervals);
     }
-    intervals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    intervals.sort_by(f32::total_cmp);
     intervals.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
     intervals.retain(|&x| (1.0..=2.0).contains(&x));
     intervals
@@ -443,7 +470,7 @@ mod tests {
 
     #[test]
     fn key_and_degrees_cover_major_minor() {
-        let notes = key_to_notes("C:maj", None, None);
+        let notes = key_to_notes("C:maj");
         assert_eq!(notes[0], "C");
 
         let c_major = key_to_degrees("C:maj");
@@ -456,7 +483,7 @@ mod tests {
 
     #[test]
     fn mela_and_thaat_mappings_return_expected_sizes() {
-        let svaras = mela_to_svara(29, Some(true), Some(false));
+        let svaras = mela_to_svara(29).abbr(true).compute();
         assert_eq!(svaras, vec!["S", "R2", "G3", "M1", "P", "D2", "N3"]);
 
         let degrees = mela_to_degrees(1);
@@ -472,7 +499,7 @@ mod tests {
         let fifth = fifths_to_note("C", 1, None);
         assert_eq!(fifth, "G");
         let unicode = fifths_to_note("C", 6, Some(true));
-        assert!(unicode.starts_with("F"));
+        assert!(unicode.starts_with('F'));
 
         let fjs = interval_to_fjs(1.5, None);
         assert_eq!(fjs, "3/2");
@@ -487,7 +514,7 @@ mod tests {
         assert!(freqs[1] > freqs[0]);
 
         let pyth = pythagorean_intervals(Some(5));
-        assert_eq!(pyth.first().copied().unwrap(), 1.0);
+        assert!(approx_eq(pyth.first().copied().unwrap(), 1.0));
         assert!(pyth.windows(2).all(|w| w[0] <= w[1]));
 
         let plimit = plimit_intervals(&[2, 3]);

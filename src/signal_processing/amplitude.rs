@@ -37,6 +37,9 @@ pub enum AmplitudeError {
 /// assert_eq!(amplified.samples, vec![1.0, 2.0, 1.0]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn amplify(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeError> {
     if gain <= 0.0 {
         return Err(AmplitudeError::InvalidGain(
@@ -73,6 +76,9 @@ pub fn amplify(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeErro
 /// assert_eq!(attenuated.samples, vec![0.5, 1.0, 0.5]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/// # Errors
+/// Returns an error if the input is invalid (e.g., empty signal or
+/// out-of-range parameters) or if the computation cannot be completed.
 pub fn attenuate(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeError> {
     if gain < 0.0 {
         return Err(AmplitudeError::InvalidGain(
@@ -96,25 +102,63 @@ pub fn attenuate(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeEr
 /// # Arguments
 /// * `signal` - The input audio signal.
 /// * `target` - The target level (e.g., 1.0 for full scale).
-/// * `mode` - "peak" for peak normalization, "rms" for RMS normalization.
 ///
 /// # Returns
-/// Returns `Result<AudioData, AmplitudeError>` containing the normalized signal or an error.
+/// Returns a builder; defaults to [`NormalizeMode::Peak`].
 ///
 /// # Examples
 /// ```
-/// use dasp_rs::proc::*;
-/// use dasp_rs::types::*;
-/// let signal = AudioData { samples: vec![0.5, 1.0, 0.5], sample_rate: 44100, channels: 1 };
-/// let normalized = normalize(&signal, 1.0, "peak")?;
-/// assert_eq!(normalized.samples, vec![0.5, 1.0, 0.5]); // Already at peak 1.0
-///
+/// use dasp_rs::proc::{normalize, NormalizeMode};
+/// use dasp_rs::types::AudioData;
 /// let signal = AudioData { samples: vec![0.2, 0.4, 0.2], sample_rate: 44100, channels: 1 };
-/// let normalized = normalize(&signal, 1.0, "peak")?;
+/// let normalized = normalize(&signal, 1.0).mode(NormalizeMode::Peak).compute()?;
 /// assert_eq!(normalized.samples, vec![0.5, 1.0, 0.5]); // Scaled to peak 1.0
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn normalize(signal: &AudioData, target: f32, mode: &str) -> Result<AudioData, AmplitudeError> {
+pub fn normalize(signal: &AudioData, target: f32) -> NormalizeBuilder<'_> {
+    NormalizeBuilder { signal, target, mode: NormalizeMode::Peak }
+}
+
+/// Normalization strategy for [`normalize`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NormalizeMode {
+    /// Scale so the peak absolute sample equals the target.
+    #[default]
+    Peak,
+    /// Scale so the RMS level equals the target.
+    Rms,
+}
+
+/// Builder for [`normalize`].
+#[derive(Debug, Clone)]
+pub struct NormalizeBuilder<'a> {
+    signal: &'a AudioData,
+    target: f32,
+    mode: NormalizeMode,
+}
+
+impl NormalizeBuilder<'_> {
+    /// Set the normalization mode (default: [`NormalizeMode::Peak`]).
+    #[must_use]
+    pub fn mode(mut self, mode: NormalizeMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Apply normalization.
+    /// # Errors
+    /// Returns an error if the input is invalid (e.g., empty signal or
+    /// out-of-range parameters) or if the computation cannot be completed.
+    pub fn compute(self) -> Result<AudioData, AmplitudeError> {
+        normalize_impl(self.signal, self.target, self.mode)
+    }
+}
+
+fn normalize_impl(
+    signal: &AudioData,
+    target: f32,
+    mode: NormalizeMode,
+) -> Result<AudioData, AmplitudeError> {
     if target <= 0.0 {
         return Err(AmplitudeError::InvalidGain(
             "Target level must be positive".to_string(),
@@ -126,8 +170,8 @@ pub fn normalize(signal: &AudioData, target: f32, mode: &str) -> Result<AudioDat
         ));
     }
 
-    let gain = match mode.to_lowercase().as_str() {
-        "peak" => {
+    let gain = match mode {
+        NormalizeMode::Peak => {
             let max_amplitude = signal
                 .samples
                 .iter()
@@ -141,7 +185,7 @@ pub fn normalize(signal: &AudioData, target: f32, mode: &str) -> Result<AudioDat
             }
             target / max_amplitude
         }
-        "rms" => {
+        NormalizeMode::Rms => {
             let rms = (signal.samples.iter().map(|&s| s * s).sum::<f32>() / signal.samples.len() as f32)
                 .sqrt();
             if rms == 0.0 {
@@ -150,12 +194,6 @@ pub fn normalize(signal: &AudioData, target: f32, mode: &str) -> Result<AudioDat
                 ));
             }
             target / rms
-        }
-        _ => {
-            return Err(AmplitudeError::InvalidGain(format!(
-                "Unknown normalization mode: {}",
-                mode
-            )))
         }
     };
 
