@@ -4,6 +4,70 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.5.0]
+
+### Added
+
+**Segmentation & structure analysis (`feat`)**
+- `recurrence_matrix` / `cross_similarity` — self-similarity and cross-similarity matrices
+  with `SimilarityMetric` (Cosine/Euclidean/Manhattan) and `RecurrenceMode` (Affinity/Binary).
+- `agglomerative` — greedy contiguous segment merging by centroid similarity.
+- `subsegment` — greedy hierarchical subdivision of a pre-segmented matrix.
+- `path_enhance` — diagonal blur to reinforce repeated-structure bands in a recurrence matrix.
+- `timelag_filter` — median filter in the time-lag domain to suppress spurious repetitions.
+
+**Sequence & HMM helpers (`feat`)**
+- `dtw` — dynamic time warping with `DtwMetric` (Euclidean/Manhattan/Cosine); returns cost
+  and aligned path.
+- `viterbi` — Viterbi decoding in log domain; returns log-likelihood and state sequence.
+- `viterbi_discriminative` — Viterbi from posteriors P(state|obs) via log-likelihood
+  conversion with optional uniform prior.
+- `viterbi_binary` — specialised O(n) binary (2-state) Viterbi.
+- `transition_loop` — log self-loop transition matrix.
+- `transition_local` — near-diagonal log transition matrix (Gaussian bandwidth).
+- `transition_uniform` — uniform log transition matrix.
+- `transition_cycle` — cyclic left-to-right log transition matrix.
+- `transition_acyclic` — strictly acyclic (left-to-right, absorbing) log transition matrix.
+
+**NMF decomposition (`feat`)**
+- `decompose` — non-negative matrix factorisation via Lee–Seung multiplicative updates;
+  returns `(W, H)` components. Deterministic seeded init for reproducibility.
+
+**Spectral & effects (`feat` / `proc`)**
+- `harmonic` / `percussive` — convenience builders wrapping `hpss` to return just the
+  harmonic or percussive power spectrogram.
+- `chroma_vqt` — VQT-based chromagram; folds VQT bins into 12 chroma classes with optional
+  L2 per-frame normalisation.
+- `fourier_tempogram` — Fourier-domain tempogram (complex STFT of the onset-strength
+  envelope); captures non-integer tempo multiples.
+- `onset_strength_multi` — per-subband onset strength matrix `(n_bands, n_frames)`.
+- `phasor` — reconstruct a complex spectrogram from phase angles and optional magnitudes.
+- `remix` — segment-based signal remix; optionally aligns cut points to zero crossings.
+
+**Mask & normalisation utilities (`feat`)**
+- `softmask` — element-wise soft mask `xᵖ / (xᵖ + x_refᵖ + ε)`; power `p = ∞` gives a
+  hard binary mask.
+- `normalize` (feature) — column/row-wise L1/L2/L∞ normalisation of 2-D feature matrices.
+- `sparsify_rows` — zero out sub-threshold entries in each row to sparsify a matrix.
+
+**Array & signal utilities (`util`)**
+- `localmax` / `localmin` — boolean local extrema masks over a 1-D slice.
+- `peak_pick` — moving-max + moving-mean threshold peak detector with wait constraint;
+  returns frame indices of detected peaks.
+- `frame` — sliding-window framing of a 1-D signal into a `(frame_length, n_frames)` matrix.
+- `pad_center` — symmetric zero-padding to a target length.
+- `fix_length` — zero-pad (at tail) or truncate to an exact length.
+- `sync` — synchronise a feature matrix to frame boundaries using Mean/Median/Max/Min
+  aggregation.
+- `match_intervals` — map each interval in `intervals_from` to the best-matching (maximum
+  overlap) interval in `intervals_to`.
+- `expand_to` — broadcast a 1-D array to a 2-D singleton row or column.
+
+### Changed
+- All `cloned()` calls on `f32` iterators replaced with `copied()` (pedantic lint).
+- `midpoint` arithmetic replaced with `f32::midpoint` throughout (pedantic lint).
+- `items_after_statements` warnings resolved in `decompose.rs` and `phase_recovery.rs`.
+
 ## [0.4.0]
 
 ### Changed

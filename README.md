@@ -27,7 +27,7 @@ system libraries. It is aimed at developers, audio/ML researchers, phoneticians,
 
 ```toml
 [dependencies]
-dasp-rs = "0.4"
+dasp-rs = "0.5"
 ```
 
 No additional system packages are required.
@@ -89,7 +89,8 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
 - **Time domain**: `delay`, `time_reversal`, `time_crop`, `zero_padding`,
   `autocorrelate`, `lpc`, `zero_crossings`, `mu_compress`, `mu_expand`, `log_energy`.
 - **Time–frequency**: `stft` / `istft`, `cqt` / `icqt`, `vqt`, `pseudo_cqt`,
-  `hybrid_cqt`, `fmt`, `iirt`, `reassigned_spectrogram`, `magphase`.
+  `hybrid_cqt`, `fmt`, `iirt`, `reassigned_spectrogram`, `magphase`, `phasor`.
+- **Effects**: `trim`, `split_silence`, `time_stretch`, `pitch_shift`, `remix`.
 
 ### Feature extraction — `feat`
 - **Spectral / MIR** via the `spectral(&y, sr)` builder with terminal methods:
@@ -98,13 +99,22 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
   `.spectral_flatness()`, `.spectral_rolloff()`, `.spectral_flux()`,
   `.spectral_entropy()`, `.poly_features()`, `.tonnetz()`, `.pitch_chroma()`,
   `.hpss()`, `.pitch_autocorr()`, `.vad_features()`, `.spectral_subband_centroids()`,
-  `.formant_frequencies()`. Also `chroma_stft` and `cmvn(&feats)` builders.
+  `.formant_frequencies()`. Also `chroma_stft`, `chroma_vqt`, and `cmvn(&feats)` builders.
 - **Harmonics**: `interp_harmonics`, `salience`, `f0_harmonics`, `phase_vocoder`.
-- **Rhythm**: `tempo`, `tempogram`, ratio tempogram.
+- **Rhythm**: `tempo`, `tempogram`, ratio tempogram, `fourier_tempogram`,
+  `onset_strength_multi`.
 - **Manipulation**: `stack_memory`, `temporal_kurtosis`, `zero_crossing_rate`.
-- **Phase reconstruction**: `griffinlim`.
+- **Masks & normalisation**: `softmask`, `normalize` (L1/L2/L∞), `sparsify_rows`.
+- **Phase reconstruction**: `griffinlim`, `griffinlim_cqt`.
 - **Inverse transforms**: `compute_delta`, `mel_to_stft`, `mel_to_audio`,
   `mfcc_to_mel`, `mfcc_to_audio`.
+- **Harmonic/percussive separation**: `harmonic`, `percussive` convenience builders.
+- **Segmentation & structure**: `recurrence_matrix`, `cross_similarity`,
+  `agglomerative`, `subsegment`, `path_enhance`, `timelag_filter`.
+- **Sequence / HMM**: `dtw`, `viterbi`, `viterbi_discriminative`, `viterbi_binary`;
+  transition-matrix builders `transition_loop`, `transition_local`,
+  `transition_uniform`, `transition_cycle`, `transition_acyclic`.
+- **NMF decomposition**: `decompose` (Lee–Seung multiplicative updates).
 
 ### Pitch & tuning — `pitch`
 - `yin(&y, fmin, fmax)`, `pyin(&y, fmin, fmax)` — fundamental-frequency estimation
@@ -130,6 +140,9 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
   `note_to_midi`, `midi_to_note`, `hz_to_mel`, `mel_to_hz`, `hz_to_octs`, `octs_to_hz`,
   `a4_to_tuning`, `tuning_to_a4`, `fft_frequencies`, `cqt_frequencies`,
   `mel_frequencies`, `tempo_frequencies`, `fourier_tempo_frequencies`.
+- **Array / signal utilities**: `localmax`, `localmin`, `peak_pick`, `frame`,
+  `pad_center`, `fix_length`, `sync` (Mean/Median/Max/Min), `match_intervals`,
+  `expand_to`.
 - **Notation**:
   - Western: `key_to_notes`, `key_to_degrees`, `fifths_to_note`.
   - Carnatic: `mela_to_svara`, `mela_to_degrees`, `list_mela`, `hz_to_svara_c`,

@@ -4,4 +4,8 @@ pub mod spectral;
 pub mod rhythm;
 pub mod manipulation;
 pub mod inverse;
+pub mod segment;
+pub mod decompose;
+pub mod sequence;
+pub mod feat_util;
 pub use manipulation::*;

@@ -25,15 +25,19 @@ use thiserror::Error;
 ///   backend (e.g., `env_logger`) to see these warnings.
 #[derive(Error, Debug)]
 pub enum SignalOpError {
+    /// Input signals have different sample counts.
     #[error("Sample length mismatch: {0} vs {1}")]
     LengthMismatch(usize, usize),
 
+    /// Division by zero detected at the given sample index.
     #[error("Division by zero at sample index {0}")]
     DivisionByZero(usize),
 
+    /// An input parameter is invalid (e.g., empty signal, zero sample rate).
     #[error("Invalid input parameter: {0}")]
     InvalidInput(String),
 
+    /// A numerical computation produced an invalid result (e.g., overflow, NaN).
     #[error("Computation failed: {0}")]
     ComputationFailed(String),
 }
@@ -374,9 +378,13 @@ pub fn divide_signals(
 /// Supported scalar operations for `scalar_operation`.
 #[derive(Debug, Clone, Copy)]
 pub enum ScalarOp {
+    /// Add the scalar to every sample.
     Add,
+    /// Subtract the scalar from every sample.
     Subtract,
+    /// Multiply every sample by the scalar.
     Multiply,
+    /// Divide every sample by the scalar (zero is rejected).
     Divide,
 }
 

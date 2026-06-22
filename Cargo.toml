@@ -1,6 +1,6 @@
 [package]
 name = "dasp-rs"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Pure-Rust digital audio signal processing: I/O, STFT/CQT, spectral & MIR features, pitch, and music/phonetics notation."
@@ -20,6 +20,7 @@ readme = "README.md"
 
 [dependencies]
 hound = "3.5.1"
+symphonia = { version = "0.5", features = ["all-codecs", "all-formats"] }
 rustfft = "6.2.0"
 num-complex = "0.4.6"
 thiserror = "2"

@@ -97,6 +97,7 @@ pub mod proc {
         resampling::*,
         time_frequency::*,
         time_domain::*,
+        effects::*,
     };
 }
 
@@ -108,8 +109,11 @@ pub mod feat {
         manipulation::*,
         phase_recovery::*,
         inverse::*,
+        segment::*,
+        decompose::*,
+        sequence::*,
+        feat_util::*,
     };
-    // Import spectral module items directly
     pub use crate::features::spectral::*;
 }
 
@@ -129,6 +133,7 @@ pub mod util {
         time::*,
         frequency::*,
         notation::*,
+        array::*,
     };
 }
 

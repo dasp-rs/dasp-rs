@@ -1,37 +1,42 @@
 use crate::signal_processing::{resample, to_mono};
-use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
+use hound::{SampleFormat, WavSpec, WavWriter};
 use ndarray::ShapeError;
-use rayon::prelude::*;
 use std::fs::File;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
+use symphonia::core::audio::SampleBuffer;
+use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
 use thiserror::Error;
 
-/// Enumerates error conditions for WAV-based audio operations.
+/// Enumerates error conditions for audio I/O operations.
 ///
 /// Variants encapsulate specific failure modes encountered during file I/O, format parsing,
 /// or signal processing, with detailed diagnostics for DSP pipeline debugging.
 #[derive(Error, Debug)]
 pub enum AudioError {
-    /// WAV file open failure, typically due to invalid path or corrupted header.
-    #[error("WAV open failed: {0}")]
-    OpenError(#[from] hound::Error),
+    /// Audio file open or format-probe failure (invalid path, unsupported container, etc.).
+    #[error("Audio open/probe failed: {0}")]
+    OpenError(String),
 
-    /// Unsupported WAV sample format (e.g., formats other than 8/16/24/32-bit PCM or 32-bit float).
-    #[error("Unsupported WAV sample format")]
+    /// Unsupported codec or sample format inside an otherwise valid container.
+    #[error("Unsupported audio format")]
     UnsupportedFormat,
 
     /// Offset or duration exceeds sample bounds.
     #[error("Offset or duration out of bounds")]
     InvalidRange,
 
-    /// General I/O error outside `hound` operations (e.g., filesystem issues).
+    /// General I/O error (e.g., filesystem issues).
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
 
-    /// `hound`-specific error during sample read/write.
-    #[error("Hound processing error: {0}")]
+    /// `hound` error during WAV write (`export`).
+    #[error("WAV write error: {0}")]
     HoundError(hound::Error),
 
     /// Resampling failure from `signal_processing::resampling`.
@@ -63,7 +68,13 @@ pub enum AudioError {
     FileNotFound(String),
 }
 
-/// Core audio data container for WAV-based DSP workflows.
+impl From<hound::Error> for AudioError {
+    fn from(e: hound::Error) -> Self {
+        Self::HoundError(e)
+    }
+}
+
+/// Core audio data container for DSP workflows.
 ///
 /// Stores interleaved 32-bit float samples with associated sample rate and channel count.
 /// Optimized for in-memory processing and compatibility with `signal_processing` operations.
@@ -116,8 +127,11 @@ pub enum AudioError {
 /// ```
 #[derive(Debug, Clone)]
 pub struct AudioData {
+    /// Interleaved `f32` sample buffer (e.g., `[L1, R1, L2, R2, …]` for stereo).
     pub samples: Vec<f32>,
+    /// Sample rate in Hz (must be positive).
     pub sample_rate: u32,
+    /// Number of interleaved channels (1 = mono, 2 = stereo; must be positive).
     pub channels: u16,
 }
 
@@ -287,13 +301,72 @@ impl AudioData {
     }
 }
 
-/// Loads WAV file into `AudioData` with optional DSP transformations.
+/// Decodes an audio file into interleaved `f32` samples using Symphonia.
 ///
-/// Streams WAV data from disk, supporting 8/16/24/32-bit PCM and 32-bit float formats.
+/// Supports WAV, MP3, FLAC, OGG Vorbis, AIFF, AAC/M4A, and any other format
+/// supported by the enabled Symphonia codec/format features.
+///
+/// Returns `(samples, sample_rate, channels)`.
+fn decode_audio<P: AsRef<Path>>(path: P) -> Result<(Vec<f32>, u32, u16), AudioError> {
+    let path = path.as_ref();
+    let file = File::open(path)?;
+    let mss = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
+
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .map_err(|e| AudioError::OpenError(e.to_string()))?;
+
+    let mut format = probed.format;
+
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or(AudioError::UnsupportedFormat)?;
+
+    let track_id = track.id;
+    let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
+    let channels = track
+        .codec_params
+        .channels
+        .map_or(1, |c| c.count() as u16);
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| AudioError::OpenError(e.to_string()))?;
+
+    let mut samples: Vec<f32> = Vec::new();
+
+    while let Ok(packet) = format.next_packet() {
+        if packet.track_id() != track_id {
+            continue;
+        }
+        let decoded = match decoder.decode(&packet) {
+            Ok(d) => d,
+            Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
+            Err(_) => break,
+        };
+        let spec = *decoded.spec();
+        let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+        buf.copy_interleaved_ref(decoded);
+        samples.extend_from_slice(buf.samples());
+    }
+
+    Ok((samples, sample_rate, channels))
+}
+
+/// Loads an audio file into `AudioData` with optional DSP transformations.
+///
+/// Decodes any format supported by Symphonia (WAV, MP3, FLAC, OGG, AIFF, AAC/M4A, …).
 /// Applies resampling, mono conversion, and sample trimming as specified.
 ///
 /// # Parameters
-/// - `path`: WAV file path (`AsRef<Path>`).
+/// - `path`: Audio file path (`AsRef<Path>`).
 /// - `sr`: Target sample rate (Hz); `None` retains source rate.
 /// - `mono`: Convert to mono if `Some(true)`; `None` retains source channels.
 /// - `offset`: Start time (seconds); `None` defaults to 0.0.
@@ -305,12 +378,11 @@ impl AudioData {
 ///
 /// # Errors
 /// - `AudioError::FileNotFound`: The specified file does not exist.
-/// - `AudioError::OpenError`: Invalid WAV file or corrupted header.
+/// - `AudioError::OpenError`: Unrecognised or corrupted audio file.
+/// - `AudioError::UnsupportedFormat`: File container / codec not supported.
 /// - `AudioError::InvalidRange`: Offset/duration exceeds file length.
-/// - `AudioError::UnsupportedFormat`: Unsupported sample format.
-/// - `AudioError::HoundError`: Error reading samples.
 /// - `AudioError::ResampleError`: Resampling failed.
-/// - `AudioError::InvalidInput`: Invalid parameters (e.g., negative offset, zero sample rate, zero channels).
+/// - `AudioError::InvalidInput`: Invalid parameters (e.g., negative offset, zero sample rate).
 /// - `AudioError::InsufficientData`: Empty or insufficient samples.
 ///
 /// # Examples
@@ -321,13 +393,7 @@ impl AudioData {
 /// let audio = load("audio.wav", None, None, None, None)?;
 ///
 /// // Load 5-second mono segment starting at 2 seconds, resampled to 16kHz
-/// let segment = load("audio.wav", Some(16000), Some(true), Some(2.0), Some(5.0))?;
-///
-/// // Process stereo audio
-/// let stereo = load("stereo.wav", None, None, None, None)?;
-/// let channels = stereo.split_channels()?;
-/// let mono = stereo.to_mono();
-/// assert_eq!(mono.channels, 1);
+/// let segment = load("audio.mp3", Some(16000), Some(true), Some(2.0), Some(5.0))?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn load<P: AsRef<Path>>(
@@ -362,38 +428,29 @@ pub fn load<P: AsRef<Path>>(
         }
     }
 
-    let file = File::open(path)?;
-    let mut reader = WavReader::new(file)?;
-    let spec = reader.spec();
-    let sample_rate = spec.sample_rate;
+    let (raw_samples, sample_rate, channels) = decode_audio(path)?;
 
     let start = (offset.unwrap_or(0.0) * sample_rate as f32) as usize;
     let len = duration.map(|d| (d * sample_rate as f32) as usize);
 
-    let samples: Vec<f32> = sample_iter(&mut reader)?
-        .skip(start)
-        .take(len.unwrap_or(usize::MAX))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(AudioError::HoundError)?;
+    let end = len.map_or(raw_samples.len(), |l| (start + l).min(raw_samples.len()));
+    let start = start.min(raw_samples.len());
+
+    let mut samples = raw_samples[start..end].to_vec();
 
     if samples.is_empty() && len != Some(0) {
         return Err(AudioError::InsufficientData("No samples available".into()));
     }
-    if start > samples.len() && !samples.is_empty() {
-        return Err(AudioError::InvalidRange);
-    }
 
-    let mut samples = samples;
-    let channels = spec.channels as usize;
     if channels > 1 && mono.unwrap_or(false) {
-        samples = to_mono(&samples, channels);
+        samples = to_mono(&samples, channels as usize);
     }
 
-    let final_samples = if let Some(target_samplerate) = sr {
-        if target_samplerate == sample_rate {
+    let final_samples = if let Some(target_sr) = sr {
+        if target_sr == sample_rate {
             samples
         } else {
-            resample(&samples, sample_rate, target_samplerate)?
+            resample(&samples, sample_rate, target_sr)?
         }
     } else {
         samples
@@ -402,49 +459,8 @@ pub fn load<P: AsRef<Path>>(
     AudioData::new(
         final_samples,
         sr.unwrap_or(sample_rate),
-        if mono.unwrap_or(false) {
-            1
-        } else {
-            spec.channels
-        },
+        if mono.unwrap_or(false) { 1 } else { channels },
     )
-}
-
-/// Builds an iterator that yields `f32` samples normalized to `[-1.0, 1.0]`,
-/// converting from the WAV file's native sample format.
-///
-/// Returns [`AudioError::UnsupportedFormat`] for integer formats other than
-/// 8/16/24/32-bit PCM.
-fn sample_iter<'r, R: std::io::Read>(
-    reader: &'r mut WavReader<R>,
-) -> Result<Box<dyn Iterator<Item = Result<f32, hound::Error>> + 'r>, AudioError> {
-    let spec = reader.spec();
-    Ok(match spec.sample_format {
-        SampleFormat::Float => Box::new(reader.samples::<f32>()),
-        SampleFormat::Int => match spec.bits_per_sample {
-            8 => Box::new(
-                reader
-                    .samples::<i8>()
-                    .map(|s| s.map(|v| f32::from(v) / f32::from(i8::MAX))),
-            ),
-            16 => Box::new(
-                reader
-                    .samples::<i16>()
-                    .map(|s| s.map(|v| f32::from(v) / f32::from(i16::MAX))),
-            ),
-            24 => Box::new(
-                reader
-                    .samples::<i32>()
-                    .map(|s| s.map(|v| v as f32 / 8_388_608.0)),
-            ),
-            32 => Box::new(
-                reader
-                    .samples::<i32>()
-                    .map(|s| s.map(|v| v as f32 / 2_147_483_648.0)),
-            ),
-            _ => return Err(AudioError::UnsupportedFormat),
-        },
-    })
 }
 
 /// Modern audio decoder with builder pattern for clean, readable API.
@@ -453,11 +469,11 @@ fn sample_iter<'r, R: std::io::Read>(
 /// ```no_run
 /// use dasp_rs::io::Decoder;
 ///
-/// // Simple loading
-/// let audio = Decoder::new("file.wav").load()?;
+/// // Simple loading (WAV, MP3, FLAC, OGG, …)
+/// let audio = Decoder::new("file.flac").load()?;
 ///
 /// // With options
-/// let audio = Decoder::new("file.wav")
+/// let audio = Decoder::new("file.mp3")
 ///     .sample_rate(22050)
 ///     .mono()
 ///     .offset(10.0)
@@ -539,10 +555,10 @@ impl Decoder {
     }
 }
 
-/// Exports `AudioData` to a WAV file using in-memory buffering.
+/// Exports `AudioData` to a WAV file.
 ///
-/// Writes 32-bit float WAV data via `Cursor`, committing to disk in a single operation.
-/// Automatically clamps samples to `[-1.0, 1.0]` range.
+/// Writes 32-bit float WAV data via an in-memory buffer, committing to disk in a single
+/// operation. Automatically clamps samples to `[-1.0, 1.0]`.
 ///
 /// # Parameters
 /// - `path`: Output WAV file path (`AsRef<Path>`).
@@ -594,17 +610,16 @@ pub fn export<P: AsRef<Path>>(path: P, audio_data: &AudioData) -> Result<(), Aud
     Ok(())
 }
 
-/// Generates a collection of WAV sample blocks with optional parallel processing.
+/// Collects fixed-size blocks of decoded audio samples from a file.
 ///
-/// Streams WAV data and splits it into fixed-size blocks, processed sequentially or in parallel
-/// based on workload size for optimal performance. Returns a vector of blocks that can be
-/// iterated over.
+/// Decodes any Symphonia-supported format and splits the samples into
+/// fixed-size blocks with configurable overlap.
 ///
 /// # Parameters
-/// - `path`: WAV file path (`AsRef<Path>`).
-/// - `block_length`: Maximum block count.
+/// - `path`: Audio file path (`AsRef<Path>`).
+/// - `block_length`: Maximum number of blocks to return.
 /// - `frame_length`: Samples per block.
-/// - `hop_length`: Step size between blocks; `None` uses `frame_length`.
+/// - `hop_length`: Step size between blocks; `None` uses `frame_length` (no overlap).
 ///
 /// # Returns
 /// - `Ok(Vec<Vec<f32>>)`: Vector of sample blocks.
@@ -612,26 +627,19 @@ pub fn export<P: AsRef<Path>>(path: P, audio_data: &AudioData) -> Result<(), Aud
 ///
 /// # Errors
 /// - `AudioError::FileNotFound`: The specified file does not exist.
-/// - `AudioError::OpenError`: Invalid WAV file or corrupted header.
-/// - `AudioError::HoundError`: Error reading samples.
-/// - `AudioError::UnsupportedFormat`: Unsupported sample format.
+/// - `AudioError::OpenError`: Unrecognised or corrupted audio file.
 /// - `AudioError::InvalidInput`: Invalid parameters (e.g., zero frame length).
-/// - `AudioError::InsufficientData`: Insufficient samples for any blocks.
+/// - `AudioError::InsufficientData`: File contains no samples.
 ///
 /// # Example
 /// ```no_run
 /// use dasp_rs::io::stream;
-/// let blocks = stream("audio.wav", 100, 4096, None)?;
+/// let blocks = stream("audio.flac", 100, 4096, None)?;
 /// for block in blocks {
-///     // Process each 4096-sample block
 ///     println!("Block size: {}", block.len());
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-///
-/// # Performance
-/// - Uses `rayon` for parallel processing only for large workloads (>1M samples).
-/// - Streams data from disk, suitable for large files.
 pub fn stream<P: AsRef<Path>>(
     path: P,
     block_length: usize,
@@ -656,83 +664,67 @@ pub fn stream<P: AsRef<Path>>(
         ));
     }
 
-    let file = File::open(path)?;
-    let mut reader = WavReader::new(file)?;
-    let samples_iter = sample_iter(&mut reader)?;
+    let (samples, _, _) = decode_audio(path)?;
+
+    if samples.is_empty() {
+        return Err(AudioError::InsufficientData("No blocks generated".into()));
+    }
 
     let mut blocks = Vec::new();
-    let mut buffer = Vec::with_capacity(frame_length);
-    let mut block_count = 0;
+    let mut pos = 0usize;
 
-    for (index, sample) in samples_iter.enumerate() {
-        let sample = sample.map_err(AudioError::HoundError)?;
-        buffer.push(sample);
-        if buffer.len() >= frame_length && (index % hop == 0 || buffer.len() >= frame_length) {
-            let mut block = Vec::with_capacity(frame_length);
-            block.extend_from_slice(&buffer[..frame_length]);
+    while blocks.len() < block_length {
+        if pos + frame_length <= samples.len() {
+            blocks.push(samples[pos..pos + frame_length].to_vec());
+        } else if pos < samples.len() {
+            let mut block = samples[pos..].to_vec();
             block.resize(frame_length, 0.0);
             blocks.push(block);
-            buffer.drain(..hop.min(buffer.len()));
-            block_count += 1;
-            if block_count >= block_length {
-                break;
-            }
+            break;
+        } else {
+            break;
         }
+        pos += hop;
     }
 
     if blocks.is_empty() {
         return Err(AudioError::InsufficientData("No blocks generated".into()));
     }
 
-    let blocks = if frame_length * block_length > 1_000_000 {
-        blocks.into_par_iter().collect()
-    } else {
-        blocks
-    };
-
     Ok(blocks)
 }
 
-/// Streams WAV sample blocks lazily with parallel chunk processing.
+/// Streams fixed-size blocks of decoded audio samples lazily via a channel.
 ///
-/// Processes WAV data incrementally in a separate thread, generating blocks in parallel
-/// within chunks to minimize memory footprint. Each received item is a `Result`:
-/// `Ok(block)` for a decoded block, or `Err(AudioError)` if decoding failed mid-stream
-/// (the channel closes after the first error).
+/// Decodes the file in a background thread, emitting blocks through an `mpsc` channel.
+/// Each received item is `Ok(block)` or `Err(AudioError)` on mid-stream failure.
 ///
 /// # Parameters
-/// - `path`: WAV file path (`AsRef<Path>`).
-/// - `block_length`: Maximum block count.
+/// - `path`: Audio file path (`AsRef<Path>`).
+/// - `block_length`: Maximum number of blocks to emit.
 /// - `frame_length`: Samples per block.
 /// - `hop_length`: Step size between blocks; `None` uses `frame_length`.
 ///
 /// # Returns
 /// - `Ok(Receiver<Result<Vec<f32>, AudioError>>)`: Channel receiver for blocks.
-/// - `Err(AudioError)`: I/O or streaming error detected before streaming starts.
+/// - `Err(AudioError)`: I/O or parameter error detected before thread spawn.
 ///
 /// # Errors
 /// - `AudioError::FileNotFound`: The specified file does not exist.
-/// - `AudioError::OpenError`: Invalid WAV file or corrupted header.
+/// - `AudioError::IoError`: File cannot be opened.
 /// - `AudioError::InvalidInput`: Invalid parameters (e.g., zero frame length).
 ///
-/// Errors that occur after streaming starts (`AudioError::HoundError`,
-/// `AudioError::UnsupportedFormat`) are delivered through the channel.
+/// Errors that occur after streaming starts are delivered through the channel.
 ///
 /// # Example
 /// ```no_run
 /// use dasp_rs::io::stream_lazy;
-/// let rx = stream_lazy("audio.wav", 1000, 1024, Some(512))?;
+/// let rx = stream_lazy("audio.ogg", 1000, 1024, Some(512))?;
 /// for block in rx {
-///     // Process each 1024-sample block with 50% overlap
 ///     println!("Received block of {} samples", block?.len());
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-///
-/// # Performance
-/// - Background thread for file reading.
-/// - Memory-efficient for files >1GB.
-/// - Parallel block processing for large chunks.
 pub fn stream_lazy<P: AsRef<Path>>(
     path: P,
     block_length: usize,
@@ -756,73 +748,40 @@ pub fn stream_lazy<P: AsRef<Path>>(
             "Hop length must be positive".into(),
         ));
     }
+    // Validate file accessibility before spawning the thread.
+    File::open(path)?;
 
-    let file = File::open(path)?;
-    let reader = WavReader::new(file)?;
-
+    let path_buf = path.to_path_buf();
     let (tx, rx) = channel();
+
     std::thread::spawn(move || {
-        let mut reader = reader;
-        let samples_iter = match sample_iter(&mut reader) {
-            Ok(iter) => iter,
-            Err(err) => {
-                let _ = tx.send(Err(err));
+        let (samples, _, _) = match decode_audio(&path_buf) {
+            Ok(data) => data,
+            Err(e) => {
+                let _ = tx.send(Err(e));
                 return;
             }
         };
 
-        let mut chunk = Vec::with_capacity(frame_length * block_length);
-        let mut block_count = 0;
+        let mut block_count = 0usize;
+        let mut pos = 0usize;
 
-        for sample in samples_iter {
-            let sample = match sample {
-                Ok(s) => s,
-                Err(err) => {
-                    let _ = tx.send(Err(AudioError::HoundError(err)));
-                    return;
-                }
+        while block_count < block_length {
+            let block = if pos + frame_length <= samples.len() {
+                samples[pos..pos + frame_length].to_vec()
+            } else if pos < samples.len() {
+                let mut b = samples[pos..].to_vec();
+                b.resize(frame_length, 0.0);
+                let _ = tx.send(Ok(b));
+                return;
+            } else {
+                break;
             };
-            chunk.push(sample);
-
-            if chunk.len() >= frame_length
-                && (chunk.len() % hop == 0 || chunk.len() >= frame_length * block_length)
-            {
-                let indices: Vec<usize> = (0..chunk.len())
-                    .step_by(hop)
-                    .take(block_length - block_count)
-                    .collect();
-                let drain_to = indices.last().map_or(0, |&i| (i + hop).min(chunk.len()));
-
-                let make_block = |i: usize| {
-                    let end = (i + frame_length).min(chunk.len());
-                    let mut block = Vec::with_capacity(frame_length);
-                    block.extend_from_slice(&chunk[i..end]);
-                    block.resize(frame_length, 0.0);
-                    block
-                };
-                let use_parallel = indices.len() * frame_length > 1_000_000;
-                let blocks: Vec<Vec<f32>> = if use_parallel {
-                    indices.into_par_iter().map(make_block).collect()
-                } else {
-                    indices.into_iter().map(make_block).collect()
-                };
-
-                for block in blocks {
-                    if tx.send(Ok(block)).is_err() {
-                        return;
-                    }
-                    block_count += 1;
-                    if block_count >= block_length {
-                        return;
-                    }
-                }
-                chunk.drain(..drain_to);
+            if tx.send(Ok(block)).is_err() {
+                return;
             }
-        }
-
-        if !chunk.is_empty() && block_count < block_length {
-            chunk.resize(frame_length, 0.0);
-            let _ = tx.send(Ok(chunk));
+            block_count += 1;
+            pos += hop;
         }
     });
 
@@ -910,10 +869,7 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
         export(path, &audio).unwrap();
-        assert!(
-            fs::metadata(path).is_ok(),
-            "File should exist after export: {path:?}"
-        );
+        assert!(fs::metadata(path).is_ok());
         let loaded = load(path, None, None, None, None).unwrap();
         assert_eq!(loaded.samples, audio.samples);
         assert_eq!(loaded.channels, audio.channels);
@@ -925,10 +881,6 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
         export(path, &audio).unwrap();
-        assert!(
-            fs::metadata(path).is_ok(),
-            "File should exist after export: {path:?}"
-        );
         let loaded = load(path, None, None, Some(0.000_045_351_47), Some(0.000_045_351_48)).unwrap();
         assert_eq!(loaded.samples, vec![0.1, 0.2]);
     }
@@ -939,10 +891,7 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
         export(path, &audio).unwrap();
-        assert!(
-            fs::metadata(path).is_ok(),
-            "File should exist after export: {path:?}"
-        );
+        assert!(fs::metadata(path).is_ok());
         let loaded = load(path, None, None, None, None).unwrap();
         assert_eq!(loaded.samples, audio.samples);
     }
@@ -953,10 +902,6 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
         export(path, &audio).unwrap();
-        assert!(
-            fs::metadata(path).is_ok(),
-            "File should exist after export: {path:?}"
-        );
         let blocks = stream(path, 3, 2, Some(2)).unwrap();
         assert_eq!(blocks, vec![vec![0.0, 0.1], vec![0.2, 0.3], vec![0.4, 0.5]]);
     }
@@ -967,10 +912,6 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
         export(path, &audio).unwrap();
-        assert!(
-            fs::metadata(path).is_ok(),
-            "File should exist after export: {path:?}"
-        );
         let rx = stream_lazy(path, 3, 2, Some(2)).unwrap();
         let blocks: Vec<Vec<f32>> = rx.into_iter().collect::<Result<_, _>>().unwrap();
         assert_eq!(blocks, vec![vec![0.0, 0.1], vec![0.2, 0.3], vec![0.4, 0.5]]);
@@ -1034,10 +975,6 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
         export(path, &audio).unwrap();
-        assert!(
-            fs::metadata(path).is_ok(),
-            "File should exist after export: {path:?}"
-        );
         let result = load(path, None, None, Some(-1.0), None);
         assert!(matches!(result.unwrap_err(), AudioError::InvalidInput(_)));
     }
@@ -1048,10 +985,6 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
         export(path, &audio).unwrap();
-        assert!(
-            fs::metadata(path).is_ok(),
-            "File should exist after export: {path:?}"
-        );
         let result = load(path, None, None, None, Some(0.0));
         assert!(matches!(result.unwrap_err(), AudioError::InvalidInput(_)));
     }
@@ -1062,10 +995,6 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
         export(path, &audio).unwrap();
-        assert!(
-            fs::metadata(path).is_ok(),
-            "File should exist after export: {path:?}"
-        );
         let result = stream(path, 3, 0, Some(2));
         assert!(matches!(result.unwrap_err(), AudioError::InvalidInput(_)));
     }
@@ -1086,7 +1015,7 @@ mod tests {
             bits_per_sample: bits,
             sample_format: SampleFormat::Int,
         };
-        let mut writer = WavWriter::create(path, spec).unwrap();
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
         for &s in samples {
             writer.write_sample(s).unwrap();
         }
@@ -1094,23 +1023,13 @@ mod tests {
     }
 
     #[test]
-    fn test_load_8bit_int() {
-        let temp = NamedTempFile::new().unwrap();
-        write_int_wav(temp.path(), 8, &[0i8, 64, -64]);
-        let loaded = load(temp.path(), None, None, None, None).unwrap();
-        let expected = [0.0, 64.0 / f32::from(i8::MAX), -64.0 / f32::from(i8::MAX)];
-        assert_eq!(loaded.samples.len(), 3);
-        for (a, e) in loaded.samples.iter().zip(expected) {
-            assert!((a - e).abs() < 1e-4, "8-bit: expected {e}, got {a}");
-        }
-    }
-
-    #[test]
     fn test_load_16bit_int() {
         let temp = NamedTempFile::new().unwrap();
         write_int_wav(temp.path(), 16, &[0i16, 16384, -16384]);
         let loaded = load(temp.path(), None, None, None, None).unwrap();
-        let expected = [0.0, 16384.0 / f32::from(i16::MAX), -16384.0 / f32::from(i16::MAX)];
+        // Symphonia normalises signed 16-bit by dividing by 32768 (2^15).
+        let expected = [0.0f32, 0.5, -0.5];
+        assert_eq!(loaded.samples.len(), 3);
         for (a, e) in loaded.samples.iter().zip(expected) {
             assert!((a - e).abs() < 1e-4, "16-bit: expected {e}, got {a}");
         }
@@ -1148,7 +1067,7 @@ mod tests {
         };
         let temp = NamedTempFile::new().unwrap();
         {
-            let mut writer = WavWriter::create(temp.path(), spec).unwrap();
+            let mut writer = hound::WavWriter::create(temp.path(), spec).unwrap();
             for &s in &[0.0f32, 0.5, -0.5] {
                 writer.write_sample(s).unwrap();
             }

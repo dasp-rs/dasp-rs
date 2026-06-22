@@ -1476,6 +1476,42 @@ fn filter(x: &[f32], b: &[f32], a: &[f32]) -> Vec<f32> {
     y
 }
 
+// ─── Phasor ───────────────────────────────────────────────────────────────────
+
+/// Constructs a complex spectrogram from polar-form phase angles and optional magnitudes.
+///
+/// Each element `[i, j]` of the returned array equals `magnitude * e^{i·angle}`.
+/// When `mag` is `None` all magnitudes are `1.0` (unit phasors).
+///
+/// Commonly used to reconstruct a complex STFT from a phase matrix returned by
+/// [`magphase`] and a new target magnitude spectrogram.
+///
+/// # Arguments
+/// * `angles` — Phase angle matrix in radians, shape `(n_bins, n_frames)`.
+/// * `mag` — Optional magnitude matrix with the same shape as `angles`.
+///
+/// # Examples
+/// ```
+/// use dasp_rs::proc::phasor;
+/// use ndarray::Array2;
+/// use std::f32::consts::PI;
+/// let angles = Array2::from_elem((5, 10), PI / 2.0);
+/// let c = phasor(&angles, None);
+/// // Each element ≈ e^{iπ/2} = i
+/// assert!(c[[0, 0]].re.abs() < 1e-5);
+/// assert!((c[[0, 0]].im - 1.0).abs() < 1e-5);
+/// ```
+pub fn phasor(
+    angles: &Array2<f32>,
+    mag: Option<&Array2<f32>>,
+) -> Array2<num_complex::Complex<f32>> {
+    Array2::from_shape_fn(angles.raw_dim(), |(i, j)| {
+        let a = angles[[i, j]];
+        let m = mag.map_or(1.0, |m| m[[i, j]]);
+        num_complex::Complex::from_polar(m, a)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

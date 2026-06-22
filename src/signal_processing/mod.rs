@@ -5,6 +5,7 @@ pub mod time_frequency;
 pub mod amplitude;
 pub mod mixing;
 pub mod panning;
+pub mod effects;
 
 pub use mono::*;
 pub use resampling::*;

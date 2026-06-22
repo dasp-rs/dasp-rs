@@ -1,6 +1,6 @@
 use ndarray::{s, stack, Array1, Array2, Axis};
 use rayon::prelude::*;
-use crate::signal_processing::time_frequency::{stft, cqt};
+use crate::signal_processing::time_frequency::{stft, cqt, vqt};
 use crate::signal_processing::time_domain::{autocorrelate, log_energy};
 use crate::utils::frequency::hz_to_midi;
 use nalgebra::{DMatrix, DVector};
@@ -2422,6 +2422,247 @@ fn lpc(frame: &AudioData, order: usize) -> Result<Vec<f32>, SpectralError> {
         }
     }
     Ok(a)
+}
+
+// ─── Harmonic / Percussive convenience wrappers ───────────────────────────────
+
+/// Builder for [`harmonic`].
+#[derive(Debug, Clone)]
+pub struct HarmonicBuilder<'a> {
+    y: &'a [f32],
+    sr: u32,
+    n_fft: usize,
+    hop_length: usize,
+    margin: usize,
+}
+
+impl HarmonicBuilder<'_> {
+    /// FFT size (default: 2048).
+    #[must_use]
+    pub fn n_fft(mut self, v: usize) -> Self { self.n_fft = v; self }
+    /// Hop length in samples (default: 512).
+    #[must_use]
+    pub fn hop_length(mut self, v: usize) -> Self { self.hop_length = v; self }
+    /// Median-filter half-width in frames (default: 31).
+    #[must_use]
+    pub fn margin(mut self, v: usize) -> Self { self.margin = v; self }
+
+    /// Compute and return the harmonic power spectrogram.
+    ///
+    /// # Errors
+    /// Propagates errors from the underlying HPSS computation.
+    pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        let (h, _) = hpss(
+            &audio,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+            Some(self.margin),
+            None,
+        )?;
+        Ok(h)
+    }
+}
+
+/// Extracts the harmonic component power spectrogram via HPSS.
+///
+/// Equivalent to `hpss(signal, ...)[0]`: applies median-filter harmonic-percussive
+/// source separation and returns the harmonic (tonal) masked power spectrogram
+/// of shape `(n_fft/2 + 1, n_frames)`.
+///
+/// To reconstruct audio from the result, pass it through [`griffinlim`].
+///
+/// # Examples
+/// ```no_run
+/// use dasp_rs::feat::harmonic;
+/// let y = vec![0.0_f32; 22050];
+/// let H = harmonic(&y, 22050).compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn harmonic(y: &[f32], sr: u32) -> HarmonicBuilder<'_> {
+    HarmonicBuilder { y, sr, n_fft: 2048, hop_length: 512, margin: 31 }
+}
+
+/// Builder for [`percussive`].
+#[derive(Debug, Clone)]
+pub struct PercussiveBuilder<'a> {
+    y: &'a [f32],
+    sr: u32,
+    n_fft: usize,
+    hop_length: usize,
+    margin: usize,
+}
+
+impl PercussiveBuilder<'_> {
+    /// FFT size (default: 2048).
+    #[must_use]
+    pub fn n_fft(mut self, v: usize) -> Self { self.n_fft = v; self }
+    /// Hop length in samples (default: 512).
+    #[must_use]
+    pub fn hop_length(mut self, v: usize) -> Self { self.hop_length = v; self }
+    /// Median-filter half-width in bins (default: 31).
+    #[must_use]
+    pub fn margin(mut self, v: usize) -> Self { self.margin = v; self }
+
+    /// Compute and return the percussive power spectrogram.
+    ///
+    /// # Errors
+    /// Propagates errors from the underlying HPSS computation.
+    pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
+        let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
+        let (_, p) = hpss(
+            &audio,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+            None,
+            Some(self.margin),
+        )?;
+        Ok(p)
+    }
+}
+
+/// Extracts the percussive component power spectrogram via HPSS.
+///
+/// Equivalent to `hpss(signal, ...)[1]`: applies median-filter harmonic-percussive
+/// source separation and returns the percussive (transient) masked power spectrogram
+/// of shape `(n_fft/2 + 1, n_frames)`.
+///
+/// # Examples
+/// ```no_run
+/// use dasp_rs::feat::percussive;
+/// let y = vec![0.0_f32; 22050];
+/// let P = percussive(&y, 22050).compute()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn percussive(y: &[f32], sr: u32) -> PercussiveBuilder<'_> {
+    PercussiveBuilder { y, sr, n_fft: 2048, hop_length: 512, margin: 31 }
+}
+
+// ─── Chroma VQT ───────────────────────────────────────────────────────────────
+
+/// Builder for [`chroma_vqt`].
+#[derive(Debug, Clone)]
+pub struct ChromaVqtBuilder<'a> {
+    y: &'a [f32],
+    sr: u32,
+    hop_length: usize,
+    n_octaves: u32,
+    bins_per_octave: u32,
+    norm: Option<f32>,
+}
+
+impl ChromaVqtBuilder<'_> {
+    /// Hop length in samples (default: 512).
+    #[must_use]
+    pub fn hop_length(mut self, v: usize) -> Self { self.hop_length = v; self }
+    /// Number of octaves (default: 7).
+    #[must_use]
+    pub fn n_octaves(mut self, v: u32) -> Self { self.n_octaves = v; self }
+    /// Bins per octave (default: 36; should be a multiple of 12).
+    #[must_use]
+    pub fn bins_per_octave(mut self, v: u32) -> Self { self.bins_per_octave = v; self }
+    /// L2-norm applied after folding; `None` skips normalisation.
+    #[must_use]
+    pub fn norm(mut self, v: Option<f32>) -> Self { self.norm = v; self }
+
+    /// Compute the chromagram derived from the VQT.
+    ///
+    /// # Errors
+    /// Returns an error if the VQT computation fails or the signal is empty.
+    pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
+        chroma_vqt_impl(
+            self.y,
+            self.sr,
+            self.hop_length,
+            self.n_octaves,
+            self.bins_per_octave,
+            self.norm,
+        )
+    }
+}
+
+/// Computes a chromagram from a Variable-Q Transform (VQT) spectrogram.
+///
+/// The VQT chromagram is computed by:
+/// 1. Computing the VQT of the audio signal.
+/// 2. Folding the VQT bins into 12 chroma classes modulo `bins_per_octave`.
+/// 3. Optionally L2-normalising each time frame.
+///
+/// Compared to STFT-based chroma, the VQT variant is better suited to music
+/// with non-equal temperament or when fine pitch resolution is needed.
+///
+/// # Arguments
+/// * `y` — Audio samples.
+/// * `sr` — Sample rate in Hz.
+///
+/// # Examples
+/// ```no_run
+/// use dasp_rs::feat::chroma_vqt;
+/// let y = vec![0.0_f32; 44100];
+/// let c = chroma_vqt(&y, 44100).compute()?;
+/// assert_eq!(c.shape()[0], 12);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn chroma_vqt(y: &[f32], sr: u32) -> ChromaVqtBuilder<'_> {
+    ChromaVqtBuilder {
+        y,
+        sr,
+        hop_length: 512,
+        n_octaves: 7,
+        bins_per_octave: 36,
+        norm: Some(2.0),
+    }
+}
+
+fn chroma_vqt_impl(
+    y: &[f32],
+    sr: u32,
+    hop_length: usize,
+    n_octaves: u32,
+    bins_per_octave: u32,
+    norm: Option<f32>,
+) -> Result<Array2<f32>, SpectralError> {
+    let n_bins = (n_octaves * bins_per_octave) as usize;
+    let vqt_spec = vqt(y, sr)
+        .hop_length(hop_length)
+        .n_bins(n_bins)
+        .compute()
+        .map_err(|e| SpectralError::InvalidParameter(e.to_string()))?;
+
+    let n_freqs = vqt_spec.shape()[0];
+    let n_frames = vqt_spec.shape()[1];
+    let bpo = bins_per_octave as usize;
+
+    // Fold into 12 chroma bins
+    let chroma_bins_per_octave = 12_usize;
+    let fold = bpo / chroma_bins_per_octave; // bins per semitone
+
+    let mut chroma = Array2::<f32>::zeros((chroma_bins_per_octave, n_frames));
+    for b in 0..n_freqs {
+        let chroma_bin = (b / fold.max(1)) % chroma_bins_per_octave;
+        for t in 0..n_frames {
+            chroma[[chroma_bin, t]] += vqt_spec[[b, t]].norm();
+        }
+    }
+
+    // Optional column-wise L2 normalisation
+    if let Some(_p) = norm {
+        for t in 0..n_frames {
+            let l2: f32 = (0..chroma_bins_per_octave)
+                .map(|c| chroma[[c, t]].powi(2))
+                .sum::<f32>()
+                .sqrt();
+            if l2 > 1e-10 {
+                for c in 0..chroma_bins_per_octave {
+                    chroma[[c, t]] /= l2;
+                }
+            }
+        }
+    }
+
+    Ok(chroma)
 }
 
 /// Computes roots of a polynomial.
