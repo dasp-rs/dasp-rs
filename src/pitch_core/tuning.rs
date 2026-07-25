@@ -405,12 +405,11 @@ pub fn pitch_tuning(frequencies: &[f32], resolution: Option<f32>) -> Result<f32,
         // n_semitones = 12 * log2(freq / 440.0), then floor to get nearest lower semitone
         let ref_freq = 440.0 * 2.0f32.powf((12.0 * f32::log2(freq / 440.0)).floor() / 12.0);
         let cents = 1200.0 * f32::log2(freq / ref_freq);
-        total_deviation += (cents % resolution)
-            - if cents % resolution > resolution / 2.0 {
-                resolution
-            } else {
-                0.0
-            };
+        // rem_euclid keeps the remainder non-negative (unlike `%`, which keeps the
+        // sign of the dividend), so this correctly wraps into [-resolution/2, resolution/2)
+        // for both sharp (positive) and flat (negative) deviations.
+        let r = cents.rem_euclid(resolution);
+        total_deviation += if r > resolution / 2.0 { r - resolution } else { r };
     }
 
     Ok(total_deviation / valid_freqs.len() as f32)

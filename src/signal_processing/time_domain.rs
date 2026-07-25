@@ -352,18 +352,19 @@ pub fn lpc(signal: &AudioData, order: usize) -> Result<Vec<f32>, TimeDomainError
     let mut e = r[0];
 
     for i in 1..=order {
-        let mut k = 0.0;
-        for j in 0..i {
-            k += a[j] * r[i - j];
-        }
-        k = -k / e;
         if e == 0.0 {
             return Err(TimeDomainError::InvalidTime(
                 "Division by zero in LPC computation".to_string(),
             ));
         }
+        let mut k = 0.0;
         for j in 0..i {
-            a[j] -= k * a[i - 1 - j];
+            k += a[j] * r[i - j];
+        }
+        k = -k / e;
+        let a_prev = a.clone();
+        for j in 0..i {
+            a[j] = a_prev[j] - k * a_prev[i - 1 - j];
         }
         a[i] = k;
         e *= 1.0 - k * k;

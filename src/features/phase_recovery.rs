@@ -74,12 +74,17 @@ impl GriffinLimBuilder<'_> {
 
 /// Internal Griffin-Lim implementation.
 fn griffinlim_impl(s: &Array2<f32>, n_iter: usize, hop_length: Option<usize>) -> Result<Vec<f32>, PhaseRecoveryError> {
+    if s.shape()[0] == 0 || s.shape()[1] == 0 {
+        return Err(PhaseRecoveryError::ComputationFailed(
+            "Empty magnitude spectrogram".into(),
+        ));
+    }
     let n_fft = (s.shape()[0] - 1) * 2;
     let hop = hop_length.unwrap_or(n_fft / 4).max(1);
     let signal_len = hop * (s.shape()[1] - 1) + n_fft;
-    let mut y = crate::signal_generation::generators::tone(440.0, 44100)
-        .duration(signal_len as f32 / 44100.0)
-        .compute();
+    // Deterministic pseudo-random initialization avoids phase-lock artifacts
+    // (matches the CQT variant's seeding strategy below).
+    let mut y: Vec<f32> = (0..signal_len).map(|i| (i as f32 * 0.031_415_93).sin() * 0.01).collect();
     for _ in 0..n_iter {
         let stft_y = crate::signal_processing::time_frequency::stft(&y)
             .n_fft(n_fft)
@@ -91,8 +96,9 @@ fn griffinlim_impl(s: &Array2<f32>, n_iter: usize, hop_length: Option<usize>) ->
         for ((i, j), m) in mag.indexed_iter_mut() {
             *m = s[[i, j]];  // Use given magnitude directly (not sqrt, as s is already magnitude)
             let p = &mut phase[[i, j]];
+            let norm = p.norm();
             if m.abs() > 1e-10 {
-                *p /= p.norm();  // Normalize phase to unit magnitude
+                *p = if norm > 1e-10 { *p / norm } else { Complex::new(1.0, 0.0) };
             }
         }
         // Create complex spectrogram: magnitude * phase (element-wise)

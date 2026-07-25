@@ -460,7 +460,6 @@ fn reassigned_spectrogram_impl(
 
     let mut reassigned = Array2::zeros(s.dim());
     let freqs = fft_frequencies_impl(sr, n_fft);
-    let times = Array1::linspace(0.0, (y.len() as f32 - 1.0) / sr as f32, s.shape()[1]);
     // Precompute constants for efficiency
     let sr_f = sr as f32;
     let hop_f = hop_length as f32;
@@ -472,8 +471,13 @@ fn reassigned_spectrogram_impl(
         for f in 0..s.shape()[0] {
             let mag = s[[f, t]].norm();
             if mag > 1e-6 {
+                // Frame `t`'s center time under `stft`'s hop-based, centered
+                // framing is `t * hop / sr` — this must match what `time_scale`
+                // (sr/hop) assumes below when converting back to a frame index,
+                // not a duration evenly divided across all frames.
+                let frame_time = t as f32 * hop_f / sr_f;
                 let dphi_dt = s_time[[f, t]].im / mag;
-                let t_reassigned = times[t] - dphi_dt * hop_f / sr_f;
+                let t_reassigned = frame_time - dphi_dt * hop_f / sr_f;
                 let dphi_df = s_freq[[f, t]].im / mag;
                 let f_reassigned = freqs[f] + dphi_df * freq_scale;
 
@@ -601,7 +605,7 @@ fn cqt_impl(
             let phase = 2.0 * PI * fk * i as f32 / sr as f32;
             kernel[i] = Complex::new(window[i] * phase.cos(), window[i] * phase.sin()) / n as f32;
         }
-        fft.process(&mut kernel.to_vec());
+        fft.process(kernel.as_slice_mut().expect("kernel is contiguous"));
 
         for t in 0..n_frames {
             let stft_frame = s_stft.slice(s![.., t]);
@@ -701,7 +705,9 @@ fn icqt_impl(
     let n_samples = n_frames * hop_length;
     let mut y = vec![0.0; n_samples];
     let mut planner = FftPlanner::new();
+    let fft = planner.plan_fft_forward(n_fft);
     let ifft = planner.plan_fft_inverse(n_fft);
+    let inv_n = 1.0 / n_fft as f32;
 
     for k in 0..n_bins {
         let fk = fmin * 2.0f32.powf(k as f32 / bins_per_octave as f32);
@@ -712,14 +718,18 @@ fn icqt_impl(
             let phase = 2.0 * PI * fk * i as f32 / sr as f32;
             kernel[i] = Complex::new(window[i] * phase.cos(), window[i] * phase.sin()) / n as f32;
         }
-        ifft.process(&mut kernel.to_vec());
+        fft.process(kernel.as_slice_mut().expect("kernel is contiguous"));
 
         for t in 0..n_frames {
-            let mut frame = vec![Complex::new(c[[k, t]].re, c[[k, t]].im) * Complex::conj(&kernel[0]); n_fft];
+            // Approximate synthesis: the analysis kernel projected S onto C[k,t] via
+            // C = sum(S * conj(kernel_freq)), so the per-bin contribution to S is
+            // reconstructed as C[k,t] * kernel_freq, then transformed back to time domain.
+            let coeff = c[[k, t]];
+            let mut frame: Vec<Complex<f32>> = kernel.iter().map(|&kf| coeff * kf).collect();
             ifft.process(&mut frame);
             let start = t * hop_length;
             for i in 0..n.min(n_samples - start) {
-                y[start + i] += frame[i].re * window[i];
+                y[start + i] += frame[i].re * inv_n * window[i];
             }
         }
     }
@@ -838,7 +848,7 @@ fn hybrid_cqt_impl(
             let phase = 2.0 * PI * fk * i as f32 / sr as f32;
             kernel[i] = Complex::new(window[i] * phase.cos(), window[i] * phase.sin()) / n as f32;
         }
-        fft.process(&mut kernel.to_vec());
+        fft.process(kernel.as_slice_mut().expect("kernel is contiguous"));
 
         for t in 0..s_stft.shape()[1] {
             s_hybrid[[k, t]] = s_stft.slice(s![.., t]).iter().zip(kernel.iter()).map(|(&s, &k)| s * k.conj()).sum();
@@ -1057,7 +1067,7 @@ fn vqt_impl(
             let phase = 2.0 * PI * fk * i as f32 / sr as f32;
             kernel[i] = Complex::new(window[i] * phase.cos(), window[i] * phase.sin()) / n as f32;
         }
-        fft.process(&mut kernel.to_vec());
+        fft.process(kernel.as_slice_mut().expect("kernel is contiguous"));
 
         for t in 0..s_stft.shape()[1] {
             s_vqt[[k, t]] = s_stft.slice(s![.., t]).iter().zip(kernel.iter()).map(|(&s, &k)| s * k.conj()).sum();
@@ -1196,7 +1206,7 @@ fn fmt_impl(
 ///
 /// # Returns
 /// Returns a `Vec<f32>` containing the Hann window coefficients.
-fn hann_window(n: usize) -> Vec<f32> {
+pub(crate) fn hann_window(n: usize) -> Vec<f32> {
     (0..n).map(|i| 0.5 * (1.0 - (2.0 * PI * i as f32 / (n - 1) as f32).cos())).collect()
 }
 
@@ -1300,14 +1310,24 @@ fn butterworth_bandpass(lowcut: f32, highcut: f32, fs: f32, order: Option<usize>
         z_poles.push(pz);
     }
 
-    let mut b = vec![1.0];
+    // Poles were pushed as conjugate pairs (re, +im) then (re, -im); build a real
+    // quadratic section z^2 - 2*Re(p)*z + |p|^2 per pair so the denominator stays
+    // real-valued (using only `p.re` here would discard the pair's imaginary part
+    // and produce the wrong filter).
     let mut a = vec![1.0];
-    for p in &z_poles {
-        b = convolve(&b, &[1.0, -p.re]);
-        a = convolve(&a, &[1.0, -p.re]);
+    for pair in z_poles.chunks(2) {
+        let p = pair[0];
+        let re2 = 2.0 * p.re;
+        let mag2 = p.re * p.re + p.im * p.im;
+        a = convolve(&a, &[1.0, -re2, mag2]);
     }
+
+    // The bilinear transform of the analog bandpass numerator s^n maps the n-fold
+    // zero at s=0 to an n-fold zero at z=1 (DC), and the implicit n-fold zero at
+    // s=infinity to an n-fold zero at z=-1 (Nyquist): b(z) = (z^2 - 1)^n.
+    let mut b = vec![1.0];
     for _ in 0..n {
-        b = convolve(&b, &[1.0, 0.0]);
+        b = convolve(&b, &[1.0, 0.0, -1.0]);
     }
 
     let w_center = 2.0 * PI * (lowcut + highcut) / 2.0 / fs;
@@ -1467,11 +1487,18 @@ fn iirt_impl(
 fn filter(x: &[f32], b: &[f32], a: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
     for n in 0..x.len() {
-        let x1 = if n >= 1 { x[n - 1] } else { 0.0 };
-        let x2 = if n >= 2 { x[n - 2] } else { 0.0 };
-        let y1 = if n >= 1 { y[n - 1] } else { 0.0 };
-        let y2 = if n >= 2 { y[n - 2] } else { 0.0 };
-        y[n] = b[0] * x[n] + b[1] * x1 + b[2] * x2 - a[1] * y1 - a[2] * y2;
+        let mut acc = 0.0;
+        for (k, &bk) in b.iter().enumerate() {
+            if n >= k {
+                acc += bk * x[n - k];
+            }
+        }
+        for (k, &ak) in a.iter().enumerate().skip(1) {
+            if n >= k {
+                acc -= ak * y[n - k];
+            }
+        }
+        y[n] = acc / a[0];
     }
     y
 }

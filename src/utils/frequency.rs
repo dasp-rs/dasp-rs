@@ -406,7 +406,11 @@ pub fn note_to_hz(note: &[&str]) -> Vec<f32> {
 pub fn note_to_midi(note: &[&str], round_midi: Option<bool>) -> Vec<f32> {
     let note_map = [("C", 0), ("C#", 1), ("Db", 1), ("D", 2), ("D#", 3), ("Eb", 3), ("E", 4), ("F", 5), ("F#", 6), ("Gb", 6), ("G", 7), ("G#", 8), ("Ab", 8), ("A", 9), ("A#", 10), ("Bb", 10), ("B", 11)];
     note.iter().map(|&n| {
-        let (note_part, octave_part) = n.split_at(n.find(|c: char| c.is_ascii_digit()).unwrap_or(n.len()));
+        // Octave numbers may be negative in scientific pitch notation (e.g. "C-1"),
+        // so split on the first digit *or* minus sign, not just the first digit
+        // (note names themselves never contain '-').
+        let split_at = n.find(|c: char| c.is_ascii_digit() || c == '-').unwrap_or(n.len());
+        let (note_part, octave_part) = n.split_at(split_at);
         let note_val = note_map.iter().find(|&&(name, _)| name == note_part).map_or(0, |&(_, val)| val) as f32;
         let octave = octave_part.parse::<i32>().unwrap_or(4);
         let midi = note_val + (octave + 1) as f32 * 12.0;
@@ -481,7 +485,17 @@ pub fn hz_to_mel(frequencies: &[f32], htk: Option<bool>) -> Vec<f32> {
     if htk.unwrap_or(false) {
         frequencies.iter().map(|&f| 2595.0 * (1.0 + f / 700.0).log10()).collect()
     } else {
-        frequencies.iter().map(|&f| 1125.0 * (1.0 + f / 700.0).ln()).collect()
+        // Slaney-style mel scale: linear below 1 kHz, logarithmic above.
+        const F_SP: f32 = 200.0 / 3.0;
+        const MIN_LOG_HZ: f32 = 1000.0;
+        const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP;
+        let logstep = 6.4f32.ln() / 27.0;
+        frequencies
+            .iter()
+            .map(|&f| {
+                if f < MIN_LOG_HZ { f / F_SP } else { MIN_LOG_MEL + (f / MIN_LOG_HZ).ln() / logstep }
+            })
+            .collect()
     }
 }
 
@@ -527,7 +541,16 @@ pub fn mel_to_hz(mels: &[f32], htk: Option<bool>) -> Vec<f32> {
     if htk.unwrap_or(false) {
         mels.iter().map(|&m| 700.0 * (10.0f32.powf(m / 2595.0) - 1.0)).collect()
     } else {
-        mels.iter().map(|&m| 700.0 * (m / 1125.0).exp() - 700.0).collect()
+        // Inverse of the Slaney-style mel scale used in `hz_to_mel`.
+        const F_SP: f32 = 200.0 / 3.0;
+        const MIN_LOG_HZ: f32 = 1000.0;
+        const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP;
+        let logstep = 6.4f32.ln() / 27.0;
+        mels.iter()
+            .map(|&m| {
+                if m < MIN_LOG_MEL { F_SP * m } else { MIN_LOG_HZ * (logstep * (m - MIN_LOG_MEL)).exp() }
+            })
+            .collect()
     }
 }
 
@@ -728,7 +751,11 @@ pub(crate) fn mel_frequencies_impl(n_mels: usize, fmin: f32, fmax: f32) -> Vec<f
     mel_to_hz(&mel_steps.to_vec(), None)
 }
 
-/// Generates tempo-related frequency bins.
+/// Generates tempo bin values (in BPM) for an autocorrelation-lag tempogram.
+///
+/// Bin `i` of an autocorrelation tempogram corresponds to a lag of `i` frames,
+/// so its tempo is inversely proportional to `i`: `bpm = 60 * sr / (hop_length * i)`.
+/// Bin 0 (zero lag) has no finite tempo and is reported as `f32::INFINITY`.
 ///
 /// # Arguments
 /// * `n_bins` - Number of frequency bins
@@ -778,7 +805,9 @@ impl TempoFrequenciesBuilder {
 
 pub(crate) fn tempo_frequencies_impl(n_bins: usize, hop_length: usize, sr: u32) -> Vec<f32> {
     let frame_rate = sr as f32 / hop_length as f32;
-    Array1::linspace(0.0, frame_rate / 2.0, n_bins).mapv(|f| f * 60.0).to_vec()
+    (0..n_bins)
+        .map(|lag| if lag == 0 { f32::INFINITY } else { 60.0 * frame_rate / lag as f32 })
+        .collect()
 }
 
 /// Generates Fourier tempo frequency bins.
@@ -862,8 +891,9 @@ mod tests {
     fn tempo_and_fourier_bins_have_expected_scale() {
         let tempo = tempo_frequencies_impl(3, 512, 44_100);
         assert_eq!(tempo.len(), 3);
-        assert!(approx_eq(tempo[0], 0.0));
-        assert!(tempo[2] > tempo[1]);
+        assert!(tempo[0].is_infinite());
+        // Lag-based BPM decreases as lag increases (bin 2 lag > bin 1 lag).
+        assert!(tempo[2] < tempo[1]);
 
         let fourier = fourier_tempo_frequencies(Some(44_100));
         assert_eq!(fourier.len(), 256);

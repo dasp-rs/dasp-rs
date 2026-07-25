@@ -348,8 +348,12 @@ fn decode_audio<P: AsRef<Path>>(path: P) -> Result<(Vec<f32>, u32, u16), AudioEr
         }
         let decoded = match decoder.decode(&packet) {
             Ok(d) => d,
+            // A single malformed packet is recoverable; skip it and keep decoding.
             Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
-            Err(_) => break,
+            // Anything else (I/O failure, reset required, etc.) means the stream
+            // is no longer trustworthy — surface it instead of silently returning
+            // a shorter-than-expected `AudioData`.
+            Err(e) => return Err(AudioError::OpenError(format!("Decode failed: {e}"))),
         };
         let spec = *decoded.spec();
         let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
@@ -438,7 +442,10 @@ pub fn load<P: AsRef<Path>>(
 
     let mut samples = raw_samples[start..end].to_vec();
 
-    if samples.is_empty() && len != Some(0) {
+    // `duration` is validated to be strictly positive above, so a `len` that
+    // rounds down to 0 samples (a tiny duration at a low sample rate) is still
+    // a real request that couldn't be satisfied, not an intentional empty read.
+    if samples.is_empty() {
         return Err(AudioError::InsufficientData("No samples available".into()));
     }
 

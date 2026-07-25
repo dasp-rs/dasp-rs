@@ -257,8 +257,11 @@ fn cross_similarity_impl(
             c.mapv_inplace(|x| if x >= med { 1.0 } else { 0.0 });
         }
         (_, RecurrenceMode::Affinity) => {
+            // Matches `recurrence_matrix`'s default-bandwidth computation: zero
+            // distances (e.g. an identical query/reference pair) are excluded so
+            // the two functions agree when called on equivalent data.
             let bw = bandwidth.unwrap_or_else(|| {
-                let mut vals: Vec<f32> = c.iter().copied().collect();
+                let mut vals: Vec<f32> = c.iter().filter(|&&v| v > 0.0).copied().collect();
                 if vals.is_empty() { return 1.0; }
                 vals.sort_by(f32::total_cmp);
                 vals[vals.len() / 2]

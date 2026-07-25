@@ -354,7 +354,8 @@ fn advance_phase(delta_phase_unwrapped: &[f32], hop: usize, rate: f32) -> Array2
 ///
 /// # Parameters
 /// - `d`: Complex spectrogram as `Array2<Complex<f32>>`, shape `(n_bins, n_frames)`.
-/// - `rate`: Time stretching factor (>1 stretches, <1 compresses).
+/// - `rate`: Playback speed factor (>1 speeds up/compresses, producing fewer
+///   output frames; <1 slows down/stretches, producing more output frames).
 /// - `hop_length`: Optional hop length between frames; defaults to `n_fft / 4`.
 /// - `n_fft`: Optional FFT size; defaults to `(n_bins - 1) * 2`.
 ///

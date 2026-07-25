@@ -95,6 +95,12 @@ fn decompose_impl(
     if n_components == 0 {
         return Err(DecomposeError::InvalidInput("n_components must be > 0".into()));
     }
+    if n_components > n_bins.min(n_frames) {
+        return Err(DecomposeError::InvalidInput(format!(
+            "n_components ({n_components}) must not exceed the smaller dimension of S ({})",
+            n_bins.min(n_frames)
+        )));
+    }
 
     let mut w = nmf_init(n_bins, n_components, seed);
     let mut h = nmf_init(n_components, n_frames, seed.wrapping_add(1));

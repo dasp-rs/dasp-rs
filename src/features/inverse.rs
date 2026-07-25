@@ -418,23 +418,64 @@ fn mfcc_to_mel_impl(
 
     let n_frames = mfcc.shape()[1];
     let n_mfcc = mfcc.shape()[0];
+    let n = n_mels as f32;
     let mut mel = Array2::zeros((n_mels, n_frames));
     mel.axis_iter_mut(Axis(1))
         .into_par_iter()
         .enumerate()
         .for_each(|(t, mut col)| {
-            for n in 0..n_mels {
-                let mut sum = 0.0;
-                for k in 0..n_mfcc {
-                    let scale = if k == 0 {
-                        1.0 / (n_mels as f32).sqrt()
-                    } else {
-                        (2.0 / n_mels as f32).sqrt()
-                    };
-                    let theta = std::f32::consts::PI * k as f32 * (n as f32 + 0.5) / n_mels as f32;
-                    sum += scale * mfcc[[k, t]] * theta.cos();
-                }
-                col[n] = sum.max(0.0);
+            for out_n in 0..n_mels {
+                // `sum` is the reconstructed log mel-energy; it is legitimately
+                // negative whenever the true mel energy is below 1.0, so it must
+                // not be clamped before `exp()` (which is already always positive).
+                let sum = match dct_type {
+                    // Orthonormal inverse of a type-2 DCT: scaling on the input
+                    // (mfcc) index k.
+                    2 => (0..n_mfcc)
+                        .map(|k| {
+                            let ck = if k == 0 { 1.0 / n.sqrt() } else { (2.0 / n).sqrt() };
+                            let theta = std::f32::consts::PI * k as f32 * (out_n as f32 + 0.5) / n;
+                            ck * mfcc[[k, t]] * theta.cos()
+                        })
+                        .sum::<f32>(),
+                    // Orthonormal inverse of a type-3 DCT (= type-2 DCT forward):
+                    // scaling on the output (mel) index n.
+                    3 => {
+                        let cn = if out_n == 0 { 1.0 / n.sqrt() } else { (2.0 / n).sqrt() };
+                        cn * (0..n_mfcc)
+                            .map(|k| {
+                                let theta =
+                                    std::f32::consts::PI * (2.0 * k as f32 + 1.0) * out_n as f32 / (2.0 * n);
+                                mfcc[[k, t]] * theta.cos()
+                            })
+                            .sum::<f32>()
+                    }
+                    // Type-4 DCT is self-inverse (up to orthonormal scaling).
+                    4 => (2.0 / n).sqrt()
+                        * (0..n_mfcc)
+                            .map(|k| {
+                                let theta = std::f32::consts::PI * (2.0 * out_n as f32 + 1.0) * (2.0 * k as f32 + 1.0)
+                                    / (4.0 * n);
+                                mfcc[[k, t]] * theta.cos()
+                            })
+                            .sum::<f32>(),
+                    // Type-1 DCT is self-inverse (up to orthonormal scaling);
+                    // requires at least 2 coefficients.
+                    _ if n_mfcc >= 2 => {
+                        let nm1 = (n_mfcc - 1) as f32;
+                        let boundary = 0.5 * mfcc[[0, t]]
+                            + 0.5 * (-1.0f32).powi(out_n as i32) * mfcc[[n_mfcc - 1, t]];
+                        let mid: f32 = (1..n_mfcc - 1)
+                            .map(|k| {
+                                let theta = std::f32::consts::PI * k as f32 * out_n as f32 / nm1;
+                                mfcc[[k, t]] * theta.cos()
+                            })
+                            .sum();
+                        (2.0 / nm1).sqrt() * (boundary + mid)
+                    }
+                    _ => mfcc[[0, t]],
+                };
+                col[out_n] = sum;
             }
         });
     Ok(mel.mapv(f32::exp))

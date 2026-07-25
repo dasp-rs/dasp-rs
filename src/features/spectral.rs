@@ -874,13 +874,13 @@ pub fn melspectrogram(
             .mapv(|x| x.norm().powi(2)),
     };
 
-        let mel_f = mel_frequencies_impl(n_mels, fmin, fmax);
+        let mel_f = mel_frequencies_impl(n_mels + 2, fmin, fmax);
     let mut mel_s = Array2::zeros((n_mels, s.shape()[1]));
     let fft_f = fft_frequencies_impl(signal.sample_rate, n_fft);
     for m in 0..n_mels {
-        let f_low = if m == 0 { fmin } else { mel_f[m - 1] };
-        let f_center = mel_f[m];
-        let f_high = mel_f.get(m + 1).copied().unwrap_or(fmax);
+        let f_low = mel_f[m];
+        let f_center = mel_f[m + 1];
+        let f_high = mel_f[m + 2];
         for (bin, &f) in fft_f.iter().enumerate() {
             let weight = if f >= f_low && f <= f_high {
                 if f <= f_center {
@@ -1209,7 +1209,7 @@ pub fn spectral_bandwidth(
                 let dev = frame
                     .iter()
                     .zip(freqs.iter())
-                    .map(|(&s, &f)| s * (f - c).powi(p))
+                    .map(|(&s, &f)| s * (f - c).abs().powi(p))
                     .fold(0.0, |acc, x| acc + x)
                     / total;
                 dev.powf(1.0 / p as f32)
@@ -1252,6 +1252,12 @@ pub fn spectral_contrast(
     hop_length: Option<usize>,
     n_bands: Option<usize>,
 ) -> Result<Array2<f32>, SpectralError> {
+    // Standard (Jiang et al.) spectral contrast: mean of the top/bottom
+    // alpha-quantile in the log domain, not a single raw max/min (which
+    // is outlier-sensitive and not scale-invariant).
+    const ALPHA: f32 = 0.02;
+    const EPS: f32 = 1e-10;
+
     let n_fft = n_fft.unwrap_or(2048);
     let hop = hop_length.unwrap_or(n_fft / 4);
     let n_bands = n_bands.unwrap_or(6);
@@ -1298,8 +1304,10 @@ pub fn spectral_contrast(
             if !band.is_empty() {
                 let mut sorted = band;
                 sorted.sort_by(f32::total_cmp);
-                let peak = sorted[sorted.len() - 1];
-                let valley = sorted[0];
+                let idx = ((ALPHA * sorted.len() as f32).round() as usize).max(1).min(sorted.len());
+                let valley = sorted[..idx].iter().map(|v| (v + EPS).ln()).sum::<f32>() / idx as f32;
+                let peak =
+                    sorted[sorted.len() - idx..].iter().map(|v| (v + EPS).ln()).sum::<f32>() / idx as f32;
                 contrast[[b, t]] = peak - valley;
             }
         }
@@ -2670,7 +2678,10 @@ fn chroma_vqt_impl(
 /// Helper function for formant estimation.
 ///
 /// # Arguments
-/// * `coeffs` - Polynomial coefficients (highest degree first).
+/// * `coeffs` - Polynomial coefficients in ascending degree order (`coeffs[0]`
+///   is the constant term, `coeffs[coeffs.len() - 1]` is the leading/highest-degree
+///   coefficient). This matches the coefficient order produced by `lpc`, the only
+///   caller of this function.
 ///
 /// # Returns
 /// Returns `Result<Vec<Complex<f32>>, SpectralError>` containing complex roots.

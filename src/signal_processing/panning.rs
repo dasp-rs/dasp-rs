@@ -23,7 +23,10 @@ pub enum PanningError {
 /// Pans a mono signal across a stereo field.
 ///
 /// This function distributes a mono signal between left and right channels based on a
-/// pan value. A pan of -1.0 is fully left, 0.0 is center, and 1.0 is fully right.
+/// pan value, using an equal-power (constant loudness) pan law: gains follow
+/// `cos`/`sin` of the pan angle so `left² + right² == 1` everywhere, avoiding the
+/// "hole in the middle" dip a linear (amplitude-summing) pan law produces at
+/// center. A pan of -1.0 is fully left, 0.0 is center, and 1.0 is fully right.
 /// The signal must be mono (1 channel).
 ///
 /// # Arguments
@@ -34,16 +37,18 @@ pub enum PanningError {
 /// Returns `Result<AudioData, PanningError>` containing the stereo signal or an error.
 ///
 /// # Examples
-/// ```no_run
+/// ```
 /// use dasp_rs::proc::*;
 /// use dasp_rs::types::*;
 /// let signal = AudioData { samples: vec![1.0, 1.0], sample_rate: 44100, channels: 1 };
-/// let panned = stereo_pan(&signal, 0.0)?; // Center
-/// assert_eq!(panned.samples, vec![1.0, 1.0, 1.0, 1.0]); // Left, Right, Left, Right
+/// let panned = stereo_pan(&signal, 0.0)?; // Center: equal power, ~0.707 each side
+/// assert!((panned.samples[0] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5);
+/// assert!((panned.samples[1] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5);
 /// assert_eq!(panned.channels, 2);
 ///
 /// let panned_left = stereo_pan(&signal, -1.0)?; // Fully left
-/// assert_eq!(panned_left.samples, vec![1.0, 0.0, 1.0, 0.0]);
+/// assert!((panned_left.samples[0] - 1.0).abs() < 1e-5);
+/// assert!(panned_left.samples[1].abs() < 1e-5);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 /// # Errors
@@ -59,8 +64,9 @@ pub fn stereo_pan(signal: &AudioData, pan: f32) -> Result<AudioData, PanningErro
         ));
     }
 
-    let left_gain = (1.0 - pan) / 2.0;
-    let right_gain = f32::midpoint(pan, 1.0);
+    let theta = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
+    let left_gain = theta.cos();
+    let right_gain = theta.sin();
 
     let mut samples = Vec::with_capacity(signal.samples.len() * 2);
     for &sample in &signal.samples {
@@ -149,32 +155,27 @@ pub fn multi_channel_pan(
             }
         }
         6 => {
-            // 5.1: Front Left, Front Right, Center, LFE, Back Left, Back Right
-            if azimuth <= 45.0 {
-                gains[2] = 1.0 - azimuth / 45.0; // Center
-                gains[1] = azimuth / 45.0;       // FR
-            } else if azimuth <= 135.0 {
-                gains[1] = 1.0;                  // FR full from 45° to 135°
-            } else if azimuth <= 225.0 {
-                gains[1] = 1.0 - (azimuth - 135.0) / 90.0; // FR fades
-                gains[5] = (azimuth - 135.0) / 90.0;       // BR rises
-            } else if azimuth <= 315.0 {
-                gains[5] = 1.0 - (azimuth - 225.0) / 90.0; // BR fades
-                gains[4] = (azimuth - 225.0) / 90.0;       // BL rises
-            } else {
-                gains[4] = 1.0 - (azimuth - 315.0) / 45.0; // BL fades
-                gains[0] = (azimuth - 315.0) / 45.0;       // FL rises
+            // 5.1 (ITU speaker layout): pan between the two adjacent speakers that
+            // bracket `azimuth`, crossfading linearly. Channel order is
+            // [FL, FR, C, LFE, BL, BR]; LFE carries no directional signal.
+            const SPEAKERS: [(usize, f32); 5] =
+                [(2, 0.0), (1, 30.0), (5, 110.0), (4, 250.0), (0, 330.0)];
+            let n = SPEAKERS.len();
+            let mut lo = n - 1;
+            for (i, &(_, angle)) in SPEAKERS.iter().enumerate() {
+                if azimuth < angle {
+                    lo = if i == 0 { n - 1 } else { i - 1 };
+                    break;
+                }
             }
-            // Handle left side (270° to 360°)
-            if azimuth >= 315.0 {
-                gains[2] = (azimuth - 315.0) / 45.0; // Center fades in
-            } else if azimuth >= 225.0 {
-                gains[0] = (azimuth - 225.0) / 90.0; // FL
-            } else if (45.0..=135.0).contains(&azimuth) {
-                gains[0] = 0.0; // No FL contribution in this range
-            } else if azimuth <= 45.0 {
-                gains[0] = 0.0; // No FL at front center
-            }
+            let hi = (lo + 1) % n;
+            let (lo_ch, lo_angle) = SPEAKERS[lo];
+            let (hi_ch, hi_angle) = SPEAKERS[hi];
+            let span = if hi_angle > lo_angle { hi_angle - lo_angle } else { 360.0 - lo_angle + hi_angle };
+            let offset = if azimuth >= lo_angle { azimuth - lo_angle } else { 360.0 - lo_angle + azimuth };
+            let pan = (offset / span).clamp(0.0, 1.0);
+            gains[lo_ch] = 1.0 - pan;
+            gains[hi_ch] = pan;
             gains[3] = 0.0; // LFE always off
         }
         _ => return Err(PanningError::UnsupportedChannels(channels)),
