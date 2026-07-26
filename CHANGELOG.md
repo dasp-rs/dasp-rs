@@ -4,6 +4,47 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.5.1]
+
+### Fixed
+
+**Correctness audit** — a full-codebase review surfaced and fixed ~30 bugs where core
+algorithms silently computed the wrong result rather than an approximation, several
+cross-checked against a reference implementation:
+
+- `cqt` / `vqt` / `hybrid_cqt` / `icqt` — kernel FFT was a no-op, making all four
+  transforms numerically meaningless; `icqt` synthesis rewritten to a valid formula.
+- `tempo` / `tempogram` / `plp` — lag→BPM conversion used the wrong (Fourier-tempogram)
+  scale, and `tempogram` computed a single-sample product instead of a real windowed
+  autocorrelation; tempo estimation now restricts its search to a plausible BPM range.
+- `melspectrogram` — filterbank used the wrong number of edge points (disagreeing with
+  its own inverse) and was missing per-band area normalisation.
+- `hz_to_mel` / `mel_to_hz` — default (non-HTK) scale now uses the correct piecewise
+  formula instead of a restated HTK curve.
+- `a_weighting` / `b_weighting` / `c_weighting` / `d_weighting` — corrected formulas,
+  constants, and dB scaling.
+- `pcen` — `bias` parameter previously had no effect; defaults and smoothing coefficient
+  corrected.
+- `amplitude_to_db` / `power_to_db` — `top_db` clipping is now relative to the actual
+  signal max, not a fixed floor.
+- `lpc` — Levinson–Durbin recursion read partially-updated coefficients.
+- `iirt` — Butterworth bandpass filter design and application fixed; filter order is now
+  respected.
+- `spectral_contrast` — now uses the standard log/quantile definition with octave-doubling
+  bands, not raw max/min.
+- `multi_channel_pan` (5.1) — conflicting gain-assignment logic replaced with a consistent
+  adjacent-speaker pan law.
+- `stereo_pan` — switched to an equal-power pan law to remove the "hole in the middle" dip.
+- `mfcc_to_mel` — no longer destroys dynamic range via premature clamping; `dct_type` now
+  actually affects the result.
+- `pitch_tuning` — fixed incorrect wrapping of negative cent deviations.
+- `get_duration` — fixed channel-count mismatch vs `AudioData::duration()`.
+- Several smaller fixes: `spectral_bandwidth` NaN on odd exponents, `griffinlim` panic on
+  empty input and improved noise seeding, `onset_strength_multi` dropped top frequency
+  bins, `recurrence_matrix`/`cross_similarity` bandwidth inconsistency, `decompose`
+  (NMF) missing validation, silent truncation on mid-stream decode errors, `note_to_midi`
+  negative-octave parsing, and `polynomial_roots` doc/order mismatch.
+
 ## [0.5.0]
 
 ### Added
