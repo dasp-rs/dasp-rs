@@ -216,15 +216,15 @@ pub fn tempogram(
     };
 
     // Local (Hann-windowed) autocorrelation of the onset envelope around each
-    // frame `t`, for lags 0..=win/2. This is a real autocorrelation (a sum over
-    // the whole window), not a single-sample product.
+    // frame `t`, for lags 0..=win/2: window the local frame once, then
+    // autocorrelate the windowed frame — window each frame a single time before
+    // autocorrelating it; windowing the shifted term a second time is not a
+    // real autocorrelation.
     for t in 0..n_frames {
+        let windowed: Vec<f32> =
+            window.iter().enumerate().map(|(n, &w)| sample(t as isize - half as isize + n as isize) * w).collect();
         for lag in 0..=half {
-            let mut sum = 0.0;
-            for (n, &w) in window.iter().enumerate() {
-                let idx = t as isize - half as isize + n as isize;
-                sum += sample(idx) * w * sample(idx - lag as isize) * w;
-            }
+            let sum: f32 = (lag..win).map(|n| windowed[n] * windowed[n - lag]).sum();
             tempogram[[lag, t]] = sum;
         }
     }

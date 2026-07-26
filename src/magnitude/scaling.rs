@@ -457,10 +457,10 @@ pub fn a_weighting(
     compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let f4 = f2 * f2;
-        let num = 12194.0_f32.powi(2) * f4;
-        let den = (f2 + 20.6_f32.powi(2))
-            * (f2 + 12194.0_f32.powi(2))
-            * ((f2 + 107.7_f32.powi(2)) * (f2 + 737.9_f32.powi(2))).sqrt();
+        let num = 12_194.217_f32.powi(2) * f4;
+        let den = (f2 + 20.598_997_f32.powi(2))
+            * (f2 + 12_194.217_f32.powi(2))
+            * ((f2 + 107.652_65_f32.powi(2)) * (f2 + 737.862_23_f32.powi(2))).sqrt();
         20.0 * (num / den).log10() + 2.0
     })
 }
@@ -495,8 +495,9 @@ pub fn b_weighting(
     compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let f3 = f2 * f;
-        let num = 12194.0_f32.powi(2) * f3;
-        let den = (f2 + 20.6_f32.powi(2)) * (f2 + 158.5_f32.powi(2)).sqrt() * (f2 + 12194.0_f32.powi(2));
+        let num = 12_194.217_f32.powi(2) * f3;
+        let den =
+            (f2 + 20.598_997_f32.powi(2)) * (f2 + 158.5_f32.powi(2)).sqrt() * (f2 + 12_194.217_f32.powi(2));
         20.0 * (num / den).log10() + 0.17
     })
 }
@@ -530,9 +531,9 @@ pub fn c_weighting(
 ) -> Result<Vec<f32>, ScalingError> {
     compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
-        let num = 12194.0_f32.powi(2) * f2;
-        let den = (f2 + 20.6_f32.powi(2)) * (f2 + 12194.0_f32.powi(2));
-        20.0 * (num / den).log10() + 0.06
+        let num = 12_194.217_f32.powi(2) * f2;
+        let den = (f2 + 20.598_997_f32.powi(2)) * (f2 + 12_194.217_f32.powi(2));
+        20.0 * (num / den).log10() + 0.062
     })
 }
 
@@ -606,8 +607,8 @@ pub fn pcen(spectrogram: &Array2<f32>) -> PcenBuilder<'_> {
         spectrogram,
         sample_rate: 44_100,
         hop_length: 512,
-        gain: 0.8,
-        bias: 10.0,
+        gain: 0.98,
+        bias: 2.0,
     }
 }
 
@@ -636,14 +637,14 @@ impl PcenBuilder<'_> {
         self
     }
 
-    /// Gain exponent (default: 0.8).
+    /// Gain exponent (default: 0.98).
     #[must_use]
     pub fn gain(mut self, gain: f32) -> Self {
         self.gain = gain;
         self
     }
 
-    /// Bias added before exponentiation (default: 10.0).
+    /// Bias added before exponentiation (default: 2.0).
     #[must_use]
     pub fn bias(mut self, bias: f32) -> Self {
         self.bias = bias;
@@ -667,8 +668,8 @@ fn pcen_impl(
     bias: f32,
 ) -> Result<Array2<f32>, ScalingError> {
     const EPS: f32 = 1e-6;
-    const SMOOTH_COEF: f32 = 0.025;
     const POWER: f32 = 0.5;
+    const TIME_CONSTANT: f32 = 0.4;
 
     validate_spectrogram(spectrogram, "spectrogram")?;
     if gain < 0.0 || bias < 0.0 {
@@ -679,8 +680,13 @@ fn pcen_impl(
 
     let n_freqs = spectrogram.shape()[0];
     let n_frames = spectrogram.shape()[1];
-    let alpha = (-SMOOTH_COEF * sr as f32 / hop_length as f32).exp();
-    let one_minus_alpha = 1.0 - alpha;
+    // IIR smoothing coefficient derived from the time constant:
+    // `b = (sqrt(1 + 4T^2) - 1) / (2T^2)` where T is the time constant in
+    // frames, rather than a plain exponential-decay approximation.
+    let t_frames = TIME_CONSTANT * sr as f32 / hop_length as f32;
+    let b = ((1.0 + 4.0 * t_frames * t_frames).sqrt() - 1.0) / (2.0 * t_frames * t_frames);
+    let alpha = 1.0 - b;
+    let one_minus_alpha = b;
 
     let mut m = Array2::zeros((n_freqs, n_frames));
     for f in 0..n_freqs {
