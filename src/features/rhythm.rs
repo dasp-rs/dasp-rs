@@ -108,6 +108,12 @@ pub(crate) fn tempo_impl(
     onset_envelope: Option<&Array1<f32>>,
     hop_length: Option<usize>,
 ) -> Result<f32, RhythmError> {
+    // An autocorrelation is trivially maximal at lag 0, so the global argmax over
+    // all lags is meaningless for tempo estimation. Restrict the search to bins
+    // whose corresponding tempo falls within a plausible musical range.
+    const MIN_TEMPO: f32 = 30.0;
+    const MAX_TEMPO: f32 = 300.0;
+
     let sr = sr.unwrap_or(44100);
     let hop = hop_length.unwrap_or(512);
     let onset_owned = if let Some(envelope) = onset_envelope {
@@ -128,15 +134,24 @@ pub(crate) fn tempo_impl(
     let onset = &onset_owned;
     let tempogram = tempogram(None, Some(sr), Some(onset), hop_length, None)?;
     let freqs = crate::utils::frequency::tempo_frequencies_impl(tempogram.shape()[0], hop, sr);
+
+    let valid: Vec<usize> =
+        (0..freqs.len()).filter(|&i| freqs[i] >= MIN_TEMPO && freqs[i] <= MAX_TEMPO).collect();
+    if valid.is_empty() {
+        return Err(RhythmError::InvalidInput(
+            "No tempogram bins fall within the valid tempo range".to_string(),
+        ));
+    }
+
     Ok(tempogram
         .axis_iter(Axis(1))
         .map(|col| {
-            let max_idx = col
+            let best = valid
                 .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.total_cmp(b))
-                .map_or(0, |(i, _)| i);
-            freqs[max_idx]
+                .copied()
+                .max_by(|&a, &b| col[a].total_cmp(&col[b]))
+                .unwrap_or(valid[0]);
+            freqs[best]
         })
         .sum::<f32>()
         / tempogram.shape()[1] as f32)
@@ -191,11 +206,26 @@ pub fn tempogram(
         s.map_axis(Axis(0), |row| row.iter().map(|&x| x.max(0.0)).sum::<f32>())
     };
     let onset = &onset_owned;
-    let mut tempogram = Array2::zeros((win / 2 + 1, onset.len()));
-    for t in 0..onset.len() {
-        for lag in 0..=(win / 2) {
-            let past = (t as isize - lag as isize).max(0) as usize;
-            tempogram[[lag, t]] = onset[t] * onset[past];
+    let n_frames = onset.len();
+    let half = win / 2;
+    let window = crate::signal_processing::time_frequency::hann_window(win);
+    let mut tempogram = Array2::zeros((half + 1, n_frames));
+
+    let sample = |i: isize| -> f32 {
+        if i < 0 || i as usize >= n_frames { 0.0 } else { onset[i as usize] }
+    };
+
+    // Local (Hann-windowed) autocorrelation of the onset envelope around each
+    // frame `t`, for lags 0..=win/2: window the local frame once, then
+    // autocorrelate the windowed frame — window each frame a single time before
+    // autocorrelating it; windowing the shifted term a second time is not a
+    // real autocorrelation.
+    for t in 0..n_frames {
+        let windowed: Vec<f32> =
+            window.iter().enumerate().map(|(n, &w)| sample(t as isize - half as isize + n as isize) * w).collect();
+        for lag in 0..=half {
+            let sum: f32 = (lag..win).map(|n| windowed[n] * windowed[n - lag]).sum();
+            tempogram[[lag, t]] = sum;
         }
     }
     Ok(tempogram)
@@ -1058,7 +1088,9 @@ fn onset_strength_multi_impl(
 
     for band in 0..n_bands {
         let f_lo = band * band_size;
-        let f_hi = ((band + 1) * band_size).min(n_freqs);
+        // The last band absorbs any remainder from integer division, so all
+        // `n_freqs` bins are covered instead of the top few being silently dropped.
+        let f_hi = if band == n_bands - 1 { n_freqs } else { ((band + 1) * band_size).min(n_freqs) };
         if f_lo >= f_hi {
             continue;
         }

@@ -874,13 +874,17 @@ pub fn melspectrogram(
             .mapv(|x| x.norm().powi(2)),
     };
 
-        let mel_f = mel_frequencies_impl(n_mels, fmin, fmax);
+        let mel_f = mel_frequencies_impl(n_mels + 2, fmin, fmax);
     let mut mel_s = Array2::zeros((n_mels, s.shape()[1]));
     let fft_f = fft_frequencies_impl(signal.sample_rate, n_fft);
     for m in 0..n_mels {
-        let f_low = if m == 0 { fmin } else { mel_f[m - 1] };
-        let f_center = mel_f[m];
-        let f_high = mel_f.get(m + 1).copied().unwrap_or(fmax);
+        let f_low = mel_f[m];
+        let f_center = mel_f[m + 1];
+        let f_high = mel_f[m + 2];
+        // Slaney-style per-band area normalization: divide by bandwidth so each
+        // triangular filter has constant area, keeping energy roughly independent
+        // of filter width.
+        let enorm = 2.0 / (f_high - f_low);
         for (bin, &f) in fft_f.iter().enumerate() {
             let weight = if f >= f_low && f <= f_high {
                 if f <= f_center {
@@ -892,7 +896,7 @@ pub fn melspectrogram(
                 0.0
             };
             for t in 0..s.shape()[1] {
-                mel_s[[m, t]] += s[[bin, t]] * weight.max(0.0);
+                mel_s[[m, t]] += s[[bin, t]] * weight.max(0.0) * enorm;
             }
         }
     }
@@ -1209,7 +1213,7 @@ pub fn spectral_bandwidth(
                 let dev = frame
                     .iter()
                     .zip(freqs.iter())
-                    .map(|(&s, &f)| s * (f - c).powi(p))
+                    .map(|(&s, &f)| s * (f - c).abs().powi(p))
                     .fold(0.0, |acc, x| acc + x)
                     / total;
                 dev.powf(1.0 / p as f32)
@@ -1252,6 +1256,14 @@ pub fn spectral_contrast(
     hop_length: Option<usize>,
     n_bands: Option<usize>,
 ) -> Result<Array2<f32>, SpectralError> {
+    // Standard (Jiang et al.) definition: octave-doubling bands anchored at
+    // `fmin`, and peak/valley as the mean of the top/bottom alpha-quantile
+    // converted to dB (`10*log10(mean)`), not a single raw max/min
+    // (outlier-sensitive, not scale-invariant) nor a per-element log.
+    const ALPHA: f32 = 0.02;
+    const EPS: f32 = 1e-10;
+    const FMIN: f32 = 200.0;
+
     let n_fft = n_fft.unwrap_or(2048);
     let hop = hop_length.unwrap_or(n_fft / 4);
     let n_bands = n_bands.unwrap_or(6);
@@ -1277,17 +1289,16 @@ pub fn spectral_contrast(
     };
 
     let freqs = fft_frequencies_impl(signal.sample_rate, n_fft);
-    let band_edges = Array1::logspace(
-        2.0,
-        0.0,
-        f32::log2(signal.sample_rate as f32 / 2.0),
-        n_bands + 1,
-    );
+    // Octave-doubling band edges anchored at `fmin`: [0, fmin, 2*fmin, 4*fmin, ...].
+    let mut band_edges = vec![0.0f32; n_bands + 2];
+    for k in 0..=n_bands {
+        band_edges[k + 1] = FMIN * 2.0f32.powi(k as i32);
+    }
     let mut contrast = Array2::zeros((n_bands + 1, s.shape()[1]));
     for t in 0..s.shape()[1] {
         for b in 0..=n_bands {
-            let f_low = if b == 0 { 0.0 } else { band_edges[b - 1] };
-            let f_high = band_edges[b];
+            let f_low = band_edges[b];
+            let f_high = band_edges[b + 1];
             let slice = s.slice(s![.., t]);
             let band: Vec<f32> = slice
                 .iter()
@@ -1298,9 +1309,10 @@ pub fn spectral_contrast(
             if !band.is_empty() {
                 let mut sorted = band;
                 sorted.sort_by(f32::total_cmp);
-                let peak = sorted[sorted.len() - 1];
-                let valley = sorted[0];
-                contrast[[b, t]] = peak - valley;
+                let idx = ((ALPHA * sorted.len() as f32).round() as usize).max(1).min(sorted.len());
+                let valley_mean = sorted[..idx].iter().sum::<f32>() / idx as f32;
+                let peak_mean = sorted[sorted.len() - idx..].iter().sum::<f32>() / idx as f32;
+                contrast[[b, t]] = 10.0 * (peak_mean + EPS).log10() - 10.0 * (valley_mean + EPS).log10();
             }
         }
     }
@@ -2670,7 +2682,10 @@ fn chroma_vqt_impl(
 /// Helper function for formant estimation.
 ///
 /// # Arguments
-/// * `coeffs` - Polynomial coefficients (highest degree first).
+/// * `coeffs` - Polynomial coefficients in ascending degree order (`coeffs[0]`
+///   is the constant term, `coeffs[coeffs.len() - 1]` is the leading/highest-degree
+///   coefficient). This matches the coefficient order produced by `lpc`, the only
+///   caller of this function.
 ///
 /// # Returns
 /// Returns `Result<Vec<Complex<f32>>, SpectralError>` containing complex roots.

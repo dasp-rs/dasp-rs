@@ -22,7 +22,7 @@ use ndarray::Array2;
 /// assert_eq!(duration, 1.0); // 1 second
 /// ```
 pub fn get_duration(audio: &AudioData) -> f32 {
-    audio.samples.len() as f32 / audio.sample_rate as f32
+    audio.samples.len() as f32 / (f32::from(audio.channels) * audio.sample_rate as f32)
 }
 
 /// Calculates the duration of an audio file from its path.
