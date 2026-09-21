@@ -3,6 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/dasp-rs.svg)](https://crates.io/crates/dasp-rs)
 [![Documentation](https://docs.rs/dasp-rs/badge.svg)](https://docs.rs/dasp-rs)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22871122.svg)](https://doi.org/10.5281/zenodo.22871122)
 
 `dasp-rs` is a pure-Rust library for digital audio signal processing, analysis, and
 synthesis as a fast, dependency-light crate that builds with no
