@@ -10,10 +10,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Sine tone ────────────────────────────────────────────────────────────
     // tone(frequency_hz, sample_rate) → ToneBuilder
     let y_tone = tone(440.0, sr)
-        .duration(1.0)   // seconds (default 1.0)
-        .phase(0.0)      // initial phase in radians (default 0.0)
+        .duration(1.0) // seconds (default 1.0)
+        .phase(0.0) // initial phase in radians (default 0.0)
         .compute();
-    println!("Tone 440 Hz: {} samples, peak {:.4}", y_tone.len(), peak(&y_tone));
+    println!(
+        "Tone 440 Hz: {} samples, peak {:.4}",
+        y_tone.len(),
+        peak(&y_tone)
+    );
 
     // A 1 kHz tone, half a second
     let y_1k = tone(1000.0, sr).duration(0.5).compute();
@@ -21,19 +25,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Chirp (linear frequency sweep) ──────────────────────────────────────
     // chirp(fmin_hz, fmax_hz, sample_rate) → ChirpBuilder
-    let y_chirp = chirp(200.0, 4000.0, sr)
-        .duration(2.0)
-        .compute();
-    println!("Chirp 200→4000 Hz: {} samples, peak {:.4}", y_chirp.len(), peak(&y_chirp));
+    let y_chirp = chirp(200.0, 4000.0, sr).duration(2.0).compute();
+    println!(
+        "Chirp 200→4000 Hz: {} samples, peak {:.4}",
+        y_chirp.len(),
+        peak(&y_chirp)
+    );
 
     // ── Click track ──────────────────────────────────────────────────────────
     // clicks() → ClicksBuilder — specify either seconds or frame indices
     let beat_times = [0.0_f32, 0.5, 1.0, 1.5, 2.0];
-    let y_clicks = clicks()
-        .times(&beat_times)
-        .sample_rate(sr)
-        .compute()?;
-    println!("Click track: {} samples for {} beats", y_clicks.len(), beat_times.len());
+    let y_clicks = clicks().times(&beat_times).sample_rate(sr).compute()?;
+    println!(
+        "Click track: {} samples for {} beats",
+        y_clicks.len(),
+        beat_times.len()
+    );
 
     // Clicks from frame indices (e.g. beat frames from beat tracking)
     let beat_frames = [0_usize, 22, 44, 66, 88];

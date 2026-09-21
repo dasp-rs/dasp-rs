@@ -1,8 +1,8 @@
 use ndarray::Array2;
 use thiserror::Error;
 
-use crate::signal_processing::time_frequency::stft;
 use crate::core::AudioError;
+use crate::signal_processing::time_frequency::stft;
 use crate::utils::frequency::fft_frequencies_impl;
 
 /// Errors specific to pitch and tuning operations.
@@ -359,7 +359,11 @@ fn estimate_tuning_impl(
         }
     }
 
-    Ok(if total_weight > 1e-6 { total_deviation / total_weight } else { 0.0 })
+    Ok(if total_weight > 1e-6 {
+        total_deviation / total_weight
+    } else {
+        0.0
+    })
 }
 
 /// Estimates tuning deviation from a list of frequencies.
@@ -409,7 +413,11 @@ pub fn pitch_tuning(frequencies: &[f32], resolution: Option<f32>) -> Result<f32,
         // sign of the dividend), so this correctly wraps into [-resolution/2, resolution/2)
         // for both sharp (positive) and flat (negative) deviations.
         let r = cents.rem_euclid(resolution);
-        total_deviation += if r > resolution / 2.0 { r - resolution } else { r };
+        total_deviation += if r > resolution / 2.0 {
+            r - resolution
+        } else {
+            r
+        };
     }
 
     Ok(total_deviation / valid_freqs.len() as f32)
@@ -498,7 +506,11 @@ impl<'a> PiptrackBuilder<'a> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<(Array2<f32>, Array2<f32>), TuningError> {
-        let signal = if self.spectrogram.is_some() { None } else { Some(self.signal) };
+        let signal = if self.spectrogram.is_some() {
+            None
+        } else {
+            Some(self.signal)
+        };
         piptrack_impl(
             signal,
             Some(self.sample_rate),
@@ -531,7 +543,11 @@ fn piptrack_impl(
     let mut pitches = Array2::zeros(s.dim());
     let mut mags = Array2::zeros(s.dim());
     // Precompute frequency bin width (constant for all frames)
-    let freq_bin_width = if freqs.len() > 1 { freqs[1] - freqs[0] } else { 0.0 };
+    let freq_bin_width = if freqs.len() > 1 {
+        freqs[1] - freqs[0]
+    } else {
+        0.0
+    };
 
     for t in 0..s.shape()[1] {
         let frame = s.column(t);
@@ -543,7 +559,11 @@ fn piptrack_impl(
         {
             let peak_mag = frame[max_idx];
             if peak_mag > 1e-6 {
-                let left = if max_idx > 0 { frame[max_idx - 1] } else { peak_mag };
+                let left = if max_idx > 0 {
+                    frame[max_idx - 1]
+                } else {
+                    peak_mag
+                };
                 let right = if max_idx < frame.len() - 1 {
                     frame[max_idx + 1]
                 } else {
@@ -648,7 +668,11 @@ fn compute_pyin_frame(
         0.0
     };
 
-    if pitch >= fmin && pitch <= fmax { pitch } else { 0.0 }
+    if pitch >= fmin && pitch <= fmax {
+        pitch
+    } else {
+        0.0
+    }
 }
 
 fn compute_yin_frame(
@@ -669,7 +693,11 @@ fn compute_yin_frame(
         0.0
     };
 
-    if pitch >= fmin && pitch <= fmax { pitch } else { 0.0 }
+    if pitch >= fmin && pitch <= fmax {
+        pitch
+    } else {
+        0.0
+    }
 }
 
 fn compute_spectrogram(

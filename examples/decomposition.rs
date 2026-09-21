@@ -49,7 +49,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
             .map(|(i, _)| i)
             .unwrap_or(0);
-        println!("  Component {k}: peak at bin {peak_bin} ({:.1} Hz)", peak_bin as f32 * bin_hz);
+        println!(
+            "  Component {k}: peak at bin {peak_bin} ({:.1} Hz)",
+            peak_bin as f32 * bin_hz
+        );
     }
 
     Ok(())

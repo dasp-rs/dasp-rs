@@ -73,7 +73,11 @@ impl GriffinLimBuilder<'_> {
 }
 
 /// Internal Griffin-Lim implementation.
-fn griffinlim_impl(s: &Array2<f32>, n_iter: usize, hop_length: Option<usize>) -> Result<Vec<f32>, PhaseRecoveryError> {
+fn griffinlim_impl(
+    s: &Array2<f32>,
+    n_iter: usize,
+    hop_length: Option<usize>,
+) -> Result<Vec<f32>, PhaseRecoveryError> {
     if s.shape()[0] == 0 || s.shape()[1] == 0 {
         return Err(PhaseRecoveryError::ComputationFailed(
             "Empty magnitude spectrogram".into(),
@@ -84,21 +88,30 @@ fn griffinlim_impl(s: &Array2<f32>, n_iter: usize, hop_length: Option<usize>) ->
     let signal_len = hop * (s.shape()[1] - 1) + n_fft;
     // Deterministic pseudo-random initialization avoids phase-lock artifacts
     // (matches the CQT variant's seeding strategy below).
-    let mut y: Vec<f32> = (0..signal_len).map(|i| (i as f32 * 0.031_415_93).sin() * 0.01).collect();
+    let mut y: Vec<f32> = (0..signal_len)
+        .map(|i| (i as f32 * 0.031_415_93).sin() * 0.01)
+        .collect();
     for _ in 0..n_iter {
         let stft_y = crate::signal_processing::time_frequency::stft(&y)
             .n_fft(n_fft)
             .hop_length(hop)
             .compute()
-            .map_err(|e| PhaseRecoveryError::ComputationFailed(format!("STFT computation failed: {e}")))?;
-        let (mut mag, mut phase) = crate::signal_processing::time_frequency::magphase(&stft_y, None);
+            .map_err(|e| {
+                PhaseRecoveryError::ComputationFailed(format!("STFT computation failed: {e}"))
+            })?;
+        let (mut mag, mut phase) =
+            crate::signal_processing::time_frequency::magphase(&stft_y, None);
         // Griffin-Lim: replace magnitude with target magnitude, keep phase from current estimate
         for ((i, j), m) in mag.indexed_iter_mut() {
-            *m = s[[i, j]];  // Use given magnitude directly (not sqrt, as s is already magnitude)
+            *m = s[[i, j]]; // Use given magnitude directly (not sqrt, as s is already magnitude)
             let p = &mut phase[[i, j]];
             let norm = p.norm();
             if m.abs() > 1e-10 {
-                *p = if norm > 1e-10 { *p / norm } else { Complex::new(1.0, 0.0) };
+                *p = if norm > 1e-10 {
+                    *p / norm
+                } else {
+                    Complex::new(1.0, 0.0)
+                };
             }
         }
         // Create complex spectrogram: magnitude * phase (element-wise)
@@ -174,7 +187,13 @@ impl GriffinLimCqtBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn griffinlim_cqt(c_mag: &Array2<f32>, sr: u32) -> GriffinLimCqtBuilder<'_> {
-    GriffinLimCqtBuilder { c_mag, sr, n_iter: 32, hop_length: 512, fmin: 32.70 }
+    GriffinLimCqtBuilder {
+        c_mag,
+        sr,
+        n_iter: 32,
+        hop_length: 512,
+        fmin: 32.70,
+    }
 }
 
 fn griffinlim_cqt_impl(
@@ -213,10 +232,7 @@ fn griffinlim_cqt_impl(
         let (_mag, phase) = magphase(&c, None);
 
         // Replace magnitude with the target while keeping the current phase.
-        let (nk, nf) = (
-            n_bins.min(phase.shape()[0]),
-            n_frames.min(phase.shape()[1]),
-        );
+        let (nk, nf) = (n_bins.min(phase.shape()[0]), n_frames.min(phase.shape()[1]));
         let mut c_new = Array2::from_elem(phase.raw_dim(), Complex::new(0.0_f32, 0.0));
         for k in 0..nk {
             for t in 0..nf {
@@ -249,7 +265,11 @@ mod tests {
     fn test_griffinlim_cqt_smoke() {
         let mag = Array2::from_elem((12, 20), 0.1_f32);
         let result = griffinlim_cqt_impl(&mag, 44100, 2, 512, 32.7);
-        assert!(result.is_ok(), "griffinlim_cqt should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "griffinlim_cqt should succeed: {:?}",
+            result.err()
+        );
         let y = result.unwrap();
         assert!(!y.is_empty());
     }

@@ -19,7 +19,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ref_val(1.0)
         .top_db(80.0)
         .compute()?;
-    println!("Amplitude dB: {:?}, min={:.1}", db_amp.shape(), db_amp.iter().copied().fold(f32::INFINITY, f32::min));
+    println!(
+        "Amplitude dB: {:?}, min={:.1}",
+        db_amp.shape(),
+        db_amp.iter().copied().fold(f32::INFINITY, f32::min)
+    );
 
     // ── Power → dB ───────────────────────────────────────────────────────────
     // power_to_db(P) ≈ 10 log₁₀(P / ref)
@@ -38,7 +42,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Perceptual weighting ─────────────────────────────────────────────────
     // a_weighting takes a frequency slice; use fft_frequencies() to build it.
-    let freqs = util::fft_frequencies().sample_rate(sr).n_fft(2048).compute();
+    let freqs = util::fft_frequencies()
+        .sample_rate(sr)
+        .n_fft(2048)
+        .compute();
     let a_weights = mag::a_weighting(&freqs, None)?;
     println!("A-weights:    {} bins", a_weights.len());
 
@@ -50,7 +57,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── PCEN (Per-Channel Energy Normalisation) ───────────────────────────────
     // Replaces log-mel compression; more robust to level variation.
     // Builder setters: .gain(), .bias(), .hop_length(), .sample_rate()
-    let mel = feat::spectral(&y, sr).n_fft(2048).hop_length(512).melspectrogram()?;
+    let mel = feat::spectral(&y, sr)
+        .n_fft(2048)
+        .hop_length(512)
+        .melspectrogram()?;
     let pcen = mag::pcen(&mel)
         .gain(0.98)
         .bias(2.0)

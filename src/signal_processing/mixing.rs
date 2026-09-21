@@ -184,7 +184,11 @@ pub fn multi_channel_mix(signals: &[&AudioData], channels: u16) -> Result<AudioD
 /// # Errors
 /// Returns an error if the input is invalid (e.g., empty signal or
 /// out-of-range parameters) or if the computation cannot be completed.
-pub fn dry_wet_mix(dry: &AudioData, wet: &AudioData, wet_mix: f32) -> Result<AudioData, MixingError> {
+pub fn dry_wet_mix(
+    dry: &AudioData,
+    wet: &AudioData,
+    wet_mix: f32,
+) -> Result<AudioData, MixingError> {
     if !(0.0..=1.0).contains(&wet_mix) {
         return Err(MixingError::InvalidParameter(
             "Wet mix must be between 0.0 and 1.0".to_string(),

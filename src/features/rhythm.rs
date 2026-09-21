@@ -1,5 +1,5 @@
-use ndarray::{s, Array1, Array2, Axis};
 use crate::signal_processing::time_frequency::stft;
+use ndarray::{Array1, Array2, Axis, s};
 use thiserror::Error;
 
 /// Tempo analysis builder for method chaining (internal use only).
@@ -71,7 +71,7 @@ pub enum RhythmError {
     /// Invalid input parameters or data.
     #[error("Invalid input: {0}")]
     InvalidInput(String),
-    
+
     /// Computation failed during processing.
     #[error("Computation failed: {0}")]
     ComputationFailed(String),
@@ -135,8 +135,9 @@ pub(crate) fn tempo_impl(
     let tempogram = tempogram(None, Some(sr), Some(onset), hop_length, None)?;
     let freqs = crate::utils::frequency::tempo_frequencies_impl(tempogram.shape()[0], hop, sr);
 
-    let valid: Vec<usize> =
-        (0..freqs.len()).filter(|&i| freqs[i] >= MIN_TEMPO && freqs[i] <= MAX_TEMPO).collect();
+    let valid: Vec<usize> = (0..freqs.len())
+        .filter(|&i| freqs[i] >= MIN_TEMPO && freqs[i] <= MAX_TEMPO)
+        .collect();
     if valid.is_empty() {
         return Err(RhythmError::InvalidInput(
             "No tempogram bins fall within the valid tempo range".to_string(),
@@ -212,7 +213,11 @@ pub fn tempogram(
     let mut tempogram = Array2::zeros((half + 1, n_frames));
 
     let sample = |i: isize| -> f32 {
-        if i < 0 || i as usize >= n_frames { 0.0 } else { onset[i as usize] }
+        if i < 0 || i as usize >= n_frames {
+            0.0
+        } else {
+            onset[i as usize]
+        }
     };
 
     // Local (Hann-windowed) autocorrelation of the onset envelope around each
@@ -221,8 +226,11 @@ pub fn tempogram(
     // autocorrelating it; windowing the shifted term a second time is not a
     // real autocorrelation.
     for t in 0..n_frames {
-        let windowed: Vec<f32> =
-            window.iter().enumerate().map(|(n, &w)| sample(t as isize - half as isize + n as isize) * w).collect();
+        let windowed: Vec<f32> = window
+            .iter()
+            .enumerate()
+            .map(|(n, &w)| sample(t as isize - half as isize + n as isize) * w)
+            .collect();
         for lag in 0..=half {
             let sum: f32 = (lag..win).map(|n| windowed[n] * windowed[n - lag]).sum();
             tempogram[[lag, t]] = sum;
@@ -327,7 +335,11 @@ impl OnsetStrengthBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn onset_strength(y: &[f32], _sr: u32) -> OnsetStrengthBuilder<'_> {
-    OnsetStrengthBuilder { y, hop_length: 512, n_fft: 2048 }
+    OnsetStrengthBuilder {
+        y,
+        hop_length: 512,
+        n_fft: 2048,
+    }
 }
 
 fn onset_strength_impl(
@@ -404,7 +416,11 @@ impl OnsetDetectBuilder<'_> {
     /// Returns an error if the signal is empty or STFT computation fails.
     pub fn compute(self) -> Result<Vec<usize>, RhythmError> {
         let odf = onset_strength_impl(self.y, self.hop_length, self.n_fft)?;
-        Ok(onset_detect_impl(odf.as_slice().unwrap_or(&[]), self.delta, self.wait))
+        Ok(onset_detect_impl(
+            odf.as_slice().unwrap_or(&[]),
+            self.delta,
+            self.wait,
+        ))
     }
 
     /// Detect onset times in seconds.
@@ -415,7 +431,10 @@ impl OnsetDetectBuilder<'_> {
         let hop = self.hop_length;
         let sr = self.sr;
         let frames = self.compute()?;
-        Ok(frames.into_iter().map(|f| f as f32 * hop as f32 / sr as f32).collect())
+        Ok(frames
+            .into_iter()
+            .map(|f| f as f32 * hop as f32 / sr as f32)
+            .collect())
     }
 }
 
@@ -432,7 +451,14 @@ impl OnsetDetectBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn onset_detect(y: &[f32], sr: u32) -> OnsetDetectBuilder<'_> {
-    OnsetDetectBuilder { y, sr, hop_length: 512, n_fft: 2048, delta: 0.07, wait: 1 }
+    OnsetDetectBuilder {
+        y,
+        sr,
+        hop_length: 512,
+        n_fft: 2048,
+        delta: 0.07,
+        wait: 1,
+    }
 }
 
 fn onset_detect_impl(odf: &[f32], delta: f32, wait: usize) -> Vec<usize> {
@@ -520,7 +546,13 @@ impl BeatTrackBuilder<'_> {
     /// # Errors
     /// Returns an error if the signal is empty or STFT computation fails.
     pub fn compute(self) -> Result<(f32, Vec<usize>), RhythmError> {
-        beat_track_impl(self.y, self.sr, self.hop_length, self.start_bpm, self.tightness)
+        beat_track_impl(
+            self.y,
+            self.sr,
+            self.hop_length,
+            self.start_bpm,
+            self.tightness,
+        )
     }
 }
 
@@ -538,7 +570,13 @@ impl BeatTrackBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn beat_track(y: &[f32], sr: u32) -> BeatTrackBuilder<'_> {
-    BeatTrackBuilder { y, sr, hop_length: 512, start_bpm: 120.0, tightness: 100.0 }
+    BeatTrackBuilder {
+        y,
+        sr,
+        hop_length: 512,
+        start_bpm: 120.0,
+        tightness: 100.0,
+    }
 }
 
 fn beat_track_impl(
@@ -556,7 +594,8 @@ fn beat_track_impl(
     let beat_frames = dp_beat_track(odf.as_slice().unwrap_or(&[]), period, tightness);
 
     let final_bpm = if beat_frames.len() >= 2 {
-        let mut ibis: Vec<f32> = beat_frames.windows(2)
+        let mut ibis: Vec<f32> = beat_frames
+            .windows(2)
             .map(|w| (w[1] - w[0]) as f32)
             .collect();
         let median_ibi = median_f32(&mut ibis);
@@ -608,7 +647,8 @@ fn dp_beat_track(odf: &[f32], period: f32, tightness: f32) -> Vec<usize> {
         }
     }
 
-    let last = score.iter()
+    let last = score
+        .iter()
         .enumerate()
         .max_by(|(_, a), (_, b)| a.total_cmp(b))
         .map_or_else(|| n.saturating_sub(1), |(i, _)| i);
@@ -709,7 +749,12 @@ impl BeatSyncBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn beat_sync<'a>(data: &'a Array2<f32>, beat_frames: &'a [usize]) -> BeatSyncBuilder<'a> {
-    BeatSyncBuilder { data, beat_frames, aggregate: Aggregate::Mean, pad: true }
+    BeatSyncBuilder {
+        data,
+        beat_frames,
+        aggregate: Aggregate::Mean,
+        pad: true,
+    }
 }
 
 fn beat_sync_impl(
@@ -853,7 +898,14 @@ impl PlpBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn plp(y: &[f32], sr: u32) -> PlpBuilder<'_> {
-    PlpBuilder { y, sr, hop_length: 512, win_length: 384, min_tempo: 30.0, max_tempo: 300.0 }
+    PlpBuilder {
+        y,
+        sr,
+        hop_length: 512,
+        win_length: 384,
+        min_tempo: 30.0,
+        max_tempo: 300.0,
+    }
 }
 
 fn plp_impl(
@@ -871,7 +923,13 @@ fn plp_impl(
     }
 
     // Autocorrelation tempogram
-    let tgram = tempogram(None, Some(sr), Some(&odf), Some(hop_length), Some(win_length))?;
+    let tgram = tempogram(
+        None,
+        Some(sr),
+        Some(&odf),
+        Some(hop_length),
+        Some(win_length),
+    )?;
     let n_bins = tgram.shape()[0];
 
     let freqs = crate::utils::frequency::tempo_frequencies_impl(n_bins, hop_length, sr);
@@ -937,10 +995,16 @@ pub struct FourierTempogramBuilder<'a> {
 impl FourierTempogramBuilder<'_> {
     /// Hop length in samples (default: 512).
     #[must_use]
-    pub fn hop_length(mut self, v: usize) -> Self { self.hop_length = v; self }
+    pub fn hop_length(mut self, v: usize) -> Self {
+        self.hop_length = v;
+        self
+    }
     /// Analysis window length (default: 384 frames ≈ 8.7 s at 512-sample hop).
     #[must_use]
-    pub fn win_length(mut self, v: usize) -> Self { self.win_length = v; self }
+    pub fn win_length(mut self, v: usize) -> Self {
+        self.win_length = v;
+        self
+    }
 
     /// Compute the Fourier tempogram.
     ///
@@ -972,7 +1036,12 @@ impl FourierTempogramBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn fourier_tempogram(y: &[f32], sr: u32) -> FourierTempogramBuilder<'_> {
-    FourierTempogramBuilder { y, sr, hop_length: 512, win_length: 384 }
+    FourierTempogramBuilder {
+        y,
+        sr,
+        hop_length: 512,
+        win_length: 384,
+    }
 }
 
 fn fourier_tempogram_impl(
@@ -1013,13 +1082,22 @@ pub struct OnsetStrengthMultiBuilder<'a> {
 impl OnsetStrengthMultiBuilder<'_> {
     /// Number of frequency subbands (default: 6).
     #[must_use]
-    pub fn n_bands(mut self, v: usize) -> Self { self.n_bands = v; self }
+    pub fn n_bands(mut self, v: usize) -> Self {
+        self.n_bands = v;
+        self
+    }
     /// Hop length in samples (default: 512).
     #[must_use]
-    pub fn hop_length(mut self, v: usize) -> Self { self.hop_length = v; self }
+    pub fn hop_length(mut self, v: usize) -> Self {
+        self.hop_length = v;
+        self
+    }
     /// FFT size (default: 2048).
     #[must_use]
-    pub fn n_fft(mut self, v: usize) -> Self { self.n_fft = v; self }
+    pub fn n_fft(mut self, v: usize) -> Self {
+        self.n_fft = v;
+        self
+    }
 
     /// Compute the multi-band onset strength matrix of shape `(n_bands, n_frames)`.
     ///
@@ -1048,7 +1126,12 @@ impl OnsetStrengthMultiBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn onset_strength_multi(y: &[f32], _sr: u32) -> OnsetStrengthMultiBuilder<'_> {
-    OnsetStrengthMultiBuilder { y, n_bands: 6, hop_length: 512, n_fft: 2048 }
+    OnsetStrengthMultiBuilder {
+        y,
+        n_bands: 6,
+        hop_length: 512,
+        n_fft: 2048,
+    }
 }
 
 fn onset_strength_multi_impl(
@@ -1090,7 +1173,11 @@ fn onset_strength_multi_impl(
         let f_lo = band * band_size;
         // The last band absorbs any remainder from integer division, so all
         // `n_freqs` bins are covered instead of the top few being silently dropped.
-        let f_hi = if band == n_bands - 1 { n_freqs } else { ((band + 1) * band_size).min(n_freqs) };
+        let f_hi = if band == n_bands - 1 {
+            n_freqs
+        } else {
+            ((band + 1) * band_size).min(n_freqs)
+        };
         if f_lo >= f_hi {
             continue;
         }

@@ -116,7 +116,11 @@ pub fn attenuate(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeEr
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn normalize(signal: &AudioData, target: f32) -> NormalizeBuilder<'_> {
-    NormalizeBuilder { signal, target, mode: NormalizeMode::Peak }
+    NormalizeBuilder {
+        signal,
+        target,
+        mode: NormalizeMode::Peak,
+    }
 }
 
 /// Normalization strategy for [`normalize`].
@@ -186,7 +190,8 @@ fn normalize_impl(
             target / max_amplitude
         }
         NormalizeMode::Rms => {
-            let rms = (signal.samples.iter().map(|&s| s * s).sum::<f32>() / signal.samples.len() as f32)
+            let rms = (signal.samples.iter().map(|&s| s * s).sum::<f32>()
+                / signal.samples.len() as f32)
                 .sqrt();
             if rms == 0.0 {
                 return Err(AmplitudeError::InvalidSignal(

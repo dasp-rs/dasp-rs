@@ -9,11 +9,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y = tone(440.0, sr).duration(1.0).compute();
 
     // ── STFT / ISTFT ─────────────────────────────────────────────────────────
-    let spec = proc::stft(&y)
-        .n_fft(2048)
-        .hop_length(512)
-        .compute()?;
-    println!("STFT:          {} bins × {} frames", spec.nrows(), spec.ncols());
+    let spec = proc::stft(&y).n_fft(2048).hop_length(512).compute()?;
+    println!(
+        "STFT:          {} bins × {} frames",
+        spec.nrows(),
+        spec.ncols()
+    );
 
     // istft returns Vec<f32> directly (no Result)
     let y_rec = proc::istft(&spec).hop_length(512).compute();
@@ -38,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── CQT / ICQT ───────────────────────────────────────────────────────────
     let c = proc::cqt(&y, sr)
         .hop_length(512)
-        .n_bins(84)   // 7 octaves × 12 bins/octave
+        .n_bins(84) // 7 octaves × 12 bins/octave
         .compute()?;
     println!("CQT:           {} bins × {} frames", c.nrows(), c.ncols());
 

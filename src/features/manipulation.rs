@@ -132,7 +132,11 @@ fn temporal_kurtosis_impl(
         let mean = frame.iter().sum::<f32>() / frame.len() as f32;
         let m2 = frame.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / frame.len() as f32;
         let m4 = frame.iter().map(|&x| (x - mean).powi(4)).sum::<f32>() / frame.len() as f32;
-        kurtosis[i] = if m2 > 1e-10 { m4 / m2.powi(2) - 3.0 } else { 0.0 };
+        kurtosis[i] = if m2 > 1e-10 {
+            m4 / m2.powi(2) - 3.0
+        } else {
+            0.0
+        };
     }
     Ok(kurtosis)
 }
@@ -195,11 +199,7 @@ impl ZeroCrossingRateBuilder<'_> {
 }
 
 /// Internal zero-crossing rate implementation.
-fn zero_crossing_rate_impl(
-    y: &[f32],
-    frame_length: usize,
-    hop_length: usize,
-) -> Array1<f32> {
+fn zero_crossing_rate_impl(y: &[f32], frame_length: usize, hop_length: usize) -> Array1<f32> {
     let frame_len = frame_length;
     let hop = hop_length;
     if frame_len == 0 || hop == 0 || y.len() < frame_len {

@@ -173,9 +173,7 @@ impl ToneBuilder {
 fn tone_impl(frequency: f32, sr: u32, duration: f32, phase: f32) -> Vec<f32> {
     let len = (duration * sr as f32) as usize;
     (0..len)
-        .map(|n| {
-            (2.0 * std::f32::consts::PI * frequency * n as f32 / sr as f32 + phase).cos()
-        })
+        .map(|n| (2.0 * std::f32::consts::PI * frequency * n as f32 / sr as f32 + phase).cos())
         .collect()
 }
 
@@ -256,11 +254,20 @@ mod tests {
 
     #[test]
     fn clicks_from_times_and_frames() {
-        let signal = clicks().times(&[0.0, 0.001]).sample_rate(1000).compute().unwrap();
+        let signal = clicks()
+            .times(&[0.0, 0.001])
+            .sample_rate(1000)
+            .compute()
+            .unwrap();
         assert_eq!(signal.len(), 2);
         assert_eq!(signal, vec![1.0, 1.0]);
 
-        let frames = clicks().frames(&[0, 2]).sample_rate(8000).hop_length(2).compute().unwrap();
+        let frames = clicks()
+            .frames(&[0, 2])
+            .sample_rate(8000)
+            .hop_length(2)
+            .compute()
+            .unwrap();
         assert_eq!(frames.len(), 5);
         assert!(approx_eq(frames[0], 1.0, f32::EPSILON));
         assert!(approx_eq(frames[4], 1.0, f32::EPSILON));
@@ -277,7 +284,10 @@ mod tests {
 
     #[test]
     fn tone_builder_respects_duration_and_phase() {
-        let samples = tone(440.0, 44_100).duration(0.001).phase(std::f32::consts::FRAC_PI_2).compute();
+        let samples = tone(440.0, 44_100)
+            .duration(0.001)
+            .phase(std::f32::consts::FRAC_PI_2)
+            .compute();
         assert_eq!(samples.len(), 44); // 44.1 samples -> 44 truncation
         // First sample uses phase only.
         assert!(approx_eq(samples[0], 0.0, 1e-6));

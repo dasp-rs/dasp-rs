@@ -10,10 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── HPSS via spectral builder ─────────────────────────────────────────────
     // hpss() returns (harmonic_power_spec, percussive_power_spec).
-    let (h_spec, p_spec) = feat::spectral(&y, sr)
-        .n_fft(2048)
-        .hop_length(512)
-        .hpss()?;
+    let (h_spec, p_spec) = feat::spectral(&y, sr).n_fft(2048).hop_length(512).hpss()?;
     println!("HPSS harmonic:    {:?}", h_spec.shape());
     println!("HPSS percussive:  {:?}", p_spec.shape());
 
@@ -39,8 +36,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // power=2.0 gives a smooth mask; power=∞ gives a binary (hard) mask
     let h_mask = feat::softmask(&h_spec, &p_spec).power(2.0).compute();
     let p_mask = feat::softmask(&p_spec, &h_spec).power(2.0).compute();
-    println!("Harmonic mask:    {:?}, sum={:.1}", h_mask.shape(), h_mask.sum());
-    println!("Percussive mask:  {:?}, sum={:.1}", p_mask.shape(), p_mask.sum());
+    println!(
+        "Harmonic mask:    {:?}, sum={:.1}",
+        h_mask.shape(),
+        h_mask.sum()
+    );
+    println!(
+        "Percussive mask:  {:?}, sum={:.1}",
+        p_mask.shape(),
+        p_mask.sum()
+    );
 
     // Apply mask to the magnitude spectrogram
     let h_mag = &mag * &h_mask;

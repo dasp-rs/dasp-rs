@@ -6,7 +6,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
@@ -318,7 +318,12 @@ fn decode_audio<P: AsRef<Path>>(path: P) -> Result<(Vec<f32>, u32, u16), AudioEr
     }
 
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .map_err(|e| AudioError::OpenError(e.to_string()))?;
 
     let mut format = probed.format;
@@ -331,10 +336,7 @@ fn decode_audio<P: AsRef<Path>>(path: P) -> Result<(Vec<f32>, u32, u16), AudioEr
 
     let track_id = track.id;
     let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-    let channels = track
-        .codec_params
-        .channels
-        .map_or(1, |c| c.count() as u16);
+    let channels = track.codec_params.channels.map_or(1, |c| c.count() as u16);
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
@@ -831,7 +833,10 @@ mod tests {
         let mono = stereo.to_mono();
         assert_eq!(mono.channels, 1);
         for (actual, expected) in mono.samples.iter().zip(vec![0.15, 0.35]) {
-            assert!((actual - expected).abs() < 1e-6, "Expected {expected}, got {actual}");
+            assert!(
+                (actual - expected).abs() < 1e-6,
+                "Expected {expected}, got {actual}"
+            );
         }
     }
 
@@ -888,7 +893,14 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
         export(path, &audio).unwrap();
-        let loaded = load(path, None, None, Some(0.000_045_351_47), Some(0.000_045_351_48)).unwrap();
+        let loaded = load(
+            path,
+            None,
+            None,
+            Some(0.000_045_351_47),
+            Some(0.000_045_351_48),
+        )
+        .unwrap();
         assert_eq!(loaded.samples, vec![0.1, 0.2]);
     }
 
@@ -1089,17 +1101,31 @@ mod tests {
     #[test]
     fn test_stream_24bit_int() {
         let temp = NamedTempFile::new().unwrap();
-        write_int_wav(temp.path(), 24, &[0i32, 4_194_304, -4_194_304, 4_194_304, -4_194_304, 0]);
+        write_int_wav(
+            temp.path(),
+            24,
+            &[0i32, 4_194_304, -4_194_304, 4_194_304, -4_194_304, 0],
+        );
         let blocks = stream(temp.path(), 3, 2, Some(2)).unwrap();
-        assert_eq!(blocks, vec![vec![0.0, 0.5], vec![-0.5, 0.5], vec![-0.5, 0.0]]);
+        assert_eq!(
+            blocks,
+            vec![vec![0.0, 0.5], vec![-0.5, 0.5], vec![-0.5, 0.0]]
+        );
     }
 
     #[test]
     fn test_stream_lazy_24bit_int() {
         let temp = NamedTempFile::new().unwrap();
-        write_int_wav(temp.path(), 24, &[0i32, 4_194_304, -4_194_304, 4_194_304, -4_194_304, 0]);
+        write_int_wav(
+            temp.path(),
+            24,
+            &[0i32, 4_194_304, -4_194_304, 4_194_304, -4_194_304, 0],
+        );
         let rx = stream_lazy(temp.path(), 3, 2, Some(2)).unwrap();
         let blocks: Vec<Vec<f32>> = rx.into_iter().collect::<Result<_, _>>().unwrap();
-        assert_eq!(blocks, vec![vec![0.0, 0.5], vec![-0.5, 0.5], vec![-0.5, 0.0]]);
+        assert_eq!(
+            blocks,
+            vec![vec![0.0, 0.5], vec![-0.5, 0.5], vec![-0.5, 0.0]]
+        );
     }
 }

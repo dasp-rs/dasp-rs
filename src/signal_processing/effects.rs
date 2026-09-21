@@ -65,7 +65,12 @@ impl TimeStretchBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn time_stretch(y: &[f32], rate: f32) -> TimeStretchBuilder<'_> {
-    TimeStretchBuilder { y, rate, n_fft: 2048, hop_length: 512 }
+    TimeStretchBuilder {
+        y,
+        rate,
+        n_fft: 2048,
+        hop_length: 512,
+    }
 }
 
 fn time_stretch_impl(
@@ -146,7 +151,13 @@ impl PitchShiftBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn pitch_shift(y: &[f32], sr: u32, n_steps: f32) -> PitchShiftBuilder<'_> {
-    PitchShiftBuilder { y, sr, n_steps, n_fft: 2048, hop_length: 512 }
+    PitchShiftBuilder {
+        y,
+        sr,
+        n_steps,
+        n_fft: 2048,
+        hop_length: 512,
+    }
 }
 
 fn pitch_shift_impl(
@@ -157,7 +168,9 @@ fn pitch_shift_impl(
     hop_length: usize,
 ) -> Result<Vec<f32>, EffectsError> {
     if !n_steps.is_finite() {
-        return Err(EffectsError::InvalidParameter("n_steps must be finite".into()));
+        return Err(EffectsError::InvalidParameter(
+            "n_steps must be finite".into(),
+        ));
     }
     if sr == 0 {
         return Err(EffectsError::InvalidParameter("sr must be positive".into()));
@@ -170,8 +183,8 @@ fn pitch_shift_impl(
     // to sr is mathematically equivalent to shifting all frequencies by 2^(n_steps/12).
     let fake_sr = ((sr as f32) / rate).round() as u32;
     let fake_sr = fake_sr.max(1);
-    let mut shifted = resample(&stretched, fake_sr, sr)
-        .map_err(|e| EffectsError::Dsp(e.to_string()))?;
+    let mut shifted =
+        resample(&stretched, fake_sr, sr).map_err(|e| EffectsError::Dsp(e.to_string()))?;
 
     shifted.truncate(y.len());
     shifted.resize(y.len(), 0.0);
@@ -232,7 +245,12 @@ impl TrimBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn trim(y: &[f32]) -> TrimBuilder<'_> {
-    TrimBuilder { y, top_db: 60.0, frame_length: 2048, hop_length: 512 }
+    TrimBuilder {
+        y,
+        top_db: 60.0,
+        frame_length: 2048,
+        hop_length: 512,
+    }
 }
 
 fn rms_frames(y: &[f32], frame_length: usize, hop_length: usize) -> Vec<f32> {
@@ -265,7 +283,8 @@ fn trim_impl(
     let threshold = peak * 10.0_f32.powf(-top_db / 20.0);
 
     let first_frame = rms.iter().position(|r| *r >= threshold).unwrap_or(0);
-    let last_frame = (0..rms.len()).rfind(|&i| rms[i] >= threshold)
+    let last_frame = (0..rms.len())
+        .rfind(|&i| rms[i] >= threshold)
         .unwrap_or_else(|| rms.len().saturating_sub(1));
 
     let start = (first_frame * hop_length).min(y.len());
@@ -327,7 +346,12 @@ impl SplitBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn split(y: &[f32]) -> SplitBuilder<'_> {
-    SplitBuilder { y, top_db: 60.0, frame_length: 2048, hop_length: 512 }
+    SplitBuilder {
+        y,
+        top_db: 60.0,
+        frame_length: 2048,
+        hop_length: 512,
+    }
 }
 
 fn split_impl(
@@ -511,7 +535,11 @@ impl RemixBuilder<'_> {
 /// assert_eq!(out[0], 50.0);
 /// ```
 pub fn remix<'a>(y: &'a [f32], intervals: &'a [(usize, usize)]) -> RemixBuilder<'a> {
-    RemixBuilder { y, intervals, align_zeros: false }
+    RemixBuilder {
+        y,
+        intervals,
+        align_zeros: false,
+    }
 }
 
 fn remix_impl(y: &[f32], intervals: &[(usize, usize)], align_zeros: bool) -> Vec<f32> {
@@ -614,7 +642,11 @@ mod tests {
         y[1000..2000].fill(0.8);
         y[10000..11000].fill(0.8);
         let intervals = split_impl(&y, 60.0, 512, 128);
-        assert_eq!(intervals.len(), 2, "should find exactly two non-silent bursts");
+        assert_eq!(
+            intervals.len(),
+            2,
+            "should find exactly two non-silent bursts"
+        );
     }
 
     #[test]

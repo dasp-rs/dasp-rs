@@ -12,7 +12,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Frame ─────────────────────────────────────────────────────────────────
     // Slice a 1-D signal into overlapping frames of shape (frame_length, n_frames).
     let frames = util::frame(&y, 2048).hop_length(512).compute();
-    println!("Frame:         {:?} (frame_length × n_frames)", frames.shape());
+    println!(
+        "Frame:         {:?} (frame_length × n_frames)",
+        frames.shape()
+    );
 
     // ── Pad center ────────────────────────────────────────────────────────────
     // Zero-pad symmetrically so the original data is centred in a buffer of `size`.
@@ -22,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Fix length ────────────────────────────────────────────────────────────
     // Truncate or zero-pad to exactly `size` samples.
     let fixed_short = util::fix_length(&y, 22050 / 2);
-    let fixed_long  = util::fix_length(&y, y.len() + 1000);
+    let fixed_long = util::fix_length(&y, y.len() + 1000);
     println!("Fix (shorter): {} → {}", y.len(), fixed_short.len());
     println!("Fix (longer):  {} → {}", y.len(), fixed_long.len());
 
@@ -31,8 +34,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ramp: Vec<f32> = (0..20).map(|i| (i as f32 * 0.5).sin()).collect();
     let maxima = util::localmax(&ramp);
     let minima = util::localmin(&ramp);
-    println!("Local max:     {} peaks in ramp", maxima.iter().filter(|&&b| b).count());
-    println!("Local min:     {} troughs in ramp", minima.iter().filter(|&&b| b).count());
+    println!(
+        "Local max:     {} peaks in ramp",
+        maxima.iter().filter(|&&b| b).count()
+    );
+    println!(
+        "Local min:     {} troughs in ramp",
+        minima.iter().filter(|&&b| b).count()
+    );
 
     // ── Peak pick ─────────────────────────────────────────────────────────────
     // Fine-grained selector: must be a local max within pre/post_max window AND
@@ -66,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // For each interval in `from`, returns the index of the best-matching interval
     // in `to` (maximises overlap). Useful for aligning annotations to segments.
     let from: &[(f32, f32)] = &[(0.0, 0.5), (0.5, 1.0), (1.0, 1.5)];
-    let to:   &[(f32, f32)] = &[(0.0, 0.4), (0.4, 0.9), (0.9, 1.5)];
+    let to: &[(f32, f32)] = &[(0.0, 0.4), (0.4, 0.9), (0.9, 1.5)];
     let matched = util::match_intervals(from, to);
     println!("Match intervals: {:?}", matched);
 

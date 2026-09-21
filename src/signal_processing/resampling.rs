@@ -1,6 +1,8 @@
-use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
-use thiserror::Error;
 use crate::core::AudioError;
+use rubato::{
+    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
+use thiserror::Error;
 
 /// Custom error type for resampling operations.
 #[derive(Error, Debug)]
@@ -58,17 +60,15 @@ pub fn resample(samples: &[f32], orig_sr: u32, target_sr: u32) -> Result<Vec<f32
         window: WindowFunction::BlackmanHarris,
     };
 
-    let mut resampler = SincFixedIn::<f32>::new(
-        ratio,
-        1.0,
-        interpolation_params,
-        samples.len(),
-        1,
-    ).map_err(|e: rubato::ResamplerConstructionError| ResampleError::RubatoError(format!("Resampler initialization failed: {e}")))?;
+    let mut resampler = SincFixedIn::<f32>::new(ratio, 1.0, interpolation_params, samples.len(), 1)
+        .map_err(|e: rubato::ResamplerConstructionError| {
+            ResampleError::RubatoError(format!("Resampler initialization failed: {e}"))
+        })?;
 
     let input = vec![samples.to_vec()];
 
-    let output = resampler.process(&input, None)
+    let output = resampler
+        .process(&input, None)
         .map_err(|e| ResampleError::RubatoError(format!("Resampling failed: {e}")))?;
     Ok(output[0].clone())
 }

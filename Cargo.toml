@@ -1,10 +1,10 @@
 [package]
 name = "dasp-rs"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Pure-Rust digital audio signal processing: I/O, STFT/CQT, spectral & MIR features, pitch, and music/phonetics notation."
-authors = ["Amirhossein Ghanipour <d3v1ll3n@gmail.com>"]
+authors = ["Amirhossein Ghanipour Amirhandeh <amirhosseinghanipour@proton.me>"]
 license = "MIT"
 keywords = [
   "audio",

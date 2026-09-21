@@ -1,13 +1,13 @@
-use ndarray::{s, stack, Array1, Array2, Axis};
-use rayon::prelude::*;
-use crate::signal_processing::time_frequency::{stft, cqt, vqt};
+use crate::core::io::{AudioData, AudioError};
 use crate::signal_processing::time_domain::{autocorrelate, log_energy};
+use crate::signal_processing::time_frequency::{cqt, stft, vqt};
 use crate::utils::frequency::hz_to_midi;
-use nalgebra::{DMatrix, DVector};
-use num_complex::Complex;
-use thiserror::Error;
-use crate::core::io::{AudioError, AudioData};
 use crate::utils::frequency::{fft_frequencies_impl, mel_frequencies_impl};
+use nalgebra::{DMatrix, DVector};
+use ndarray::{Array1, Array2, Axis, s, stack};
+use num_complex::Complex;
+use rayon::prelude::*;
+use thiserror::Error;
 
 /// Chroma STFT builder for method chaining (internal use only).
 #[derive(Debug, Clone)]
@@ -46,7 +46,14 @@ impl ChromaStftBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
-        chroma_stft_impl(self.y, self.sr, None, Some(self.norm), Some(self.n_fft), Some(self.hop_length))
+        chroma_stft_impl(
+            self.y,
+            self.sr,
+            None,
+            Some(self.norm),
+            Some(self.n_fft),
+            Some(self.hop_length),
+        )
     }
 }
 
@@ -96,7 +103,15 @@ impl MelSpectrogramBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<f32>, SpectralError> {
-        melspectrogram_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), Some(self.n_mels), Some(self.fmax))
+        melspectrogram_impl(
+            self.y,
+            self.sr,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+            Some(self.n_mels),
+            Some(self.fmax),
+        )
     }
 }
 
@@ -178,7 +193,14 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn chroma_stft(self) -> Result<Array2<f32>, SpectralError> {
-        chroma_stft_impl(self.y, self.sr, None, Some(self.norm), Some(self.n_fft), Some(self.hop_length))
+        chroma_stft_impl(
+            self.y,
+            self.sr,
+            None,
+            Some(self.norm),
+            Some(self.n_fft),
+            Some(self.hop_length),
+        )
     }
 
     /// Compute mel spectrogram.
@@ -187,7 +209,15 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn melspectrogram(self) -> Result<Array2<f32>, SpectralError> {
-        melspectrogram_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), Some(self.n_mels), Some(self.fmax))
+        melspectrogram_impl(
+            self.y,
+            self.sr,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+            Some(self.n_mels),
+            Some(self.fmax),
+        )
     }
 
     /// Compute MFCC features.
@@ -195,7 +225,14 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn mfcc(self) -> Result<Array2<f32>, SpectralError> {
-        mfcc_impl(self.y, self.sr, None, None, Some(self.n_fft), Some(self.hop_length))
+        mfcc_impl(
+            self.y,
+            self.sr,
+            None,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+        )
     }
 
     /// Compute spectral centroid.
@@ -203,7 +240,13 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_centroid(self) -> Result<Array1<f32>, SpectralError> {
-        spectral_centroid_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
+        spectral_centroid_impl(
+            self.y,
+            self.sr,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+        )
     }
 
     /// Compute spectral bandwidth.
@@ -211,7 +254,14 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_bandwidth(self) -> Result<Array1<f32>, SpectralError> {
-        spectral_bandwidth_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), Some(self.p))
+        spectral_bandwidth_impl(
+            self.y,
+            self.sr,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+            Some(self.p),
+        )
     }
 
     /// Compute spectral rolloff.
@@ -219,7 +269,14 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_rolloff(self) -> Result<Array1<f32>, SpectralError> {
-        spectral_rolloff_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length), Some(self.roll_percent))
+        spectral_rolloff_impl(
+            self.y,
+            self.sr,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+            Some(self.roll_percent),
+        )
     }
 
     /// Compute spectral flatness.
@@ -227,7 +284,13 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_flatness(self) -> Result<Array1<f32>, SpectralError> {
-        spectral_flatness_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
+        spectral_flatness_impl(
+            self.y,
+            self.sr,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+        )
     }
 
     /// Compute spectral flux.
@@ -235,7 +298,13 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_flux(self) -> Result<Array1<f32>, SpectralError> {
-        spectral_flux_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
+        spectral_flux_impl(
+            self.y,
+            self.sr,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+        )
     }
 
     /// Compute spectral entropy.
@@ -243,7 +312,13 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_entropy(self) -> Result<Array1<f32>, SpectralError> {
-        spectral_entropy_impl(self.y, self.sr, None, Some(self.n_fft), Some(self.hop_length))
+        spectral_entropy_impl(
+            self.y,
+            self.sr,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+        )
     }
 
     /// Set the bins per octave for CQT-based chroma (default: 12).
@@ -315,8 +390,18 @@ impl SpectralBuilder<'_> {
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn chroma_cqt(self) -> Result<Array2<f32>, SpectralError> {
         let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
-        let fmin = if self.fmin > 0.0 { Some(self.fmin) } else { None };
-        chroma_cqt(&audio, None, Some(self.hop_length), fmin, Some(self.bins_per_octave))
+        let fmin = if self.fmin > 0.0 {
+            Some(self.fmin)
+        } else {
+            None
+        };
+        chroma_cqt(
+            &audio,
+            None,
+            Some(self.hop_length),
+            fmin,
+            Some(self.bins_per_octave),
+        )
     }
 
     /// Compute CENS chroma.
@@ -325,7 +410,11 @@ impl SpectralBuilder<'_> {
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn chroma_cens(self) -> Result<Array2<f32>, SpectralError> {
         let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
-        let fmin = if self.fmin > 0.0 { Some(self.fmin) } else { None };
+        let fmin = if self.fmin > 0.0 {
+            Some(self.fmin)
+        } else {
+            None
+        };
         chroma_cens(
             &audio,
             None,
@@ -342,7 +431,13 @@ impl SpectralBuilder<'_> {
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn spectral_contrast(self) -> Result<Array2<f32>, SpectralError> {
         let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
-        spectral_contrast(&audio, None, Some(self.n_fft), Some(self.hop_length), Some(self.n_bands))
+        spectral_contrast(
+            &audio,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+            Some(self.n_bands),
+        )
     }
 
     /// Compute polynomial coefficients of the spectrum.
@@ -351,7 +446,13 @@ impl SpectralBuilder<'_> {
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn poly_features(self) -> Result<Array2<f32>, SpectralError> {
         let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
-        poly_features(&audio, None, Some(self.n_fft), Some(self.hop_length), Some(self.order))
+        poly_features(
+            &audio,
+            None,
+            Some(self.n_fft),
+            Some(self.hop_length),
+            Some(self.order),
+        )
     }
 
     /// Compute tonal centroid features (tonnetz).
@@ -418,8 +519,18 @@ impl SpectralBuilder<'_> {
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn pitch_autocorr(self) -> Result<Array1<f32>, SpectralError> {
         let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
-        let fmin = if self.fmin > 0.0 { Some(self.fmin) } else { None };
-        pitch_autocorr(&audio, Some(self.frame_length), Some(self.hop_length), fmin, None)
+        let fmin = if self.fmin > 0.0 {
+            Some(self.fmin)
+        } else {
+            None
+        };
+        pitch_autocorr(
+            &audio,
+            Some(self.frame_length),
+            Some(self.hop_length),
+            fmin,
+            None,
+        )
     }
 
     /// Compute voice-activity-detection features.
@@ -428,7 +539,12 @@ impl SpectralBuilder<'_> {
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn vad_features(self) -> Result<Array2<f32>, SpectralError> {
         let audio = AudioData::new(self.y.to_vec(), self.sr, 1)?;
-        vad_features(&audio, Some(self.frame_length), Some(self.hop_length), Some(self.n_fft))
+        vad_features(
+            &audio,
+            Some(self.frame_length),
+            Some(self.hop_length),
+            Some(self.n_fft),
+        )
     }
 
     /// Estimate formant frequencies.
@@ -580,7 +696,7 @@ pub(crate) fn chroma_stft_impl(
 ) -> Result<Array2<f32>, SpectralError> {
     let n_fft = n_fft.unwrap_or(2048);
     let hop = hop_length.unwrap_or(n_fft / 4);
-    
+
     if n_fft == 0 || hop == 0 {
         return Err(SpectralError::InvalidParameter(
             "n_fft and hop_length must be positive".into(),
@@ -638,9 +754,8 @@ pub(crate) fn chroma_stft_impl(
         .collect();
 
     let views: Vec<_> = chroma_cols.iter().map(ndarray::ArrayBase::view).collect();
-    let chroma = stack(Axis(1), views.as_slice()).map_err(|e| {
-        SpectralError::Numerical(format!("Failed to stack chroma columns: {e}"))
-    })?;
+    let chroma = stack(Axis(1), views.as_slice())
+        .map_err(|e| SpectralError::Numerical(format!("Failed to stack chroma columns: {e}")))?;
 
     Ok(chroma)
 }
@@ -681,25 +796,35 @@ pub fn chroma_cqt(
     let hop = hop_length.unwrap_or(512);
     let fmin = fmin.unwrap_or(32.70);
     let bpo = bins_per_octave.unwrap_or(12);
-    
+
     if hop == 0 {
-        return Err(SpectralError::InvalidParameter("hop_length must be positive".into()));
+        return Err(SpectralError::InvalidParameter(
+            "hop_length must be positive".into(),
+        ));
     }
     if fmin <= 0.0 {
-        return Err(SpectralError::InvalidParameter("fmin must be positive".into()));
+        return Err(SpectralError::InvalidParameter(
+            "fmin must be positive".into(),
+        ));
     }
     if bpo == 0 {
-        return Err(SpectralError::InvalidParameter("bins_per_octave must be positive".into()));
+        return Err(SpectralError::InvalidParameter(
+            "bins_per_octave must be positive".into(),
+        ));
     }
 
     let nyquist = signal.sample_rate as f32 / 2.0;
     if fmin >= nyquist {
-        return Err(SpectralError::InvalidParameter("fmin must be less than Nyquist frequency".into()));
+        return Err(SpectralError::InvalidParameter(
+            "fmin must be less than Nyquist frequency".into(),
+        ));
     }
     let max_bin = (nyquist / fmin).log2() * bpo as f32;
     let n_bins = max_bin.floor() as usize + 1;
 
-    let c: Array2<f32> = if let Some(c_mag) = c { Ok::<Array2<f32>, SpectralError>(c_mag.to_owned()) } else {
+    let c: Array2<f32> = if let Some(c_mag) = c {
+        Ok::<Array2<f32>, SpectralError>(c_mag.to_owned())
+    } else {
         let cqt_result = cqt(&signal.samples, signal.sample_rate)
             .hop_length(hop)
             .fmin(fmin)
@@ -713,11 +838,15 @@ pub fn chroma_cqt(
     for bin in 0..n_bins {
         let freq = fmin * 2.0f32.powf(bin as f32 / bpo as f32);
         if !freq.is_finite() || freq <= 0.0 {
-            return Err(SpectralError::Numerical("Invalid frequency computed for bin".into()));
+            return Err(SpectralError::Numerical(
+                "Invalid frequency computed for bin".into(),
+            ));
         }
         let midi = hz_to_midi(&[freq])[0];
         if !midi.is_finite() {
-            return Err(SpectralError::Numerical("Invalid MIDI value computed".into()));
+            return Err(SpectralError::Numerical(
+                "Invalid MIDI value computed".into(),
+            ));
         }
         let pitch_class = (midi.round() as usize) % 12;
         pitch_classes.push(pitch_class);
@@ -737,8 +866,8 @@ pub fn chroma_cqt(
         .collect();
 
     let views: Vec<_> = chroma_cols.iter().map(ndarray::ArrayBase::view).collect();
-    let chroma = stack(Axis(1), views.as_slice())
-        .map_err(|e| SpectralError::Numerical(e.to_string()))?;
+    let chroma =
+        stack(Axis(1), views.as_slice()).map_err(|e| SpectralError::Numerical(e.to_string()))?;
 
     Ok(chroma)
 }
@@ -791,10 +920,7 @@ pub fn chroma_cens(
         let start = t.saturating_sub(half_win);
         let end = (t + half_win + 1).min(chroma.shape()[1]);
         let slice = chroma.slice(s![.., start..end]);
-        let norm = slice
-            .mapv(|x| x.powi(2))
-            .sum_axis(Axis(1))
-            .mapv(f32::sqrt);
+        let norm = slice.mapv(|x| x.powi(2)).sum_axis(Axis(1)).mapv(f32::sqrt);
         for p in 0..12 {
             cens[[p, t]] = if norm[p] > 1e-6 {
                 chroma[[p, t]] / norm[p]
@@ -874,7 +1000,7 @@ pub fn melspectrogram(
             .mapv(|x| x.norm().powi(2)),
     };
 
-        let mel_f = mel_frequencies_impl(n_mels + 2, fmin, fmax);
+    let mel_f = mel_frequencies_impl(n_mels + 2, fmin, fmax);
     let mut mel_s = Array2::zeros((n_mels, s.shape()[1]));
     let fft_f = fft_frequencies_impl(signal.sample_rate, n_fft);
     for m in 0..n_mels {
@@ -913,8 +1039,7 @@ fn melspectrogram_impl(
     n_mels: Option<usize>,
     fmax: Option<f32>,
 ) -> Result<Array2<f32>, SpectralError> {
-    let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(SpectralError::Audio)?;
+    let signal = AudioData::new(y.to_vec(), sr, 1).map_err(SpectralError::Audio)?;
     melspectrogram(&signal, s, n_fft, hop_length, n_mels, None, fmax)
 }
 
@@ -971,17 +1096,20 @@ pub fn mfcc(
         }
     }
 
-    let s = if let Some(s) = s { s.to_owned() } else {
-        let temp_signal = AudioData::new(signal.samples.clone(), signal.sample_rate, signal.channels)
-            .map_err(SpectralError::Audio)?;
+    let s = if let Some(s) = s {
+        s.to_owned()
+    } else {
+        let temp_signal =
+            AudioData::new(signal.samples.clone(), signal.sample_rate, signal.channels)
+                .map_err(SpectralError::Audio)?;
         melspectrogram(&temp_signal, None, None, None, None, None, None)?
     };
     let log_s = s.mapv(|x| x.max(1e-10).ln());
     let n_mels = s.shape()[0] as f32;
     let pi_over_n_mels = std::f32::consts::PI / n_mels;
     // Precompute scale factors (constant for each k)
-    let scale_k0 = f32::sqrt(1.0 / n_mels);  // sqrt(2/N) * 1/sqrt(2) = sqrt(1/N)
-    let scale_k_other = f32::sqrt(2.0 / n_mels);  // sqrt(2/N) * 1
+    let scale_k0 = f32::sqrt(1.0 / n_mels); // sqrt(2/N) * 1/sqrt(2) = sqrt(1/N)
+    let scale_k_other = f32::sqrt(2.0 / n_mels); // sqrt(2/N) * 1
     let mut mfcc = Array2::zeros((n_mfcc, s.shape()[1]));
     for t in 0..s.shape()[1] {
         for k in 0..n_mfcc {
@@ -1011,8 +1139,7 @@ fn mfcc_impl(
     _n_fft: Option<usize>,
     _hop_length: Option<usize>,
 ) -> Result<Array2<f32>, SpectralError> {
-    let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(SpectralError::Audio)?;
+    let signal = AudioData::new(y.to_vec(), sr, 1).map_err(SpectralError::Audio)?;
     mfcc(&signal, s, None, None, None)
 }
 
@@ -1054,9 +1181,11 @@ pub fn rms(
         ));
     }
 
-    if let Some(s) = s { Ok(s.map_axis(Axis(0), |row| {
-        f32::sqrt(row.iter().map(|x| x.powi(2)).sum::<f32>() / row.len() as f32)
-    })) } else {
+    if let Some(s) = s {
+        Ok(s.map_axis(Axis(0), |row| {
+            f32::sqrt(row.iter().map(|x| x.powi(2)).sum::<f32>() / row.len() as f32)
+        }))
+    } else {
         if signal.samples.len() < frame_len {
             return Err(SpectralError::InvalidSize(
                 "Signal length must be at least frame_length".to_string(),
@@ -1147,8 +1276,7 @@ fn spectral_centroid_impl(
     n_fft: Option<usize>,
     hop_length: Option<usize>,
 ) -> Result<Array1<f32>, SpectralError> {
-    let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(SpectralError::Audio)?;
+    let signal = AudioData::new(y.to_vec(), sr, 1).map_err(SpectralError::Audio)?;
     spectral_centroid(&signal, s, n_fft, hop_length)
 }
 
@@ -1190,9 +1318,9 @@ pub fn spectral_bandwidth(
             "p must be positive".to_string(),
         ));
     }
-        let temp_signal = AudioData::new(signal.samples.clone(), signal.sample_rate, signal.channels)
-            .map_err(SpectralError::Audio)?;
-        let centroid = spectral_centroid(&temp_signal, None, None, None)?;
+    let temp_signal = AudioData::new(signal.samples.clone(), signal.sample_rate, signal.channels)
+        .map_err(SpectralError::Audio)?;
+    let centroid = spectral_centroid(&temp_signal, None, None, None)?;
     let n_fft = n_fft.unwrap_or(2048);
     let hop = hop_length.unwrap_or(n_fft / 4);
     let s = match s {
@@ -1309,10 +1437,13 @@ pub fn spectral_contrast(
             if !band.is_empty() {
                 let mut sorted = band;
                 sorted.sort_by(f32::total_cmp);
-                let idx = ((ALPHA * sorted.len() as f32).round() as usize).max(1).min(sorted.len());
+                let idx = ((ALPHA * sorted.len() as f32).round() as usize)
+                    .max(1)
+                    .min(sorted.len());
                 let valley_mean = sorted[..idx].iter().sum::<f32>() / idx as f32;
                 let peak_mean = sorted[sorted.len() - idx..].iter().sum::<f32>() / idx as f32;
-                contrast[[b, t]] = 10.0 * (peak_mean + EPS).log10() - 10.0 * (valley_mean + EPS).log10();
+                contrast[[b, t]] =
+                    10.0 * (peak_mean + EPS).log10() - 10.0 * (valley_mean + EPS).log10();
             }
         }
     }
@@ -1391,8 +1522,7 @@ fn spectral_bandwidth_impl(
     hop_length: Option<usize>,
     p: Option<i32>,
 ) -> Result<Array1<f32>, SpectralError> {
-    let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(SpectralError::Audio)?;
+    let signal = AudioData::new(y.to_vec(), sr, 1).map_err(SpectralError::Audio)?;
     spectral_bandwidth(&signal, s, n_fft, hop_length, p)
 }
 
@@ -1483,8 +1613,7 @@ fn spectral_rolloff_impl(
     hop_length: Option<usize>,
     roll_percent: Option<f32>,
 ) -> Result<Array1<f32>, SpectralError> {
-    let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(SpectralError::Audio)?;
+    let signal = AudioData::new(y.to_vec(), sr, 1).map_err(SpectralError::Audio)?;
     spectral_rolloff(&signal, s, n_fft, hop_length, roll_percent)
 }
 
@@ -1496,8 +1625,7 @@ fn spectral_flatness_impl(
     n_fft: Option<usize>,
     hop_length: Option<usize>,
 ) -> Result<Array1<f32>, SpectralError> {
-    let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(SpectralError::Audio)?;
+    let signal = AudioData::new(y.to_vec(), sr, 1).map_err(SpectralError::Audio)?;
     spectral_flatness(&signal, s, n_fft, hop_length)
 }
 
@@ -1595,8 +1723,7 @@ pub fn tonnetz(
     signal: &AudioData,
     chroma: Option<&Array2<f32>>,
 ) -> Result<Array2<f32>, SpectralError> {
-        let chroma_stft_result = chroma_stft(&signal.samples, signal.sample_rate)
-            .compute()?;
+    let chroma_stft_result = chroma_stft(&signal.samples, signal.sample_rate).compute()?;
     let chroma = chroma.unwrap_or(&chroma_stft_result);
     if chroma.shape()[0] != 12 {
         return Err(SpectralError::InvalidSize(
@@ -1632,10 +1759,9 @@ fn polyfit(x: &Array1<f32>, y: &Array1<f32>, order: usize) -> Vec<f32> {
     let a = DMatrix::from_fn(rows, n, |i, j| x[i].powi(j as i32));
     let b = DVector::from_iterator(rows, y.iter().copied());
     // Least-squares solve via SVD (handles over-/under-determined systems).
-    a.svd(true, true).solve(&b, 1e-9_f32).map_or_else(
-        |_| vec![0.0; n],
-        |coeffs| coeffs.iter().copied().collect(),
-    )
+    a.svd(true, true)
+        .solve(&b, 1e-9_f32)
+        .map_or_else(|_| vec![0.0; n], |coeffs| coeffs.iter().copied().collect())
 }
 
 /// Computes spectral flux.
@@ -1707,8 +1833,7 @@ fn spectral_flux_impl(
     n_fft: Option<usize>,
     hop_length: Option<usize>,
 ) -> Result<Array1<f32>, SpectralError> {
-    let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(SpectralError::Audio)?;
+    let signal = AudioData::new(y.to_vec(), sr, 1).map_err(SpectralError::Audio)?;
     spectral_flux(&signal, s, n_fft, hop_length)
 }
 
@@ -1786,8 +1911,7 @@ fn spectral_entropy_impl(
     n_fft: Option<usize>,
     hop_length: Option<usize>,
 ) -> Result<Array1<f32>, SpectralError> {
-    let signal = AudioData::new(y.to_vec(), sr, 1)
-        .map_err(SpectralError::Audio)?;
+    let signal = AudioData::new(y.to_vec(), sr, 1).map_err(SpectralError::Audio)?;
     spectral_entropy(&signal, s, n_fft, hop_length)
 }
 
@@ -1886,7 +2010,11 @@ pub fn pitch_chroma(
 /// assert_eq!(normalized.shape(), &[2, 3]);
 /// ```
 pub fn cmvn(features: &Array2<f32>) -> CmvnBuilder<'_> {
-    CmvnBuilder { features, axis: -1, variance: true }
+    CmvnBuilder {
+        features,
+        axis: -1,
+        variance: true,
+    }
 }
 
 /// Builder for [`cmvn`] (cepstral mean/variance normalization).
@@ -2189,21 +2317,25 @@ pub fn vad_features(
         .hop_length(hop)
         .compute()
         .map_err(|e| SpectralError::TimeDomain(e.to_string()))?;
-        let zcr = crate::features::zero_crossing_rate(&signal.samples)
-            .frame_length(frame_len)
-            .hop_length(hop)
-            .compute();
+    let zcr = crate::features::zero_crossing_rate(&signal.samples)
+        .frame_length(frame_len)
+        .hop_length(hop)
+        .compute();
     let s = stft(&signal.samples)
-            .n_fft(n_fft)
-            .hop_length(hop)
-            .compute()
+        .n_fft(n_fft)
+        .hop_length(hop)
+        .compute()
         .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
         .mapv(num_complex::Complex::norm);
-    let flatness = s.axis_iter(Axis(1))
+    let flatness = s
+        .axis_iter(Axis(1))
         .map(|frame| {
             // STFT frames always hold n_fft/2 + 1 bins, so `mean` is only None
             // for an impossible zero-bin frame; fall back to silence in that case.
-            let geo_mean = frame.mapv(|x| x.max(1e-10).ln()).mean().map_or(0.0, f32::exp);
+            let geo_mean = frame
+                .mapv(|x| x.max(1e-10).ln())
+                .mean()
+                .map_or(0.0, f32::exp);
             let arith_mean = frame.mean().unwrap_or(0.0);
             if arith_mean > 1e-10 {
                 geo_mean / arith_mean
@@ -2368,7 +2500,8 @@ pub fn formant_frequencies(
             .iter()
             .filter_map(|r| {
                 if r.im.abs() > 1e-6 {
-                    let freq = r.arg().abs() * signal.sample_rate as f32 / (2.0 * std::f32::consts::PI);
+                    let freq =
+                        r.arg().abs() * signal.sample_rate as f32 / (2.0 * std::f32::consts::PI);
                     if freq > 50.0 && freq < signal.sample_rate as f32 / 2.0 {
                         Some(freq)
                     } else {
@@ -2451,13 +2584,22 @@ pub struct HarmonicBuilder<'a> {
 impl HarmonicBuilder<'_> {
     /// FFT size (default: 2048).
     #[must_use]
-    pub fn n_fft(mut self, v: usize) -> Self { self.n_fft = v; self }
+    pub fn n_fft(mut self, v: usize) -> Self {
+        self.n_fft = v;
+        self
+    }
     /// Hop length in samples (default: 512).
     #[must_use]
-    pub fn hop_length(mut self, v: usize) -> Self { self.hop_length = v; self }
+    pub fn hop_length(mut self, v: usize) -> Self {
+        self.hop_length = v;
+        self
+    }
     /// Median-filter half-width in frames (default: 31).
     #[must_use]
-    pub fn margin(mut self, v: usize) -> Self { self.margin = v; self }
+    pub fn margin(mut self, v: usize) -> Self {
+        self.margin = v;
+        self
+    }
 
     /// Compute and return the harmonic power spectrogram.
     ///
@@ -2483,7 +2625,7 @@ impl HarmonicBuilder<'_> {
 /// source separation and returns the harmonic (tonal) masked power spectrogram
 /// of shape `(n_fft/2 + 1, n_frames)`.
 ///
-/// To reconstruct audio from the result, pass it through [`griffinlim`].
+/// To reconstruct audio from the result, pass it through [`griffinlim`](crate::features::phase_recovery::griffinlim).
 ///
 /// # Examples
 /// ```no_run
@@ -2493,7 +2635,13 @@ impl HarmonicBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn harmonic(y: &[f32], sr: u32) -> HarmonicBuilder<'_> {
-    HarmonicBuilder { y, sr, n_fft: 2048, hop_length: 512, margin: 31 }
+    HarmonicBuilder {
+        y,
+        sr,
+        n_fft: 2048,
+        hop_length: 512,
+        margin: 31,
+    }
 }
 
 /// Builder for [`percussive`].
@@ -2509,13 +2657,22 @@ pub struct PercussiveBuilder<'a> {
 impl PercussiveBuilder<'_> {
     /// FFT size (default: 2048).
     #[must_use]
-    pub fn n_fft(mut self, v: usize) -> Self { self.n_fft = v; self }
+    pub fn n_fft(mut self, v: usize) -> Self {
+        self.n_fft = v;
+        self
+    }
     /// Hop length in samples (default: 512).
     #[must_use]
-    pub fn hop_length(mut self, v: usize) -> Self { self.hop_length = v; self }
+    pub fn hop_length(mut self, v: usize) -> Self {
+        self.hop_length = v;
+        self
+    }
     /// Median-filter half-width in bins (default: 31).
     #[must_use]
-    pub fn margin(mut self, v: usize) -> Self { self.margin = v; self }
+    pub fn margin(mut self, v: usize) -> Self {
+        self.margin = v;
+        self
+    }
 
     /// Compute and return the percussive power spectrogram.
     ///
@@ -2549,7 +2706,13 @@ impl PercussiveBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn percussive(y: &[f32], sr: u32) -> PercussiveBuilder<'_> {
-    PercussiveBuilder { y, sr, n_fft: 2048, hop_length: 512, margin: 31 }
+    PercussiveBuilder {
+        y,
+        sr,
+        n_fft: 2048,
+        hop_length: 512,
+        margin: 31,
+    }
 }
 
 // ─── Chroma VQT ───────────────────────────────────────────────────────────────
@@ -2568,16 +2731,28 @@ pub struct ChromaVqtBuilder<'a> {
 impl ChromaVqtBuilder<'_> {
     /// Hop length in samples (default: 512).
     #[must_use]
-    pub fn hop_length(mut self, v: usize) -> Self { self.hop_length = v; self }
+    pub fn hop_length(mut self, v: usize) -> Self {
+        self.hop_length = v;
+        self
+    }
     /// Number of octaves (default: 7).
     #[must_use]
-    pub fn n_octaves(mut self, v: u32) -> Self { self.n_octaves = v; self }
+    pub fn n_octaves(mut self, v: u32) -> Self {
+        self.n_octaves = v;
+        self
+    }
     /// Bins per octave (default: 36; should be a multiple of 12).
     #[must_use]
-    pub fn bins_per_octave(mut self, v: u32) -> Self { self.bins_per_octave = v; self }
+    pub fn bins_per_octave(mut self, v: u32) -> Self {
+        self.bins_per_octave = v;
+        self
+    }
     /// L2-norm applied after folding; `None` skips normalisation.
     #[must_use]
-    pub fn norm(mut self, v: Option<f32>) -> Self { self.norm = v; self }
+    pub fn norm(mut self, v: Option<f32>) -> Self {
+        self.norm = v;
+        self
+    }
 
     /// Compute the chromagram derived from the VQT.
     ///
@@ -2711,5 +2886,8 @@ fn polynomial_roots(coeffs: &[f32]) -> Result<Vec<Complex<f32>>, SpectralError> 
     }
 
     let eigenvalues = companion.complex_eigenvalues();
-    Ok(eigenvalues.iter().map(|c| Complex::new(c.re, c.im)).collect())
+    Ok(eigenvalues
+        .iter()
+        .map(|c| Complex::new(c.re, c.im))
+        .collect())
 }

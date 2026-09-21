@@ -1,4 +1,4 @@
-pub mod time;
+pub mod array;
 pub mod frequency;
 pub mod notation;
-pub mod array;
+pub mod time;

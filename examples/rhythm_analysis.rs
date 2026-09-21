@@ -11,9 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y = tone(440.0, sr).duration(4.0).compute();
 
     // ── Tempo estimation ──────────────────────────────────────────────────────
-    let bpm = feat::tempo(&y, sr)
-        .hop_length(512)
-        .compute()?;
+    let bpm = feat::tempo(&y, sr).hop_length(512).compute()?;
     println!("Estimated tempo: {bpm:.1} BPM");
 
     // ── Autocorrelation tempogram ─────────────────────────────────────────────
@@ -21,9 +19,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tg = feat::tempogram(
         Some(&y),
         Some(sr),
-        None,        // pass None to compute onset envelope internally
-        Some(512),   // hop_length
-        Some(384),   // win_length (controls lag resolution)
+        None,      // pass None to compute onset envelope internally
+        Some(512), // hop_length
+        Some(384), // win_length (controls lag resolution)
     )?;
     println!("Tempogram:       {:?} (lag_bins × frames)", tg.shape());
 
@@ -47,7 +45,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // beat_track returns (tempo_bpm, beat_frame_indices)
     let (beat_bpm, beat_frames) = feat::beat_track(&y, sr).compute()?;
     println!("Beat BPM:        {beat_bpm:.1}");
-    println!("Beat frames:     {:?}", &beat_frames[..beat_frames.len().min(8)]);
+    println!(
+        "Beat frames:     {:?}",
+        &beat_frames[..beat_frames.len().min(8)]
+    );
 
     // Render beats as a click track
     let click = dasp_rs::generate::clicks()

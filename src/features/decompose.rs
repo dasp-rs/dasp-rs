@@ -73,7 +73,12 @@ impl DecomposeBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn decompose(s: &Array2<f32>, n_components: usize) -> DecomposeBuilder<'_> {
-    DecomposeBuilder { s, n_components, n_iter: 200, random_seed: 0 }
+    DecomposeBuilder {
+        s,
+        n_components,
+        n_iter: 200,
+        random_seed: 0,
+    }
 }
 
 // ─── Implementation ───────────────────────────────────────────────────────────
@@ -93,7 +98,9 @@ fn decompose_impl(
         return Err(DecomposeError::InvalidInput("Empty spectrogram".into()));
     }
     if n_components == 0 {
-        return Err(DecomposeError::InvalidInput("n_components must be > 0".into()));
+        return Err(DecomposeError::InvalidInput(
+            "n_components must be > 0".into(),
+        ));
     }
     if n_components > n_bins.min(n_frames) {
         return Err(DecomposeError::InvalidInput(format!(
@@ -176,10 +183,17 @@ mod tests {
         let (w200, h200) = decompose_impl(&s, 3, 200, 0).unwrap();
         let err10 = frobenius_err(&s, &w10.dot(&h10));
         let err200 = frobenius_err(&s, &w200.dot(&h200));
-        assert!(err200 < err10, "More iterations should reduce reconstruction error");
+        assert!(
+            err200 < err10,
+            "More iterations should reduce reconstruction error"
+        );
     }
 
     fn frobenius_err(a: &Array2<f32>, b: &Array2<f32>) -> f32 {
-        a.iter().zip(b.iter()).map(|(&x, &y)| (x - y).powi(2)).sum::<f32>().sqrt()
+        a.iter()
+            .zip(b.iter())
+            .map(|(&x, &y)| (x - y).powi(2))
+            .sum::<f32>()
+            .sqrt()
     }
 }

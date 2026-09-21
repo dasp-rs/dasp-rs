@@ -9,10 +9,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sr = 22050_u32;
 
     // ── 1. Generate a 440 Hz sine tone (2 seconds) ──────────────────────────
-    let y = dasp_rs::generate::tone(440.0, sr)
-        .duration(2.0)
-        .compute();
-    println!("Signal: {} samples at {} Hz ({:.1}s)", y.len(), sr, y.len() as f32 / sr as f32);
+    let y = dasp_rs::generate::tone(440.0, sr).duration(2.0).compute();
+    println!(
+        "Signal: {} samples at {} Hz ({:.1}s)",
+        y.len(),
+        sr,
+        y.len() as f32 / sr as f32
+    );
 
     // ── 2. Short-Time Fourier Transform ─────────────────────────────────────
     let spec = dasp_rs::proc::stft(&y)

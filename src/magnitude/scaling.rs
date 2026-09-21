@@ -110,7 +110,14 @@ fn amplitude_to_db_impl(
     top_db: f32,
 ) -> Result<Array2<f32>, ScalingError> {
     validate_spectrogram(spectrogram, "amplitude")?;
-    validate_positive_params(ref_val, amin, top_db, "Reference value", "Minimum amplitude", "Top dB")?;
+    validate_positive_params(
+        ref_val,
+        amin,
+        top_db,
+        "Reference value",
+        "Minimum amplitude",
+        "Top dB",
+    )?;
 
     let db = spectrogram.mapv(|x| 20.0 * (x.max(amin) / ref_val).log10());
     let max_db = db.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -244,9 +251,15 @@ fn power_to_db_impl(
     amin: f32,
     top_db: f32,
 ) -> Result<Array2<f32>, ScalingError> {
-
     validate_spectrogram(spectrogram, "power")?;
-    validate_positive_params(ref_val, amin, top_db, "Reference value", "Minimum power", "Top dB")?;
+    validate_positive_params(
+        ref_val,
+        amin,
+        top_db,
+        "Reference value",
+        "Minimum power",
+        "Top dB",
+    )?;
 
     let db = spectrogram.mapv(|x| 10.0 * (x.max(amin) / ref_val).log10());
     let max_db = db.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -333,9 +346,9 @@ pub fn perceptual_weighting(
     let weights = frequency_weighting(frequencies, kind)?;
     let weights_array = Array1::from_vec(weights);
     let weights_2d = weights_array
-            .clone()
-            .into_shape_with_order((weights_array.len(), 1))
-            .map_err(|e| ScalingError::InvalidInput(format!("Failed to reshape weights: {e}")))?;
+        .clone()
+        .into_shape_with_order((weights_array.len(), 1))
+        .map_err(|e| ScalingError::InvalidInput(format!("Failed to reshape weights: {e}")))?;
 
     // Broadcasting weights across time dimension
     let s_weighted = spectrogram * &weights_2d;
@@ -376,7 +389,9 @@ pub fn frequency_weighting(
         "B" => b_weighting(frequencies, None),
         "C" => c_weighting(frequencies, None),
         "D" => d_weighting(frequencies, None),
-        k => Err(ScalingError::InvalidInput(format!("Unknown weighting kind: {k}"))),
+        k => Err(ScalingError::InvalidInput(format!(
+            "Unknown weighting kind: {k}"
+        ))),
     }
 }
 
@@ -450,10 +465,7 @@ pub fn multi_frequency_weighting(
 /// assert!((weights[0] - 1.2589).abs() < 1e-4); // A-weighting at 1 kHz
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn a_weighting(
-    frequencies: &[f32],
-    min_db: Option<f32>,
-) -> Result<Vec<f32>, ScalingError> {
+pub fn a_weighting(frequencies: &[f32], min_db: Option<f32>) -> Result<Vec<f32>, ScalingError> {
     compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let f4 = f2 * f2;
@@ -488,16 +500,14 @@ pub fn a_weighting(
 /// assert!(weights[0] > 0.0);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn b_weighting(
-    frequencies: &[f32],
-    min_db: Option<f32>,
-) -> Result<Vec<f32>, ScalingError> {
+pub fn b_weighting(frequencies: &[f32], min_db: Option<f32>) -> Result<Vec<f32>, ScalingError> {
     compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let f3 = f2 * f;
         let num = 12_194.217_f32.powi(2) * f3;
-        let den =
-            (f2 + 20.598_997_f32.powi(2)) * (f2 + 158.5_f32.powi(2)).sqrt() * (f2 + 12_194.217_f32.powi(2));
+        let den = (f2 + 20.598_997_f32.powi(2))
+            * (f2 + 158.5_f32.powi(2)).sqrt()
+            * (f2 + 12_194.217_f32.powi(2));
         20.0 * (num / den).log10() + 0.17
     })
 }
@@ -525,10 +535,7 @@ pub fn b_weighting(
 /// assert!(weights[0] > 0.0);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn c_weighting(
-    frequencies: &[f32],
-    min_db: Option<f32>,
-) -> Result<Vec<f32>, ScalingError> {
+pub fn c_weighting(frequencies: &[f32], min_db: Option<f32>) -> Result<Vec<f32>, ScalingError> {
     compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let num = 12_194.217_f32.powi(2) * f2;
@@ -560,10 +567,7 @@ pub fn c_weighting(
 /// assert!(weights[0] > 0.0);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn d_weighting(
-    frequencies: &[f32],
-    min_db: Option<f32>,
-) -> Result<Vec<f32>, ScalingError> {
+pub fn d_weighting(frequencies: &[f32], min_db: Option<f32>) -> Result<Vec<f32>, ScalingError> {
     compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let h = ((1_037_918.5 - f2).powi(2) + 1_080_768.1 * f2)
@@ -656,7 +660,13 @@ impl PcenBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<f32>, ScalingError> {
-        pcen_impl(self.spectrogram, self.sample_rate, self.hop_length, self.gain, self.bias)
+        pcen_impl(
+            self.spectrogram,
+            self.sample_rate,
+            self.hop_length,
+            self.gain,
+            self.bias,
+        )
     }
 }
 
@@ -700,7 +710,8 @@ fn pcen_impl(
     for f in 0..n_freqs {
         for t in 0..n_frames {
             let m_val = m[[f, t]] + EPS;
-            p[[f, t]] = (spectrogram[[f, t]] / m_val.powf(gain) + bias).powf(POWER) - bias.powf(POWER);
+            p[[f, t]] =
+                (spectrogram[[f, t]] / m_val.powf(gain) + bias).powf(POWER) - bias.powf(POWER);
         }
     }
 

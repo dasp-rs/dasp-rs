@@ -136,7 +136,9 @@ fn recurrence_matrix_impl(
             // Distance → Gaussian affinity
             let bw = bandwidth.unwrap_or_else(|| {
                 let mut vals: Vec<f32> = r.iter().filter(|&&v| v > 0.0).copied().collect();
-                if vals.is_empty() { return 1.0; }
+                if vals.is_empty() {
+                    return 1.0;
+                }
                 vals.sort_by(f32::total_cmp);
                 vals[vals.len() / 2]
             });
@@ -193,7 +195,13 @@ impl CrossSimilarityBuilder<'_> {
 
     /// Compute the cross-similarity matrix of shape `(n_frames_data, n_frames_query)`.
     pub fn compute(self) -> Array2<f32> {
-        cross_similarity_impl(self.data, self.query, self.metric, self.mode, self.bandwidth)
+        cross_similarity_impl(
+            self.data,
+            self.query,
+            self.metric,
+            self.mode,
+            self.bandwidth,
+        )
     }
 }
 
@@ -262,7 +270,9 @@ fn cross_similarity_impl(
             // the two functions agree when called on equivalent data.
             let bw = bandwidth.unwrap_or_else(|| {
                 let mut vals: Vec<f32> = c.iter().filter(|&&v| v > 0.0).copied().collect();
-                if vals.is_empty() { return 1.0; }
+                if vals.is_empty() {
+                    return 1.0;
+                }
                 vals.sort_by(f32::total_cmp);
                 vals[vals.len() / 2]
             });
@@ -294,9 +304,7 @@ fn col_measure(a: ArrayView1<f32>, b: ArrayView1<f32>, metric: SimilarityMetric)
             .map(|(&x, &y)| (x - y).powi(2))
             .sum::<f32>()
             .sqrt(),
-        SimilarityMetric::Manhattan => {
-            a.iter().zip(b.iter()).map(|(&x, &y)| (x - y).abs()).sum()
-        }
+        SimilarityMetric::Manhattan => a.iter().zip(b.iter()).map(|(&x, &y)| (x - y).abs()).sum(),
     }
 }
 
@@ -361,12 +369,18 @@ impl AgglomerativeBuilder<'_> {
 /// assert!(*labels.iter().max().unwrap() < 4);
 /// ```
 pub fn agglomerative(data: &Array2<f32>, k: usize) -> AgglomerativeBuilder<'_> {
-    AgglomerativeBuilder { data, k, metric: SimilarityMetric::Cosine }
+    AgglomerativeBuilder {
+        data,
+        k,
+        metric: SimilarityMetric::Cosine,
+    }
 }
 
 fn agglomerative_impl(data: &Array2<f32>, k: usize, metric: SimilarityMetric) -> Vec<usize> {
     let n = data.shape()[1];
-    if n == 0 { return vec![]; }
+    if n == 0 {
+        return vec![];
+    }
     let k = k.clamp(1, n);
 
     // Each frame starts as its own segment (start, exclusive_end)
@@ -421,16 +435,17 @@ fn seg_centroid_sim(
             let nb = cb.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-10);
             dot / (na * nb)
         }
-        SimilarityMetric::Euclidean => {
-            -ca.iter()
-                .zip(&cb)
-                .map(|(&a, &b)| (a - b).powi(2))
-                .sum::<f32>()
-                .sqrt()
-        }
-        SimilarityMetric::Manhattan => {
-            -ca.iter().zip(&cb).map(|(&a, &b)| (a - b).abs()).sum::<f32>()
-        }
+        SimilarityMetric::Euclidean => -ca
+            .iter()
+            .zip(&cb)
+            .map(|(&a, &b)| (a - b).powi(2))
+            .sum::<f32>()
+            .sqrt(),
+        SimilarityMetric::Manhattan => -ca
+            .iter()
+            .zip(&cb)
+            .map(|(&a, &b)| (a - b).abs())
+            .sum::<f32>(),
     }
 }
 
@@ -488,7 +503,12 @@ pub fn subsegment<'a>(
     frames: &'a [usize],
     k: usize,
 ) -> SubsegmentBuilder<'a> {
-    SubsegmentBuilder { data, frames, k, metric: SimilarityMetric::Cosine }
+    SubsegmentBuilder {
+        data,
+        frames,
+        k,
+        metric: SimilarityMetric::Cosine,
+    }
 }
 
 fn subsegment_impl(
@@ -498,7 +518,9 @@ fn subsegment_impl(
     metric: SimilarityMetric,
 ) -> Vec<usize> {
     let n = data.shape()[1];
-    if n == 0 || k == 0 { return vec![]; }
+    if n == 0 || k == 0 {
+        return vec![];
+    }
 
     // Build a sorted, deduped list of interval endpoints including 0 and n.
     let mut boundaries: Vec<usize> = std::iter::once(0)
@@ -509,7 +531,9 @@ fn subsegment_impl(
     boundaries.dedup();
 
     let n_segs = boundaries.len().saturating_sub(1);
-    if n_segs == 0 { return vec![]; }
+    if n_segs == 0 {
+        return vec![];
+    }
 
     let mut result: Vec<usize> = Vec::new();
 
@@ -559,7 +583,10 @@ pub struct PathEnhanceBuilder<'a> {
 impl PathEnhanceBuilder<'_> {
     /// Set the diagonal blur kernel width (default: 11).
     #[must_use]
-    pub fn n(mut self, v: usize) -> Self { self.n = v; self }
+    pub fn n(mut self, v: usize) -> Self {
+        self.n = v;
+        self
+    }
 
     /// Compute the enhanced recurrence matrix.
     pub fn compute(self) -> Array2<f32> {
@@ -627,7 +654,10 @@ pub struct TimeLagFilterBuilder<'a> {
 impl TimeLagFilterBuilder<'_> {
     /// Median filter window size along the lag axis (default: 11).
     #[must_use]
-    pub fn n_window(mut self, v: usize) -> Self { self.n_window = v.max(1); self }
+    pub fn n_window(mut self, v: usize) -> Self {
+        self.n_window = v.max(1);
+        self
+    }
 
     /// Compute the time-lag filtered matrix.
     pub fn compute(self) -> Array2<f32> {
@@ -661,7 +691,9 @@ pub fn timelag_filter(r: &Array2<f32>) -> TimeLagFilterBuilder<'_> {
 
 fn timelag_filter_impl(r: &Array2<f32>, n_window: usize) -> Array2<f32> {
     let n = r.shape()[0].min(r.shape()[1]);
-    if n == 0 { return r.to_owned(); }
+    if n == 0 {
+        return r.to_owned();
+    }
     let half = (n_window / 2) as isize;
     let mut out = Array2::zeros((n, n));
 
@@ -708,7 +740,13 @@ mod tests {
     fn test_recurrence_matrix_identity() {
         // Identical frames → cosine similarity = 1 everywhere
         let data = arr2(&[[1.0_f32, 1.0, 1.0], [0.0, 0.0, 0.0]]);
-        let r = recurrence_matrix_impl(&data, SimilarityMetric::Cosine, RecurrenceMode::Affinity, false, None);
+        let r = recurrence_matrix_impl(
+            &data,
+            SimilarityMetric::Cosine,
+            RecurrenceMode::Affinity,
+            false,
+            None,
+        );
         assert_eq!(r.shape(), [3, 3]);
         for i in 0..3 {
             assert!((r[[i, i]] - 1.0).abs() < 1e-5, "diagonal should be 1");
@@ -719,23 +757,50 @@ mod tests {
     fn test_recurrence_matrix_orthogonal() {
         // Orthogonal frames → cosine similarity = 0 (clamped from 0)
         let data = arr2(&[[1.0_f32, 0.0], [0.0, 1.0]]);
-        let r = recurrence_matrix_impl(&data, SimilarityMetric::Cosine, RecurrenceMode::Affinity, true, None);
-        assert!((r[[0, 1]]).abs() < 1e-5, "orthogonal vectors → similarity 0");
+        let r = recurrence_matrix_impl(
+            &data,
+            SimilarityMetric::Cosine,
+            RecurrenceMode::Affinity,
+            true,
+            None,
+        );
+        assert!(
+            (r[[0, 1]]).abs() < 1e-5,
+            "orthogonal vectors → similarity 0"
+        );
     }
 
     #[test]
     fn test_cross_similarity_shape() {
         let a = Array2::from_elem((4, 10), 0.5_f32);
         let b = Array2::from_elem((4, 7), 0.5_f32);
-        let c = cross_similarity_impl(&a, &b, SimilarityMetric::Cosine, RecurrenceMode::Affinity, None);
+        let c = cross_similarity_impl(
+            &a,
+            &b,
+            SimilarityMetric::Cosine,
+            RecurrenceMode::Affinity,
+            None,
+        );
         assert_eq!(c.shape(), [10, 7]);
     }
 
     #[test]
     fn test_cross_similarity_self_equals_recurrence() {
         let data = Array2::from_shape_fn((3, 5), |(i, j)| (i + j) as f32 + 0.1);
-        let r = recurrence_matrix_impl(&data, SimilarityMetric::Cosine, RecurrenceMode::Affinity, false, None);
-        let c = cross_similarity_impl(&data, &data, SimilarityMetric::Cosine, RecurrenceMode::Affinity, None);
+        let r = recurrence_matrix_impl(
+            &data,
+            SimilarityMetric::Cosine,
+            RecurrenceMode::Affinity,
+            false,
+            None,
+        );
+        let c = cross_similarity_impl(
+            &data,
+            &data,
+            SimilarityMetric::Cosine,
+            RecurrenceMode::Affinity,
+            None,
+        );
         for i in 0..5 {
             for j in 0..5 {
                 assert!((r[[i, j]] - c[[i, j]]).abs() < 1e-5);
@@ -746,7 +811,13 @@ mod tests {
     #[test]
     fn test_binary_mode() {
         let data = Array2::from_shape_fn((2, 4), |(_, j)| j as f32);
-        let r = recurrence_matrix_impl(&data, SimilarityMetric::Cosine, RecurrenceMode::Binary, false, None);
+        let r = recurrence_matrix_impl(
+            &data,
+            SimilarityMetric::Cosine,
+            RecurrenceMode::Binary,
+            false,
+            None,
+        );
         assert!(r.iter().all(|&v| v == 0.0 || v == 1.0));
     }
 }
