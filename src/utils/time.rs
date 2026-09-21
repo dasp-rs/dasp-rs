@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::io::Cursor;
+use std::path::Path;
 
 use crate::{core::AudioData, core::AudioError};
 use hound::WavReader;
@@ -44,7 +44,9 @@ pub fn get_duration(audio: &AudioData) -> f32 {
 /// // Assuming test.wav is 2 seconds long at 44100 Hz
 /// assert!(duration.is_ok_and(|d| d == 2.0));
 /// ```
-pub fn get_duration_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<f32, crate::core::AudioError> {
+pub fn get_duration_from_path<P: AsRef<std::path::Path>>(
+    path: P,
+) -> Result<f32, crate::core::AudioError> {
     let audio = crate::core::load(path, None, None, None, None)?;
     Ok(get_duration(&audio))
 }
@@ -91,7 +93,11 @@ pub fn frames_to_samples(frames: &[usize], hop_length: Option<usize>) -> Vec<usi
 /// assert_eq!(times, vec![0.0, 0.011609977, 0.023219954]); // Approx at 44100 Hz, hop 512
 /// ```
 pub fn frames_to_time(frames: &[usize]) -> FramesToTimeBuilder<'_> {
-    FramesToTimeBuilder { frames, sr: 44100, hop_length: 512 }
+    FramesToTimeBuilder {
+        frames,
+        sr: 44100,
+        hop_length: 512,
+    }
 }
 
 /// Builder for [`frames_to_time`].
@@ -167,7 +173,10 @@ pub fn samples_to_frames(samples: &[usize], hop_length: Option<usize>) -> Vec<us
 /// ```
 pub fn samples_to_time(samples: &[usize], sr: Option<u32>) -> Vec<f32> {
     let sample_rate = sr.unwrap_or(44100);
-    samples.iter().map(|&s| s as f32 / sample_rate as f32).collect()
+    samples
+        .iter()
+        .map(|&s| s as f32 / sample_rate as f32)
+        .collect()
 }
 
 /// Converts time values in seconds to frame indices.
@@ -190,7 +199,11 @@ pub fn samples_to_time(samples: &[usize], sr: Option<u32>) -> Vec<f32> {
 /// assert_eq!(frames, vec![0, 1]);
 /// ```
 pub fn time_to_frames(times: &[f32]) -> TimeToFramesBuilder<'_> {
-    TimeToFramesBuilder { times, sr: 44100, hop_length: 512 }
+    TimeToFramesBuilder {
+        times,
+        sr: 44100,
+        hop_length: 512,
+    }
 }
 
 /// Builder for [`time_to_frames`].
@@ -244,7 +257,10 @@ impl TimeToFramesBuilder<'_> {
 /// ```
 pub fn time_to_samples(times: &[f32], sr: Option<u32>) -> Vec<usize> {
     let sample_rate = sr.unwrap_or(44100);
-    times.iter().map(|&t| (t * sample_rate as f32) as usize).collect()
+    times
+        .iter()
+        .map(|&t| (t * sample_rate as f32) as usize)
+        .collect()
 }
 
 /// Converts block indices to frame indices.
@@ -286,7 +302,11 @@ pub fn blocks_to_frames(blocks: &[usize], block_length: usize) -> Vec<usize> {
 /// let samples = blocks_to_samples(&blocks, 2, None);
 /// assert_eq!(samples, vec![0, 1024]); // 2 frames * 512 hop
 /// ```
-pub fn blocks_to_samples(blocks: &[usize], block_length: usize, hop_length: Option<usize>) -> Vec<usize> {
+pub fn blocks_to_samples(
+    blocks: &[usize],
+    block_length: usize,
+    hop_length: Option<usize>,
+) -> Vec<usize> {
     let hop = hop_length.unwrap_or(512);
     blocks.iter().map(|&b| b * block_length * hop).collect()
 }
@@ -311,7 +331,12 @@ pub fn blocks_to_samples(blocks: &[usize], block_length: usize, hop_length: Opti
 /// assert_eq!(times, vec![0.0, 0.023219954]); // 2 frames * 512 hop / 44100 Hz
 /// ```
 pub fn blocks_to_time(blocks: &[usize], block_length: usize) -> BlocksToTimeBuilder<'_> {
-    BlocksToTimeBuilder { blocks, block_length, hop_length: 512, sr: 44100 }
+    BlocksToTimeBuilder {
+        blocks,
+        block_length,
+        hop_length: 512,
+        sr: 44100,
+    }
 }
 
 /// Builder for [`blocks_to_time`].
@@ -342,9 +367,7 @@ impl BlocksToTimeBuilder<'_> {
     pub fn compute(self) -> Vec<f32> {
         self.blocks
             .iter()
-            .map(|&b| {
-                b as f32 * self.block_length as f32 * self.hop_length as f32 / self.sr as f32
-            })
+            .map(|&b| b as f32 * self.block_length as f32 * self.hop_length as f32 / self.sr as f32)
             .collect()
     }
 }
@@ -390,7 +413,11 @@ pub fn samples_like(x: &Array2<f32>, hop_length: Option<usize>) -> Vec<usize> {
 /// assert_eq!(times, vec![0.0, 0.011609977]); // 512 hop / 44100 Hz
 /// ```
 pub fn times_like(x: &Array2<f32>) -> TimesLikeBuilder<'_> {
-    TimesLikeBuilder { x, sr: 44100, hop_length: 512 }
+    TimesLikeBuilder {
+        x,
+        sr: 44100,
+        hop_length: 512,
+    }
 }
 
 /// Builder for [`times_like`].
@@ -434,7 +461,7 @@ impl TimesLikeBuilder<'_> {
 /// # Returns
 /// - `Ok(u32)`: Sample rate in Hz.
 /// - `Err(AudioError)`: I/O or format error.
-/// 
+///
 /// # Example
 /// ```no_run
 /// use dasp_rs::util::*;
@@ -489,8 +516,14 @@ mod tests {
         assert_eq!(samples, vec![0, 512, 1024, 1536]);
         assert_eq!(samples_to_frames(&samples, Some(512)), frames);
 
-        let times = frames_to_time(&frames).sample_rate(44100).hop_length(512).compute();
-        let frames_back = time_to_frames(&times).sample_rate(44100).hop_length(512).compute();
+        let times = frames_to_time(&frames)
+            .sample_rate(44100)
+            .hop_length(512)
+            .compute();
+        let frames_back = time_to_frames(&times)
+            .sample_rate(44100)
+            .hop_length(512)
+            .compute();
         assert_eq!(frames_back, frames);
     }
 
@@ -502,7 +535,10 @@ mod tests {
 
         let samples = blocks_to_samples(&blocks, 4, Some(256));
         assert_eq!(samples, vec![0, 1024, 2048]);
-        let times = blocks_to_time(&blocks, 4).hop_length(256).sample_rate(44100).compute();
+        let times = blocks_to_time(&blocks, 4)
+            .hop_length(256)
+            .sample_rate(44100)
+            .compute();
         assert!((times[1] - 1024.0 / 44100.0).abs() < 1e-9);
     }
 
@@ -510,7 +546,10 @@ mod tests {
     fn samples_and_times_like_match_dimensions() {
         let matrix = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
         assert_eq!(samples_like(&matrix, Some(256)), vec![0, 256, 512]);
-        let times = times_like(&matrix).sample_rate(48000).hop_length(480).compute();
+        let times = times_like(&matrix)
+            .sample_rate(48000)
+            .hop_length(480)
+            .compute();
         let expected = vec![0.0, 480.0 / 48000.0, 960.0 / 48000.0];
         for (actual, exp) in times.iter().zip(expected) {
             assert!((actual - exp).abs() < 1e-6);

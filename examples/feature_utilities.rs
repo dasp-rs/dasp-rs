@@ -17,8 +17,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // FeatureNorm: L1 | L2 (default) | LInf
     // axis: 0 = normalise each column (frame), 1 = normalise each row (feature).
     let chroma = feat::spectral(&y, sr).hop_length(hop).chroma_cqt()?;
-    let normed_l2   = feat::normalize(&chroma).norm(FeatureNorm::L2).axis(0).compute();
-    let normed_linf = feat::normalize(&chroma).norm(FeatureNorm::LInf).axis(0).compute();
+    let normed_l2 = feat::normalize(&chroma)
+        .norm(FeatureNorm::L2)
+        .axis(0)
+        .compute();
+    let normed_linf = feat::normalize(&chroma)
+        .norm(FeatureNorm::LInf)
+        .axis(0)
+        .compute();
     println!("Chroma:      {:?}", chroma.shape());
     println!("Normed L2:   {:?}", normed_l2.shape());
     println!("Normed LInf: {:?}", normed_linf.shape());
@@ -35,19 +41,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // mask[i,j] = x[i,j]^p / (x[i,j]^p + x_ref[i,j]^p + ε)
     // power=2 → smooth mask; power=∞ → hard (binary) mask
     let spec = proc::stft(&y).n_fft(n_fft).hop_length(hop).compute()?;
-    let mag  = spec.mapv(|c| c.norm());
+    let mag = spec.mapv(|c| c.norm());
     let ones = Array2::from_elem(mag.raw_dim(), 1.0_f32);
     let mask_soft = feat::softmask(&mag, &ones).power(2.0).compute();
     let mask_hard = feat::softmask(&mag, &ones).power(f32::INFINITY).compute();
-    println!("Softmask(2): {:?}, mean={:.3}", mask_soft.shape(), mask_soft.mean().unwrap_or(0.0));
-    println!("Softmask(∞): {:?}, unique values are 0.0 or 1.0", mask_hard.shape());
+    println!(
+        "Softmask(2): {:?}, mean={:.3}",
+        mask_soft.shape(),
+        mask_soft.mean().unwrap_or(0.0)
+    );
+    println!(
+        "Softmask(∞): {:?}, unique values are 0.0 or 1.0",
+        mask_hard.shape()
+    );
 
     // ── Sparsify rows ─────────────────────────────────────────────────────────
     // Zeros entries below the quantile-th percentile in each row.
     // Useful for cleaning noisy feature matrices before further processing.
     let sparse = feat::sparsify_rows(&chroma).quantile(0.1).compute();
     let nonzero = sparse.iter().filter(|&&x| x != 0.0).count();
-    println!("Sparsify:    {:?}, {nonzero} nonzero entries", sparse.shape());
+    println!(
+        "Sparsify:    {:?}, {nonzero} nonzero entries",
+        sparse.shape()
+    );
 
     // ── Stack memory ──────────────────────────────────────────────────────────
     // Augments each frame with n_steps-1 delayed copies for temporal context.
@@ -61,7 +77,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .frame_length(n_fft)
         .hop_length(hop)
         .compute()?;
-    println!("Kurtosis:    {} frames, mean={:.4}", kurtosis.len(), kurtosis.mean().unwrap_or(0.0));
+    println!(
+        "Kurtosis:    {} frames, mean={:.4}",
+        kurtosis.len(),
+        kurtosis.mean().unwrap_or(0.0)
+    );
 
     // ── Zero-crossing rate ───────────────────────────────────────────────────
     // Fraction of sign changes per frame. High for noisy or fricative signals.
@@ -69,7 +89,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .frame_length(n_fft)
         .hop_length(hop)
         .compute();
-    println!("ZCR:         {} frames, mean={:.4}", zcr.len(), zcr.mean().unwrap_or(0.0));
+    println!(
+        "ZCR:         {} frames, mean={:.4}",
+        zcr.len(),
+        zcr.mean().unwrap_or(0.0)
+    );
 
     Ok(())
 }

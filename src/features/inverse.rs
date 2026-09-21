@@ -39,7 +39,11 @@ pub enum MfccError {
 /// - `width` must be a positive odd integer.
 /// - `mfcc` must have at least `width` elements along the time axis.
 pub fn compute_delta(mfcc: &Array2<f32>) -> ComputeDeltaBuilder<'_> {
-    ComputeDeltaBuilder { mfcc, width: 9, axis: -1 }
+    ComputeDeltaBuilder {
+        mfcc,
+        width: 9,
+        axis: -1,
+    }
 }
 
 /// Builder for [`compute_delta`].
@@ -151,7 +155,12 @@ fn compute_delta_impl(
 /// - `Ok(Array2<f32>)`: STFT magnitude spectrogram, shape `(n_fft/2 + 1, n_frames)`.
 /// - `Err(MfccError)`: Failure due to invalid dimensions or parameters.
 pub fn mel_to_stft(m: &Array2<f32>) -> MelToStftBuilder<'_> {
-    MelToStftBuilder { m, sr: 44100, n_fft: 2048, power: 2.0 }
+    MelToStftBuilder {
+        m,
+        sr: 44100,
+        n_fft: 2048,
+        power: 2.0,
+    }
 }
 
 /// Builder for [`mel_to_stft`].
@@ -271,7 +280,12 @@ fn mel_to_stft_impl(
 /// # Complexity
 /// - O(M * F * B + G) where G is Griffin-Lim complexity, parallelized in `mel_to_stft`.
 pub fn mel_to_audio(m: &Array2<f32>) -> MelToAudioBuilder<'_> {
-    MelToAudioBuilder { m, sr: 44100, n_fft: 2048, hop_length: None }
+    MelToAudioBuilder {
+        m,
+        sr: 44100,
+        n_fft: 2048,
+        hop_length: None,
+    }
 }
 
 /// Builder for [`mel_to_audio`].
@@ -363,7 +377,11 @@ fn mel_to_audio_impl(
 /// # Complexity
 /// - O(M * F * K) where M is mel bins, F is frames, K is MFCC coefficients, parallelized over frames.
 pub fn mfcc_to_mel(mfcc: &Array2<f32>) -> MfccToMelBuilder<'_> {
-    MfccToMelBuilder { mfcc, n_mels: 128, dct_type: 2 }
+    MfccToMelBuilder {
+        mfcc,
+        n_mels: 128,
+        dct_type: 2,
+    }
 }
 
 /// Builder for [`mfcc_to_mel`].
@@ -433,7 +451,11 @@ fn mfcc_to_mel_impl(
                     // (mfcc) index k.
                     2 => (0..n_mfcc)
                         .map(|k| {
-                            let ck = if k == 0 { 1.0 / n.sqrt() } else { (2.0 / n).sqrt() };
+                            let ck = if k == 0 {
+                                1.0 / n.sqrt()
+                            } else {
+                                (2.0 / n).sqrt()
+                            };
                             let theta = std::f32::consts::PI * k as f32 * (out_n as f32 + 0.5) / n;
                             ck * mfcc[[k, t]] * theta.cos()
                         })
@@ -441,24 +463,33 @@ fn mfcc_to_mel_impl(
                     // Orthonormal inverse of a type-3 DCT (= type-2 DCT forward):
                     // scaling on the output (mel) index n.
                     3 => {
-                        let cn = if out_n == 0 { 1.0 / n.sqrt() } else { (2.0 / n).sqrt() };
+                        let cn = if out_n == 0 {
+                            1.0 / n.sqrt()
+                        } else {
+                            (2.0 / n).sqrt()
+                        };
                         cn * (0..n_mfcc)
                             .map(|k| {
                                 let theta =
-                                    std::f32::consts::PI * (2.0 * k as f32 + 1.0) * out_n as f32 / (2.0 * n);
+                                    std::f32::consts::PI * (2.0 * k as f32 + 1.0) * out_n as f32
+                                        / (2.0 * n);
                                 mfcc[[k, t]] * theta.cos()
                             })
                             .sum::<f32>()
                     }
                     // Type-4 DCT is self-inverse (up to orthonormal scaling).
-                    4 => (2.0 / n).sqrt()
-                        * (0..n_mfcc)
-                            .map(|k| {
-                                let theta = std::f32::consts::PI * (2.0 * out_n as f32 + 1.0) * (2.0 * k as f32 + 1.0)
-                                    / (4.0 * n);
-                                mfcc[[k, t]] * theta.cos()
-                            })
-                            .sum::<f32>(),
+                    4 => {
+                        (2.0 / n).sqrt()
+                            * (0..n_mfcc)
+                                .map(|k| {
+                                    let theta = std::f32::consts::PI
+                                        * (2.0 * out_n as f32 + 1.0)
+                                        * (2.0 * k as f32 + 1.0)
+                                        / (4.0 * n);
+                                    mfcc[[k, t]] * theta.cos()
+                                })
+                                .sum::<f32>()
+                    }
                     // Type-1 DCT is self-inverse (up to orthonormal scaling);
                     // requires at least 2 coefficients.
                     _ if n_mfcc >= 2 => {
@@ -496,7 +527,13 @@ fn mfcc_to_mel_impl(
 /// - `Ok(AudioData)`: Reconstructed audio waveform with metadata.
 /// - `Err(MfccError)`: Failure due to invalid input or reconstruction errors.
 pub fn mfcc_to_audio(mfcc: &Array2<f32>) -> MfccToAudioBuilder<'_> {
-    MfccToAudioBuilder { mfcc, n_mels: 128, sr: 44100, n_fft: 2048, hop_length: None }
+    MfccToAudioBuilder {
+        mfcc,
+        n_mels: 128,
+        sr: 44100,
+        n_fft: 2048,
+        hop_length: None,
+    }
 }
 
 /// Builder for [`mfcc_to_audio`].

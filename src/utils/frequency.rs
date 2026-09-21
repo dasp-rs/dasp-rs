@@ -1,5 +1,5 @@
-use ndarray::Array1;
 use crate::utils::notation;
+use ndarray::Array1;
 
 /// Converts frequencies in Hz to Western musical note names.
 ///
@@ -18,10 +18,13 @@ use crate::utils::notation;
 /// assert_eq!(notes, vec!["C4", "E4"]);
 /// ```
 pub fn hz_to_note(frequencies: &[f32]) -> Vec<String> {
-    frequencies.iter().map(|&f| {
-        let midi = hz_to_midi(&[f])[0];
-        midi_to_note(&[midi], None)[0].clone()
-    }).collect()
+    frequencies
+        .iter()
+        .map(|&f| {
+            let midi = hz_to_midi(&[f])[0];
+            midi_to_note(&[midi], None)[0].clone()
+        })
+        .collect()
 }
 
 /// Converts frequencies in Hz to MIDI note numbers.
@@ -41,7 +44,10 @@ pub fn hz_to_note(frequencies: &[f32]) -> Vec<String> {
 /// assert_eq!(midi, vec![69.0]);
 /// ```
 pub fn hz_to_midi(frequencies: &[f32]) -> Vec<f32> {
-    frequencies.iter().map(|&f| 12.0 * (f / 440.0).log2() + 69.0).collect()
+    frequencies
+        .iter()
+        .map(|&f| 12.0 * (f / 440.0).log2() + 69.0)
+        .collect()
 }
 
 /// Converts frequencies in Hz to Hindustani svara notation.
@@ -67,17 +73,32 @@ pub fn hz_to_svara_h(frequencies: &[f32], sa: f32, abbr: Option<bool>) -> Vec<St
     let midi_sa = hz_to_midi(&[sa])[0];
     let midi_notes = hz_to_midi(frequencies);
     let svara_names = if abbr {
-        vec!["S", "R1", "R2", "G1", "G2", "M1", "M2", "P", "D1", "D2", "N1", "N2"]
+        vec![
+            "S", "R1", "R2", "G1", "G2", "M1", "M2", "P", "D1", "D2", "N1", "N2",
+        ]
     } else {
-        vec!["Shadjam", "Shuddha Rishabham", "Chatushruti Rishabham",
-             "Shuddha Gandharam", "Sadharana Gandharam", "Shuddha Madhyamam",
-             "Prati Madhyamam", "Panchamam", "Shuddha Dhaivatam", "Chatushruti Dhaivatam",
-             "Shuddha Nishadam", "Kaisiki Nishadam"]
+        vec![
+            "Shadjam",
+            "Shuddha Rishabham",
+            "Chatushruti Rishabham",
+            "Shuddha Gandharam",
+            "Sadharana Gandharam",
+            "Shuddha Madhyamam",
+            "Prati Madhyamam",
+            "Panchamam",
+            "Shuddha Dhaivatam",
+            "Chatushruti Dhaivatam",
+            "Shuddha Nishadam",
+            "Kaisiki Nishadam",
+        ]
     };
-    midi_notes.iter().map(|&m| {
-        let degree = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
-        svara_names[degree as usize].to_string()
-    }).collect()
+    midi_notes
+        .iter()
+        .map(|&m| {
+            let degree = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
+            svara_names[degree as usize].to_string()
+        })
+        .collect()
 }
 
 /// Converts frequencies in Hz to Carnatic svara notation based on a melakarta raga.
@@ -103,22 +124,37 @@ pub fn hz_to_svara_c(frequencies: &[f32], sa: f32, mela: Option<usize>) -> Vec<S
     let degrees = notation::mela_to_degrees(mela);
     let midi_sa = hz_to_midi(&[sa])[0];
     let midi_notes = hz_to_midi(frequencies);
-    midi_notes.iter().map(|&m| {
-        let semitone = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
-        let idx = degrees.iter().position(|&d| d == semitone as usize).unwrap_or(0);
-        let (base, variant) = svara_parts(idx, degrees[idx]);
-        format!("{base}{variant}")
-    }).collect()
+    midi_notes
+        .iter()
+        .map(|&m| {
+            let semitone = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
+            let idx = degrees
+                .iter()
+                .position(|&d| d == semitone as usize)
+                .unwrap_or(0);
+            let (base, variant) = svara_parts(idx, degrees[idx]);
+            format!("{base}{variant}")
+        })
+        .collect()
 }
 
 /// Maps a scale-degree position and chromatic degree to a Carnatic
 /// (svara base, variant suffix) pair.
 fn svara_parts(idx: usize, degree: usize) -> (&'static str, &'static str) {
     let base = match idx {
-        1..=3 => "R", 4..=6 => "G", 7 => "M", 8 => "P", 9..=11 => "D", 12..=14 => "N", _ => "S",
+        1..=3 => "R",
+        4..=6 => "G",
+        7 => "M",
+        8 => "P",
+        9..=11 => "D",
+        12..=14 => "N",
+        _ => "S",
     };
     let variant = match degree % 12 {
-        1 | 5 | 8 => "1", 2 | 6 | 9 => "2", 3 | 7 | 10 => "3", _ => "",
+        1 | 5 | 8 => "1",
+        2 | 6 | 9 => "2",
+        3 | 7 | 10 => "3",
+        _ => "",
     };
     (base, variant)
 }
@@ -142,7 +178,11 @@ fn svara_parts(idx: usize, degree: usize) -> (&'static str, &'static str) {
 /// assert_eq!(fjs, vec!["C4 1/1"]);
 /// ```
 pub fn hz_to_fjs(frequencies: &[f32]) -> HzToFjsBuilder<'_> {
-    HzToFjsBuilder { frequencies, fmin: 16.35, unison: 1.0 }
+    HzToFjsBuilder {
+        frequencies,
+        fmin: 16.35,
+        unison: 1.0,
+    }
 }
 
 /// Builder for [`hz_to_fjs`].
@@ -175,12 +215,15 @@ impl HzToFjsBuilder<'_> {
 }
 
 fn hz_to_fjs_impl(frequencies: &[f32], fmin: f32, unison: f32) -> Vec<String> {
-    frequencies.iter().map(|&f| {
-        let octaves = (f / fmin).log2().floor();
-        let interval = f / (fmin * 2.0f32.powf(octaves)) / unison;
-        let ratio = notation::interval_to_fjs(interval, Some(1.0));
-        format!("C{} {}", octaves as i32, ratio)
-    }).collect()
+    frequencies
+        .iter()
+        .map(|&f| {
+            let octaves = (f / fmin).log2().floor();
+            let interval = f / (fmin * 2.0f32.powf(octaves)) / unison;
+            let ratio = notation::interval_to_fjs(interval, Some(1.0));
+            format!("C{} {}", octaves as i32, ratio)
+        })
+        .collect()
 }
 
 /// Converts MIDI note numbers to frequencies in Hz.
@@ -200,7 +243,10 @@ fn hz_to_fjs_impl(frequencies: &[f32], fmin: f32, unison: f32) -> Vec<String> {
 /// assert_eq!(freqs, vec![440.0]);
 /// ```
 pub fn midi_to_hz(notes: &[f32]) -> Vec<f32> {
-    notes.iter().map(|&n| 440.0 * 2.0f32.powf((n - 69.0) / 12.0)).collect()
+    notes
+        .iter()
+        .map(|&n| 440.0 * 2.0f32.powf((n - 69.0) / 12.0))
+        .collect()
 }
 
 /// Converts MIDI note numbers to Western musical note names.
@@ -221,12 +267,20 @@ pub fn midi_to_hz(notes: &[f32]) -> Vec<f32> {
 /// assert_eq!(notes, vec!["C4", "C#4"]);
 /// ```
 pub fn midi_to_note(midi: &[f32], octave: Option<bool>) -> Vec<String> {
-    let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-    midi.iter().map(|&m| {
-        let note_idx = (m.round() as usize) % 12;
-        let oct = if octave.unwrap_or(true) { format!("{}", (m.round() as i32 - 12) / 12) } else { String::new() };
-        format!("{}{}", note_names[note_idx], oct)
-    }).collect()
+    let note_names = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    midi.iter()
+        .map(|&m| {
+            let note_idx = (m.round() as usize) % 12;
+            let oct = if octave.unwrap_or(true) {
+                format!("{}", (m.round() as i32 - 12) / 12)
+            } else {
+                String::new()
+            };
+            format!("{}{}", note_names[note_idx], oct)
+        })
+        .collect()
 }
 
 /// Converts MIDI note numbers to Hindustani svara notation.
@@ -249,7 +303,12 @@ pub fn midi_to_note(midi: &[f32], octave: Option<bool>) -> Vec<String> {
 /// assert_eq!(svaras, vec!["S", "R2"]);
 /// ```
 pub fn midi_to_svara_h(midi: &[f32], sa: f32) -> MidiToSvaraHBuilder<'_> {
-    MidiToSvaraHBuilder { midi, sa, abbr: false, octave: false }
+    MidiToSvaraHBuilder {
+        midi,
+        sa,
+        abbr: false,
+        octave: false,
+    }
 }
 
 /// Builder for [`midi_to_svara_h`].
@@ -285,18 +344,36 @@ impl MidiToSvaraHBuilder<'_> {
 fn midi_to_svara_h_impl(midi: &[f32], sa: f32, abbr: bool, octave: bool) -> Vec<String> {
     let midi_sa = hz_to_midi(&[sa])[0];
     let svara_names = if abbr {
-        vec!["S", "R1", "R2", "G1", "G2", "M1", "M2", "P", "D1", "D2", "N1", "N2"]
+        vec![
+            "S", "R1", "R2", "G1", "G2", "M1", "M2", "P", "D1", "D2", "N1", "N2",
+        ]
     } else {
-        vec!["Shadjam", "Shuddha Rishabham", "Chatushruti Rishabham",
-             "Shuddha Gandharam", "Sadharana Gandharam", "Shuddha Madhyamam",
-             "Prati Madhyamam", "Panchamam", "Shuddha Dhaivatam", "Chatushruti Dhaivatam",
-             "Shuddha Nishadam", "Kaisiki Nishadam"]
+        vec![
+            "Shadjam",
+            "Shuddha Rishabham",
+            "Chatushruti Rishabham",
+            "Shuddha Gandharam",
+            "Sadharana Gandharam",
+            "Shuddha Madhyamam",
+            "Prati Madhyamam",
+            "Panchamam",
+            "Shuddha Dhaivatam",
+            "Chatushruti Dhaivatam",
+            "Shuddha Nishadam",
+            "Kaisiki Nishadam",
+        ]
     };
-    midi.iter().map(|&m| {
-        let degree = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
-        let oct = if octave { format!("{}", (m - midi_sa).round() as i32 / 12) } else { String::new() };
-        format!("{}{}", svara_names[degree as usize], oct)
-    }).collect()
+    midi.iter()
+        .map(|&m| {
+            let degree = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
+            let oct = if octave {
+                format!("{}", (m - midi_sa).round() as i32 / 12)
+            } else {
+                String::new()
+            };
+            format!("{}{}", svara_names[degree as usize], oct)
+        })
+        .collect()
 }
 
 /// Converts MIDI note numbers to Carnatic svara notation based on a melakarta raga.
@@ -319,7 +396,12 @@ fn midi_to_svara_h_impl(midi: &[f32], sa: f32, abbr: bool, octave: bool) -> Vec<
 /// assert_eq!(svaras, vec!["S", "R2"]);
 /// ```
 pub fn midi_to_svara_c(midi: &[f32], sa: f32) -> MidiToSvaraCBuilder<'_> {
-    MidiToSvaraCBuilder { midi, sa, mela: 29, abbr: false }
+    MidiToSvaraCBuilder {
+        midi,
+        sa,
+        mela: 29,
+        abbr: false,
+    }
 }
 
 /// Builder for [`midi_to_svara_c`].
@@ -355,12 +437,21 @@ impl MidiToSvaraCBuilder<'_> {
 fn midi_to_svara_c_impl(midi: &[f32], sa: f32, mela: usize, abbr: bool) -> Vec<String> {
     let degrees = notation::mela_to_degrees(mela);
     let midi_sa = hz_to_midi(&[sa])[0];
-    midi.iter().map(|&m| {
-        let semitone = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
-        let idx = degrees.iter().position(|&d| d == semitone as usize).unwrap_or(0);
-        let (base, variant) = svara_parts(idx, degrees[idx]);
-        if abbr { format!("{base}{variant}") } else { notation::mela_to_svara(mela).compute()[idx].clone() }
-    }).collect()
+    midi.iter()
+        .map(|&m| {
+            let semitone = ((m - midi_sa + 0.5).round() as i32 % 12 + 12) % 12;
+            let idx = degrees
+                .iter()
+                .position(|&d| d == semitone as usize)
+                .unwrap_or(0);
+            let (base, variant) = svara_parts(idx, degrees[idx]);
+            if abbr {
+                format!("{base}{variant}")
+            } else {
+                notation::mela_to_svara(mela).compute()[idx].clone()
+            }
+        })
+        .collect()
 }
 
 /// Converts note names to frequencies in Hz.
@@ -380,10 +471,12 @@ fn midi_to_svara_c_impl(midi: &[f32], sa: f32, mela: usize, abbr: bool) -> Vec<S
 /// assert!(freqs[0] > 261.0 && freqs[0] < 262.0);
 /// ```
 pub fn note_to_hz(note: &[&str]) -> Vec<f32> {
-    note.iter().map(|&n| {
-        let midi = note_to_midi(&[n], None)[0];
-        midi_to_hz(&[midi])[0]
-    }).collect()
+    note.iter()
+        .map(|&n| {
+            let midi = note_to_midi(&[n], None)[0];
+            midi_to_hz(&[midi])[0]
+        })
+        .collect()
 }
 
 /// Converts note names to MIDI note numbers.
@@ -404,18 +497,47 @@ pub fn note_to_hz(note: &[&str]) -> Vec<f32> {
 /// assert_eq!(midi, vec![60.0, 61.0]);
 /// ```
 pub fn note_to_midi(note: &[&str], round_midi: Option<bool>) -> Vec<f32> {
-    let note_map = [("C", 0), ("C#", 1), ("Db", 1), ("D", 2), ("D#", 3), ("Eb", 3), ("E", 4), ("F", 5), ("F#", 6), ("Gb", 6), ("G", 7), ("G#", 8), ("Ab", 8), ("A", 9), ("A#", 10), ("Bb", 10), ("B", 11)];
-    note.iter().map(|&n| {
-        // Octave numbers may be negative in scientific pitch notation (e.g. "C-1"),
-        // so split on the first digit *or* minus sign, not just the first digit
-        // (note names themselves never contain '-').
-        let split_at = n.find(|c: char| c.is_ascii_digit() || c == '-').unwrap_or(n.len());
-        let (note_part, octave_part) = n.split_at(split_at);
-        let note_val = note_map.iter().find(|&&(name, _)| name == note_part).map_or(0, |&(_, val)| val) as f32;
-        let octave = octave_part.parse::<i32>().unwrap_or(4);
-        let midi = note_val + (octave + 1) as f32 * 12.0;
-        if round_midi.unwrap_or(true) { midi.round() } else { midi }
-    }).collect()
+    let note_map = [
+        ("C", 0),
+        ("C#", 1),
+        ("Db", 1),
+        ("D", 2),
+        ("D#", 3),
+        ("Eb", 3),
+        ("E", 4),
+        ("F", 5),
+        ("F#", 6),
+        ("Gb", 6),
+        ("G", 7),
+        ("G#", 8),
+        ("Ab", 8),
+        ("A", 9),
+        ("A#", 10),
+        ("Bb", 10),
+        ("B", 11),
+    ];
+    note.iter()
+        .map(|&n| {
+            // Octave numbers may be negative in scientific pitch notation (e.g. "C-1"),
+            // so split on the first digit *or* minus sign, not just the first digit
+            // (note names themselves never contain '-').
+            let split_at = n
+                .find(|c: char| c.is_ascii_digit() || c == '-')
+                .unwrap_or(n.len());
+            let (note_part, octave_part) = n.split_at(split_at);
+            let note_val = note_map
+                .iter()
+                .find(|&&(name, _)| name == note_part)
+                .map_or(0, |&(_, val)| val) as f32;
+            let octave = octave_part.parse::<i32>().unwrap_or(4);
+            let midi = note_val + (octave + 1) as f32 * 12.0;
+            if round_midi.unwrap_or(true) {
+                midi.round()
+            } else {
+                midi
+            }
+        })
+        .collect()
 }
 
 /// Converts note names to Hindustani svara notation.
@@ -483,7 +605,10 @@ pub fn note_to_svara_c(notes: &[&str], sa: f32, mela: Option<usize>) -> Vec<Stri
 /// ```
 pub fn hz_to_mel(frequencies: &[f32], htk: Option<bool>) -> Vec<f32> {
     if htk.unwrap_or(false) {
-        frequencies.iter().map(|&f| 2595.0 * (1.0 + f / 700.0).log10()).collect()
+        frequencies
+            .iter()
+            .map(|&f| 2595.0 * (1.0 + f / 700.0).log10())
+            .collect()
     } else {
         // Slaney-style mel scale: linear below 1 kHz, logarithmic above.
         const F_SP: f32 = 200.0 / 3.0;
@@ -493,7 +618,11 @@ pub fn hz_to_mel(frequencies: &[f32], htk: Option<bool>) -> Vec<f32> {
         frequencies
             .iter()
             .map(|&f| {
-                if f < MIN_LOG_HZ { f / F_SP } else { MIN_LOG_MEL + (f / MIN_LOG_HZ).ln() / logstep }
+                if f < MIN_LOG_HZ {
+                    f / F_SP
+                } else {
+                    MIN_LOG_MEL + (f / MIN_LOG_HZ).ln() / logstep
+                }
             })
             .collect()
     }
@@ -518,7 +647,10 @@ pub fn hz_to_mel(frequencies: &[f32], htk: Option<bool>) -> Vec<f32> {
 /// ```
 pub fn hz_to_octs(frequencies: &[f32], tuning: Option<f32>) -> Vec<f32> {
     let tune = tuning.unwrap_or(0.0);
-    frequencies.iter().map(|&f| (f / (440.0 * 2.0f32.powf(tune / 12.0))).log2() + 4.0).collect()
+    frequencies
+        .iter()
+        .map(|&f| (f / (440.0 * 2.0f32.powf(tune / 12.0))).log2() + 4.0)
+        .collect()
 }
 
 /// Converts mel values to frequencies in Hz.
@@ -539,7 +671,9 @@ pub fn hz_to_octs(frequencies: &[f32], tuning: Option<f32>) -> Vec<f32> {
 /// ```
 pub fn mel_to_hz(mels: &[f32], htk: Option<bool>) -> Vec<f32> {
     if htk.unwrap_or(false) {
-        mels.iter().map(|&m| 700.0 * (10.0f32.powf(m / 2595.0) - 1.0)).collect()
+        mels.iter()
+            .map(|&m| 700.0 * (10.0f32.powf(m / 2595.0) - 1.0))
+            .collect()
     } else {
         // Inverse of the Slaney-style mel scale used in `hz_to_mel`.
         const F_SP: f32 = 200.0 / 3.0;
@@ -548,7 +682,11 @@ pub fn mel_to_hz(mels: &[f32], htk: Option<bool>) -> Vec<f32> {
         let logstep = 6.4f32.ln() / 27.0;
         mels.iter()
             .map(|&m| {
-                if m < MIN_LOG_MEL { F_SP * m } else { MIN_LOG_HZ * (logstep * (m - MIN_LOG_MEL)).exp() }
+                if m < MIN_LOG_MEL {
+                    F_SP * m
+                } else {
+                    MIN_LOG_HZ * (logstep * (m - MIN_LOG_MEL)).exp()
+                }
             })
             .collect()
     }
@@ -574,7 +712,9 @@ pub fn mel_to_hz(mels: &[f32], htk: Option<bool>) -> Vec<f32> {
 /// ```
 pub fn octs_to_hz(octs: &[f32], tuning: Option<f32>) -> Vec<f32> {
     let tune = tuning.unwrap_or(0.0);
-    octs.iter().map(|&o| 440.0 * 2.0f32.powf(o - 4.0 + tune / 12.0)).collect()
+    octs.iter()
+        .map(|&o| 440.0 * 2.0f32.powf(o - 4.0 + tune / 12.0))
+        .collect()
 }
 
 /// Converts an A4 frequency to a tuning offset in semitones.
@@ -633,7 +773,10 @@ pub fn tuning_to_a4(tuning: f32) -> f32 {
 /// assert_eq!(freqs, vec![0.0, 11025.0, 22050.0]);
 /// ```
 pub fn fft_frequencies() -> FftFrequenciesBuilder {
-    FftFrequenciesBuilder { sr: 44100, n_fft: 2048 }
+    FftFrequenciesBuilder {
+        sr: 44100,
+        n_fft: 2048,
+    }
 }
 
 /// Builder for [`fft_frequencies`].
@@ -686,7 +829,9 @@ pub(crate) fn fft_frequencies_impl(sr: u32, n_fft: usize) -> Vec<f32> {
 pub fn cqt_frequencies(n_bins: usize, fmin: Option<f32>) -> Vec<f32> {
     let fmin = fmin.unwrap_or(32.70);
     let bins_per_octave = 12;
-    (0..n_bins).map(|k| fmin * 2.0f32.powf(k as f32 / bins_per_octave as f32)).collect()
+    (0..n_bins)
+        .map(|k| fmin * 2.0f32.powf(k as f32 / bins_per_octave as f32))
+        .collect()
 }
 
 /// Generates mel-scale frequency bins.
@@ -705,7 +850,11 @@ pub fn cqt_frequencies(n_bins: usize, fmin: Option<f32>) -> Vec<f32> {
 /// let freqs = mel_frequencies().n_mels(3).compute();
 /// ```
 pub fn mel_frequencies() -> MelFrequenciesBuilder {
-    MelFrequenciesBuilder { n_mels: 128, fmin: 0.0, fmax: 11025.0 }
+    MelFrequenciesBuilder {
+        n_mels: 128,
+        fmin: 0.0,
+        fmax: 11025.0,
+    }
 }
 
 /// Builder for [`mel_frequencies`].
@@ -771,7 +920,11 @@ pub(crate) fn mel_frequencies_impl(n_mels: usize, fmin: f32, fmax: f32) -> Vec<f
 /// let freqs = tempo_frequencies(3).compute();
 /// ```
 pub fn tempo_frequencies(n_bins: usize) -> TempoFrequenciesBuilder {
-    TempoFrequenciesBuilder { n_bins, hop_length: 512, sr: 44100 }
+    TempoFrequenciesBuilder {
+        n_bins,
+        hop_length: 512,
+        sr: 44100,
+    }
 }
 
 /// Builder for [`tempo_frequencies`].
@@ -806,7 +959,13 @@ impl TempoFrequenciesBuilder {
 pub(crate) fn tempo_frequencies_impl(n_bins: usize, hop_length: usize, sr: u32) -> Vec<f32> {
     let frame_rate = sr as f32 / hop_length as f32;
     (0..n_bins)
-        .map(|lag| if lag == 0 { f32::INFINITY } else { 60.0 * frame_rate / lag as f32 })
+        .map(|lag| {
+            if lag == 0 {
+                f32::INFINITY
+            } else {
+                60.0 * frame_rate / lag as f32
+            }
+        })
         .collect()
 }
 
@@ -829,7 +988,9 @@ pub fn fourier_tempo_frequencies(sr: Option<u32>) -> Vec<f32> {
     let hop_length = 512;
     let n_bins = 256;
     let frame_rate = sr as f32 / hop_length as f32;
-    Array1::linspace(0.0, frame_rate / 2.0, n_bins).mapv(|f| f * 60.0).to_vec()
+    Array1::linspace(0.0, frame_rate / 2.0, n_bins)
+        .mapv(|f| f * 60.0)
+        .to_vec()
 }
 
 #[cfg(test)]

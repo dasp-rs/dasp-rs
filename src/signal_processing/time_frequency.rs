@@ -1,7 +1,7 @@
-use rustfft::FftPlanner;
-use num_complex::Complex;
+use crate::{core::AudioError, utils::frequency::fft_frequencies_impl};
 use ndarray::{Array1, Array2, s};
-use crate::{utils::frequency::fft_frequencies_impl, core::AudioError};
+use num_complex::Complex;
+use rustfft::FftPlanner;
 use std::f32::consts::{PI, SQRT_2};
 
 /// Analysis window function.
@@ -128,7 +128,14 @@ impl StftBuilder<'_> {
     pub fn compute(self) -> Result<Array2<Complex<f32>>, AudioError> {
         let win_length = self.win_length.unwrap_or(self.n_fft);
         let hop_length = self.hop_length.unwrap_or(win_length / 4).max(1);
-        stft_impl(self.y, self.n_fft, hop_length, win_length, self.window, self.center)
+        stft_impl(
+            self.y,
+            self.n_fft,
+            hop_length,
+            win_length,
+            self.window,
+            self.center,
+        )
     }
 }
 
@@ -312,7 +319,11 @@ fn istft_impl(
     let fft = planner.plan_fft_inverse(n_fft);
     let inv_n = 1.0 / n_fft as f32;
 
-    let full_len = if n_frames == 0 { 0 } else { hop * (n_frames - 1) + n_fft };
+    let full_len = if n_frames == 0 {
+        0
+    } else {
+        hop * (n_frames - 1) + n_fft
+    };
     let mut signal = vec![0.0f32; full_len];
     let mut window_sum = vec![0.0f32; full_len];
 
@@ -379,7 +390,10 @@ fn istft_impl(
 /// let (mag, phase) = magphase(&spectrogram, None);
 /// assert_eq!(mag[[0, 0]], 5.0); // sqrt(3^2 + 4^2)
 /// ```
-pub fn magphase(d: &Array2<Complex<f32>>, power: Option<f32>) -> (Array2<f32>, Array2<Complex<f32>>) {
+pub fn magphase(
+    d: &Array2<Complex<f32>>,
+    power: Option<f32>,
+) -> (Array2<f32>, Array2<Complex<f32>>) {
     let power_val = power.unwrap_or(1.0);
     let magnitude = d.mapv(|x| x.norm().powf(power_val));
     let phase = d.mapv(|x| x / x.norm());
@@ -406,11 +420,7 @@ pub fn magphase(d: &Array2<Complex<f32>>, power: Option<f32>) -> (Array2<f32>, A
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn reassigned_spectrogram(y: &[f32], sr: u32) -> ReassignedSpectrogramBuilder<'_> {
-    ReassignedSpectrogramBuilder {
-        y,
-        sr,
-        n_fft: 2048,
-    }
+    ReassignedSpectrogramBuilder { y, sr, n_fft: 2048 }
 }
 
 /// Reassigned spectrogram builder for method chaining (internal use only).
@@ -447,7 +457,11 @@ fn reassigned_spectrogram_impl(
     let hop_length = n_fft / 4;
 
     if y.len() < n_fft {
-        return Err(AudioError::InsufficientData(format!("Signal too short: {} < {}", y.len(), n_fft)));
+        return Err(AudioError::InsufficientData(format!(
+            "Signal too short: {} < {}",
+            y.len(),
+            n_fft
+        )));
     }
 
     let s = stft(y)
@@ -483,11 +497,13 @@ fn reassigned_spectrogram_impl(
 
                 let t_idx = ((t_reassigned * time_scale).round() as usize).min(s.shape()[1] - 1);
                 // Use binary search for frequency lookup (more efficient for sorted array)
-                let f_idx = freqs.binary_search_by(|&x| {
-                    x.partial_cmp(&f_reassigned).unwrap_or(std::cmp::Ordering::Less)
-                })
-                .unwrap_or_else(|i| i)
-                .min(s.shape()[0] - 1);
+                let f_idx = freqs
+                    .binary_search_by(|&x| {
+                        x.partial_cmp(&f_reassigned)
+                            .unwrap_or(std::cmp::Ordering::Less)
+                    })
+                    .unwrap_or_else(|i| i)
+                    .min(s.shape()[0] - 1);
                 reassigned[[f_idx, t_idx]] += mag;
             }
         }
@@ -579,10 +595,16 @@ fn cqt_impl(
     let bins_per_octave = 12;
 
     if y.len() < hop_length {
-        return Err(AudioError::InsufficientData(format!("Signal too short: {} < {}", y.len(), hop_length)));
+        return Err(AudioError::InsufficientData(format!(
+            "Signal too short: {} < {}",
+            y.len(),
+            hop_length
+        )));
     }
     if fmin <= 0.0 {
-        return Err(AudioError::InvalidInput("fmin must be positive".to_string()));
+        return Err(AudioError::InvalidInput(
+            "fmin must be positive".to_string(),
+        ));
     }
 
     let n_fft = ((sr as f32 / fmin * 2.0) as u32).next_power_of_two() as usize;
@@ -609,7 +631,11 @@ fn cqt_impl(
 
         for t in 0..n_frames {
             let stft_frame = s_stft.slice(s![.., t]);
-            s_cqt[[k, t]] = stft_frame.iter().zip(kernel.iter()).map(|(&s, &k)| s * k.conj()).sum();
+            s_cqt[[k, t]] = stft_frame
+                .iter()
+                .zip(kernel.iter())
+                .map(|(&s, &k)| s * k.conj())
+                .sum();
         }
     }
 
@@ -641,7 +667,12 @@ fn cqt_impl(
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn icqt(c: &Array2<Complex<f32>>) -> IcqtBuilder<'_> {
-    IcqtBuilder { c, sr: 44100, hop_length: 512, fmin: 32.70 }
+    IcqtBuilder {
+        c,
+        sr: 44100,
+        hop_length: 512,
+        fmin: 32.70,
+    }
 }
 
 /// Builder for [`icqt`].
@@ -680,7 +711,12 @@ impl IcqtBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Vec<f32>, AudioError> {
-        icqt_impl(self.c, Some(self.sr), Some(self.hop_length), Some(self.fmin))
+        icqt_impl(
+            self.c,
+            Some(self.sr),
+            Some(self.hop_length),
+            Some(self.fmin),
+        )
     }
 }
 
@@ -698,7 +734,9 @@ fn icqt_impl(
     let bins_per_octave = 12;
 
     if fmin <= 0.0 {
-        return Err(AudioError::InvalidInput("fmin must be positive".to_string()));
+        return Err(AudioError::InvalidInput(
+            "fmin must be positive".to_string(),
+        ));
     }
 
     let n_fft = ((sr as f32 / fmin * 2.0) as u32).next_power_of_two() as usize;
@@ -775,7 +813,12 @@ fn icqt_impl(
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn hybrid_cqt(y: &[f32], sr: u32) -> HybridCqtBuilder<'_> {
-    HybridCqtBuilder { y, sr, hop_length: 512, fmin: 32.70 }
+    HybridCqtBuilder {
+        y,
+        sr,
+        hop_length: 512,
+        fmin: 32.70,
+    }
 }
 
 /// Builder for [`hybrid_cqt`].
@@ -807,7 +850,12 @@ impl HybridCqtBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<Complex<f32>>, AudioError> {
-        hybrid_cqt_impl(self.y, Some(self.sr), Some(self.hop_length), Some(self.fmin))
+        hybrid_cqt_impl(
+            self.y,
+            Some(self.sr),
+            Some(self.hop_length),
+            Some(self.fmin),
+        )
     }
 }
 
@@ -824,10 +872,16 @@ fn hybrid_cqt_impl(
     let n_bins = 84;
 
     if y.len() < n_fft {
-        return Err(AudioError::InsufficientData(format!("Signal too short: {} < {}", y.len(), n_fft)));
+        return Err(AudioError::InsufficientData(format!(
+            "Signal too short: {} < {}",
+            y.len(),
+            n_fft
+        )));
     }
     if fmin <= 0.0 {
-        return Err(AudioError::InvalidInput("fmin must be positive".to_string()));
+        return Err(AudioError::InvalidInput(
+            "fmin must be positive".to_string(),
+        ));
     }
 
     let s_stft = stft(y)
@@ -851,7 +905,12 @@ fn hybrid_cqt_impl(
         fft.process(kernel.as_slice_mut().expect("kernel is contiguous"));
 
         for t in 0..s_stft.shape()[1] {
-            s_hybrid[[k, t]] = s_stft.slice(s![.., t]).iter().zip(kernel.iter()).map(|(&s, &k)| s * k.conj()).sum();
+            s_hybrid[[k, t]] = s_stft
+                .slice(s![.., t])
+                .iter()
+                .zip(kernel.iter())
+                .map(|(&s, &k)| s * k.conj())
+                .sum();
         }
     }
 
@@ -883,7 +942,12 @@ fn hybrid_cqt_impl(
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn pseudo_cqt(y: &[f32], sr: u32) -> PseudoCqtBuilder<'_> {
-    PseudoCqtBuilder { y, sr, hop_length: 512, fmin: 32.70 }
+    PseudoCqtBuilder {
+        y,
+        sr,
+        hop_length: 512,
+        fmin: 32.70,
+    }
 }
 
 /// Builder for [`pseudo_cqt`].
@@ -915,7 +979,12 @@ impl PseudoCqtBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<Complex<f32>>, AudioError> {
-        pseudo_cqt_impl(self.y, Some(self.sr), Some(self.hop_length), Some(self.fmin))
+        pseudo_cqt_impl(
+            self.y,
+            Some(self.sr),
+            Some(self.hop_length),
+            Some(self.fmin),
+        )
     }
 }
 
@@ -932,10 +1001,16 @@ fn pseudo_cqt_impl(
     let n_bins = 84;
 
     if y.len() < n_fft {
-        return Err(AudioError::InsufficientData(format!("Signal too short: {} < {}", y.len(), n_fft)));
+        return Err(AudioError::InsufficientData(format!(
+            "Signal too short: {} < {}",
+            y.len(),
+            n_fft
+        )));
     }
     if fmin <= 0.0 {
-        return Err(AudioError::InvalidInput("fmin must be positive".to_string()));
+        return Err(AudioError::InvalidInput(
+            "fmin must be positive".to_string(),
+        ));
     }
 
     let s_stft = stft(y)
@@ -983,7 +1058,13 @@ fn pseudo_cqt_impl(
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn vqt(y: &[f32], sr: u32) -> VqtBuilder<'_> {
-    VqtBuilder { y, sr, hop_length: 512, fmin: 32.70, n_bins: 84 }
+    VqtBuilder {
+        y,
+        sr,
+        hop_length: 512,
+        fmin: 32.70,
+        n_bins: 84,
+    }
 }
 
 /// Builder for [`vqt`].
@@ -1023,7 +1104,13 @@ impl VqtBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<Complex<f32>>, AudioError> {
-        vqt_impl(self.y, Some(self.sr), Some(self.hop_length), Some(self.fmin), Some(self.n_bins))
+        vqt_impl(
+            self.y,
+            Some(self.sr),
+            Some(self.hop_length),
+            Some(self.fmin),
+            Some(self.n_bins),
+        )
     }
 }
 
@@ -1041,10 +1128,16 @@ fn vqt_impl(
     let gamma = 24.0;
 
     if y.len() < hop_length {
-        return Err(AudioError::InsufficientData(format!("Signal too short: {} < {}", y.len(), hop_length)));
+        return Err(AudioError::InsufficientData(format!(
+            "Signal too short: {} < {}",
+            y.len(),
+            hop_length
+        )));
     }
     if fmin <= 0.0 {
-        return Err(AudioError::InvalidInput("fmin must be positive".to_string()));
+        return Err(AudioError::InvalidInput(
+            "fmin must be positive".to_string(),
+        ));
     }
 
     let n_fft = ((sr as f32 / fmin * 2.0) as u32).next_power_of_two() as usize;
@@ -1070,7 +1163,12 @@ fn vqt_impl(
         fft.process(kernel.as_slice_mut().expect("kernel is contiguous"));
 
         for t in 0..s_stft.shape()[1] {
-            s_vqt[[k, t]] = s_stft.slice(s![.., t]).iter().zip(kernel.iter()).map(|(&s, &k)| s * k.conj()).sum();
+            s_vqt[[k, t]] = s_stft
+                .slice(s![.., t])
+                .iter()
+                .zip(kernel.iter())
+                .map(|(&s, &k)| s * k.conj())
+                .sum();
         }
     }
 
@@ -1102,7 +1200,13 @@ fn vqt_impl(
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn fmt(y: &[f32]) -> FmtBuilder<'_> {
-    FmtBuilder { y, t_min: 0.005, n_fmt: 5, kind: "cos", beta: 2.0 }
+    FmtBuilder {
+        y,
+        t_min: 0.005,
+        n_fmt: 5,
+        kind: "cos",
+        beta: 2.0,
+    }
 }
 
 /// Builder for [`fmt`] (Fast Mellin Transform).
@@ -1149,7 +1253,13 @@ impl<'a> FmtBuilder<'a> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<f32>, AudioError> {
-        fmt_impl(self.y, Some(self.t_min), Some(self.n_fmt), Some(self.kind), Some(self.beta))
+        fmt_impl(
+            self.y,
+            Some(self.t_min),
+            Some(self.n_fmt),
+            Some(self.kind),
+            Some(self.beta),
+        )
     }
 }
 
@@ -1168,10 +1278,16 @@ fn fmt_impl(
     let hop_length = (sr as f32 * t_min).round() as usize;
 
     if y.len() < hop_length {
-        return Err(AudioError::InsufficientData(format!("Signal too short: {} < {}", y.len(), hop_length)));
+        return Err(AudioError::InsufficientData(format!(
+            "Signal too short: {} < {}",
+            y.len(),
+            hop_length
+        )));
     }
     if t_min <= 0.0 {
-        return Err(AudioError::InvalidInput("t_min must be positive".to_string()));
+        return Err(AudioError::InvalidInput(
+            "t_min must be positive".to_string(),
+        ));
     }
 
     let n_frames = (y.len() - hop_length) / hop_length + 1;
@@ -1207,7 +1323,9 @@ fn fmt_impl(
 /// # Returns
 /// Returns a `Vec<f32>` containing the Hann window coefficients.
 pub(crate) fn hann_window(n: usize) -> Vec<f32> {
-    (0..n).map(|i| 0.5 * (1.0 - (2.0 * PI * i as f32 / (n - 1) as f32).cos())).collect()
+    (0..n)
+        .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f32 / (n - 1) as f32).cos()))
+        .collect()
 }
 
 /// Computes STFT with time or frequency derivative for reassignment.
@@ -1243,13 +1361,19 @@ fn stft_with_derivative(
     let deriv_window = if time_derivative {
         (0..n_fft).map(|i| i as f32 * window[i]).collect::<Vec<_>>()
     } else {
-        (0..n_fft).map(|i| window[i] * (2.0 * PI * i as f32 / n_fft as f32).sin()).collect::<Vec<_>>()
+        (0..n_fft)
+            .map(|i| window[i] * (2.0 * PI * i as f32 / n_fft as f32).sin())
+            .collect::<Vec<_>>()
     };
 
     for t in 0..n_frames {
         let start = t * hop_length;
         let frame = &y[start..(start + n_fft).min(y.len())];
-        let mut buffer = frame.iter().zip(deriv_window.iter()).map(|(&x, &w)| Complex::new(x * w, 0.0)).collect::<Vec<_>>();
+        let mut buffer = frame
+            .iter()
+            .zip(deriv_window.iter())
+            .map(|(&x, &w)| Complex::new(x * w, 0.0))
+            .collect::<Vec<_>>();
         buffer.resize(n_fft, Complex::new(0.0, 0.0));
         fft.process(&mut buffer);
         for f in 0..=(n_fft / 2) {
@@ -1273,11 +1397,18 @@ fn stft_with_derivative(
 ///
 /// # Errors
 /// * `AudioError::InvalidInput` - If `lowcut` <= 0, `highcut` <= `lowcut`, or `highcut` >= `fs/2`.
-fn butterworth_bandpass(lowcut: f32, highcut: f32, fs: f32, order: Option<usize>) -> Result<(Vec<f32>, Vec<f32>), AudioError> {
+fn butterworth_bandpass(
+    lowcut: f32,
+    highcut: f32,
+    fs: f32,
+    order: Option<usize>,
+) -> Result<(Vec<f32>, Vec<f32>), AudioError> {
     if lowcut <= 0.0 || highcut <= lowcut || highcut >= fs / 2.0 {
         return Err(AudioError::InvalidInput(format!(
             "Invalid frequencies: lowcut={} must be > 0, highcut={} must be > lowcut and < fs/2={}",
-            lowcut, highcut, fs / 2.0
+            lowcut,
+            highcut,
+            fs / 2.0
         )));
     }
 
@@ -1287,8 +1418,8 @@ fn butterworth_bandpass(lowcut: f32, highcut: f32, fs: f32, order: Option<usize>
     // Bilinear transform pre-warping: Ï‰_analog = 2*fs * tan(Ï€ * f / fs)
     let w_low = 2.0 * fs * (PI * lowcut / fs).tan();
     let w_high = 2.0 * fs * (PI * highcut / fs).tan();
-    let w0 = (w_high * w_low).sqrt();  // Geometric mean (center frequency)
-    let bw = w_high - w_low;  // Bandwidth
+    let w0 = (w_high * w_low).sqrt(); // Geometric mean (center frequency)
+    let bw = w_high - w_low; // Bandwidth
 
     // Calculate poles for bandpass Butterworth filter in s-domain
     // Standard Butterworth pole angles: Î¸_k = Ï€(2k+1)/(2n) for k = 0..n-1
@@ -1404,7 +1535,12 @@ fn evaluate_filter(b: &[f32], a: &[f32], w: f32) -> Complex<f32> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn iirt(y: &[f32], sr: u32) -> IirtBuilder<'_> {
-    IirtBuilder { y, sr, win_length: 2048, hop_length: None }
+    IirtBuilder {
+        y,
+        sr,
+        win_length: 2048,
+        hop_length: None,
+    }
 }
 
 /// Builder for [`iirt`].
@@ -1436,7 +1572,12 @@ impl IirtBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<f32>, AudioError> {
-        iirt_impl(self.y, Some(self.sr), Some(self.win_length), self.hop_length)
+        iirt_impl(
+            self.y,
+            Some(self.sr),
+            Some(self.win_length),
+            self.hop_length,
+        )
     }
 }
 
@@ -1452,7 +1593,11 @@ fn iirt_impl(
     let n_bands = 12;
 
     if y.len() < win_length {
-        return Err(AudioError::InsufficientData(format!("Signal too short: {} < {}", y.len(), win_length)));
+        return Err(AudioError::InsufficientData(format!(
+            "Signal too short: {} < {}",
+            y.len(),
+            win_length
+        )));
     }
 
     let n_frames = (y.len() - win_length) / hop_length + 1;
@@ -1462,8 +1607,9 @@ fn iirt_impl(
     for b in 0..n_bands {
         let fc = fmin * 2.0f32.powf(b as f32);
         let bw = fc / SQRT_2;
-        let (b_coeffs, a_coeffs) = butterworth_bandpass(fc - bw / 2.0, fc + bw / 2.0, sr as f32, Some(4))?;
-        
+        let (b_coeffs, a_coeffs) =
+            butterworth_bandpass(fc - bw / 2.0, fc + bw / 2.0, sr as f32, Some(4))?;
+
         for t in 0..n_frames {
             let start = t * hop_length;
             let frame = &y[start..(start + win_length).min(y.len())];
@@ -1573,7 +1719,10 @@ mod tests {
             err += (recon[i] - y[i]).abs();
             cnt += 1;
         }
-        assert!((err / cnt as f32) < 1e-3, "mean abs reconstruction error too high");
+        assert!(
+            (err / cnt as f32) < 1e-3,
+            "mean abs reconstruction error too high"
+        );
     }
 
     #[test]
@@ -1584,7 +1733,11 @@ mod tests {
         let y: Vec<f32> = (0..4096)
             .map(|n| (2.0 * PI * k as f32 * n as f32 / n_fft as f32).sin())
             .collect();
-        let spec = stft(&y).n_fft(n_fft).hop_length(64).compute().expect("stft");
+        let spec = stft(&y)
+            .n_fft(n_fft)
+            .hop_length(64)
+            .compute()
+            .expect("stft");
         let frame = spec.column(spec.shape()[1] / 2);
         let peak = (0..frame.len())
             .max_by(|&a, &b| frame[a].norm().partial_cmp(&frame[b].norm()).unwrap())

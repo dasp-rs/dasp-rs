@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "dasp-rs: Pure-Rust digital audio signal processing"
+type: software
+version: 0.5.2
+date-released: 2026-09-21
+license: MIT
+repository-code: "https://github.com/dasp-rs/dasp-rs"
+url: "https://crates.io/crates/dasp-rs"
+abstract: "Pure-Rust digital audio signal processing: I/O, STFT/CQT, spectral and MIR features, pitch, and music/phonetics notation."
+keywords: [audio, dsp, music-analysis, speech-processing, rust]
+authors:
+  - family-names: Ghanipour Amirhandeh
+    given-names: Amirhossein
+    email: amirhosseinghanipour@proton.me
+    orcid: "https://orcid.org/0009-0001-0603-9796"

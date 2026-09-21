@@ -58,19 +58,25 @@ fn validate_inputs(
     // Check emptiness for arrays
     for &(arr, name) in arrays {
         if arr.is_empty() {
-            return Err(HarmonicsError::InvalidInput(format!("{name} array is empty")));
+            return Err(HarmonicsError::InvalidInput(format!(
+                "{name} array is empty"
+            )));
         }
     }
 
     // Check spectrogram emptiness
     if let Some(s) = spectrogram {
         if s.shape()[0] == 0 || s.shape()[1] == 0 {
-            return Err(HarmonicsError::InvalidInput("Spectrogram is empty".to_string()));
+            return Err(HarmonicsError::InvalidInput(
+                "Spectrogram is empty".to_string(),
+            ));
         }
     }
     if let Some(d) = complex_spectrogram {
         if d.shape()[0] == 0 || d.shape()[1] == 0 {
-            return Err(HarmonicsError::InvalidInput("Complex spectrogram is empty".to_string()));
+            return Err(HarmonicsError::InvalidInput(
+                "Complex spectrogram is empty".to_string(),
+            ));
         }
     }
 
@@ -87,10 +93,14 @@ fn validate_inputs(
     // Check finite values and sortedness for arrays
     for &(arr, name) in arrays {
         if check_finite && arr.iter().any(|&v| !v.is_finite()) {
-            return Err(HarmonicsError::NonFiniteInput(format!("{name} contain non-finite values")));
+            return Err(HarmonicsError::NonFiniteInput(format!(
+                "{name} contain non-finite values"
+            )));
         }
         if require_sorted && !arr.windows(2).all(|w| w[0] <= w[1]) {
-            return Err(HarmonicsError::InvalidInput(format!("{name} must be sorted")));
+            return Err(HarmonicsError::InvalidInput(format!(
+                "{name} must be sorted"
+            )));
         }
     }
 
@@ -98,12 +108,16 @@ fn validate_inputs(
     if check_finite {
         if let Some(s) = spectrogram {
             if s.iter().any(|&v| !v.is_finite()) {
-                return Err(HarmonicsError::NonFiniteInput("Spectrogram contains non-finite values".to_string()));
+                return Err(HarmonicsError::NonFiniteInput(
+                    "Spectrogram contains non-finite values".to_string(),
+                ));
             }
         }
         if let Some(d) = complex_spectrogram {
             if d.iter().any(|c| !c.re.is_finite() || !c.im.is_finite()) {
-                return Err(HarmonicsError::NonFiniteInput("Complex spectrogram contains non-finite values".to_string()));
+                return Err(HarmonicsError::NonFiniteInput(
+                    "Complex spectrogram contains non-finite values".to_string(),
+                ));
             }
         }
     }
@@ -130,7 +144,10 @@ fn interpolate_at(x: &[f32], freqs: &[f32], target_freq: f32) -> Result<f32, Har
     }
 
     let left_idx = freqs
-        .binary_search_by(|&x| x.partial_cmp(&target_freq).unwrap_or(std::cmp::Ordering::Less))
+        .binary_search_by(|&x| {
+            x.partial_cmp(&target_freq)
+                .unwrap_or(std::cmp::Ordering::Less)
+        })
         .unwrap_or_else(|e| e.saturating_sub(1))
         .min(freqs.len() - 2);
     let right_idx = left_idx + 1;
@@ -185,21 +202,35 @@ fn interpolate_at(x: &[f32], freqs: &[f32], target_freq: f32) -> Result<f32, Har
 /// # Errors
 /// Returns an error if the input is invalid (e.g., empty signal or
 /// out-of-range parameters) or if the computation cannot be completed.
-pub fn interp_harmonics(x: &[f32], freqs: &[f32], harmonics: &[f32]) -> Result<Array2<f32>, HarmonicsError> {
-    validate_inputs(&[(x, "amplitudes"), (freqs, "frequencies")], None, None, true, true, true)?;
+pub fn interp_harmonics(
+    x: &[f32],
+    freqs: &[f32],
+    harmonics: &[f32],
+) -> Result<Array2<f32>, HarmonicsError> {
+    validate_inputs(
+        &[(x, "amplitudes"), (freqs, "frequencies")],
+        None,
+        None,
+        true,
+        true,
+        true,
+    )?;
 
     let n_bins = freqs.len();
     let n_harmonics = harmonics.len();
     let mut result = Array2::zeros((n_harmonics, n_bins));
 
-    result.axis_iter_mut(ndarray::Axis(0)).enumerate().for_each(|(h_idx, mut row)| {
-        let h = harmonics[h_idx];
-        for (bin, &f) in freqs.iter().enumerate() {
-            if let Ok(value) = interpolate_at(x, freqs, f * h) {
-                row[bin] = value;
+    result
+        .axis_iter_mut(ndarray::Axis(0))
+        .enumerate()
+        .for_each(|(h_idx, mut row)| {
+            let h = harmonics[h_idx];
+            for (bin, &f) in freqs.iter().enumerate() {
+                if let Ok(value) = interpolate_at(x, freqs, f * h) {
+                    row[bin] = value;
+                }
             }
-        }
-    });
+        });
 
     Ok(result)
 }
@@ -239,7 +270,12 @@ pub fn interp_harmonics(x: &[f32], freqs: &[f32], harmonics: &[f32]) -> Result<A
 /// # Errors
 /// Returns an error if the input is invalid (e.g., empty signal or
 /// out-of-range parameters) or if the computation cannot be completed.
-pub fn salience(s: &Array2<f32>, freqs: &[f32], harmonics: &[f32], weights: Option<&[f32]>) -> Result<Array2<f32>, HarmonicsError> {
+pub fn salience(
+    s: &Array2<f32>,
+    freqs: &[f32],
+    harmonics: &[f32],
+    weights: Option<&[f32]>,
+) -> Result<Array2<f32>, HarmonicsError> {
     validate_inputs(&[(freqs, "frequencies")], Some(s), None, true, true, false)?;
     if s.shape()[0] != freqs.len() {
         return Err(HarmonicsError::LengthMismatch(s.shape()[0], freqs.len()));
@@ -254,18 +290,21 @@ pub fn salience(s: &Array2<f32>, freqs: &[f32], harmonics: &[f32], weights: Opti
     }
 
     let mut salience_map = Array2::zeros((n_bins, n_frames));
-    salience_map.axis_iter_mut(ndarray::Axis(1)).enumerate().for_each(|(frame, mut col)| {
-        let column = s.column(frame).to_vec(); // Convert to Vec to ensure reliable access
-        for (bin, &f) in freqs.iter().enumerate() {
-            let mut total = 0.0;
-            for (h_idx, &h) in harmonics.iter().enumerate() {
-                if let Ok(interp) = interpolate_at(&column, freqs, f * h) {
-                    total += interp * weights[h_idx];
+    salience_map
+        .axis_iter_mut(ndarray::Axis(1))
+        .enumerate()
+        .for_each(|(frame, mut col)| {
+            let column = s.column(frame).to_vec(); // Convert to Vec to ensure reliable access
+            for (bin, &f) in freqs.iter().enumerate() {
+                let mut total = 0.0;
+                for (h_idx, &h) in harmonics.iter().enumerate() {
+                    if let Ok(interp) = interpolate_at(&column, freqs, f * h) {
+                        total += interp * weights[h_idx];
+                    }
                 }
+                col[bin] = total;
             }
-            col[bin] = total;
-        }
-    });
+        });
 
     Ok(salience_map)
 }
@@ -303,8 +342,20 @@ pub fn salience(s: &Array2<f32>, freqs: &[f32], harmonics: &[f32], weights: Opti
 /// # Errors
 /// Returns an error if the input is invalid (e.g., empty signal or
 /// out-of-range parameters) or if the computation cannot be completed.
-pub fn f0_harmonics(x: &[f32], f0: &[f32], freqs: &[f32], harmonics: &[f32]) -> Result<Array2<f32>, HarmonicsError> {
-    validate_inputs(&[(x, "amplitudes"), (f0, "f0"), (freqs, "frequencies")], None, None, true, true, false)?;
+pub fn f0_harmonics(
+    x: &[f32],
+    f0: &[f32],
+    freqs: &[f32],
+    harmonics: &[f32],
+) -> Result<Array2<f32>, HarmonicsError> {
+    validate_inputs(
+        &[(x, "amplitudes"), (f0, "f0"), (freqs, "frequencies")],
+        None,
+        None,
+        true,
+        true,
+        false,
+    )?;
     if x.len() != freqs.len() {
         return Err(HarmonicsError::LengthMismatch(x.len(), freqs.len()));
     }
@@ -313,14 +364,17 @@ pub fn f0_harmonics(x: &[f32], f0: &[f32], freqs: &[f32], harmonics: &[f32]) -> 
     let n_harmonics = harmonics.len();
     let mut result = Array2::zeros((n_harmonics, n_frames));
 
-    result.axis_iter_mut(ndarray::Axis(1)).enumerate().for_each(|(frame, mut col)| {
-        let fund = f0[frame];
-        for (h_idx, &h) in harmonics.iter().enumerate() {
-            if let Ok(value) = interpolate_at(x, freqs, fund * h) {
-                col[h_idx] = value;
+    result
+        .axis_iter_mut(ndarray::Axis(1))
+        .enumerate()
+        .for_each(|(frame, mut col)| {
+            let fund = f0[frame];
+            for (h_idx, &h) in harmonics.iter().enumerate() {
+                if let Ok(value) = interpolate_at(x, freqs, fund * h) {
+                    col[h_idx] = value;
+                }
             }
-        }
-    });
+        });
 
     Ok(result)
 }
@@ -388,7 +442,9 @@ pub fn phase_vocoder(
     n_fft: Option<usize>,
 ) -> Result<Array2<Complex<f32>>, HarmonicsError> {
     if rate <= 0.0 {
-        return Err(HarmonicsError::InvalidInput("Rate must be positive".to_string()));
+        return Err(HarmonicsError::InvalidInput(
+            "Rate must be positive".to_string(),
+        ));
     }
     let n_bins = d.shape()[0];
     let orig_frames = d.shape()[1];
@@ -396,11 +452,15 @@ pub fn phase_vocoder(
 
     let n_fft = n_fft.unwrap_or((n_bins - 1) * N_FFT_FACTOR);
     if n_fft == 0 {
-        return Err(HarmonicsError::InvalidInput("FFT size must be positive".to_string()));
+        return Err(HarmonicsError::InvalidInput(
+            "FFT size must be positive".to_string(),
+        ));
     }
     let hop = hop_length.unwrap_or(n_fft / HOP_DIVISOR);
     if hop == 0 {
-        return Err(HarmonicsError::InvalidInput("Hop length must be positive".to_string()));
+        return Err(HarmonicsError::InvalidInput(
+            "Hop length must be positive".to_string(),
+        ));
     }
 
     let new_frames = ((orig_frames as f32 * hop as f32) / rate / hop as f32).ceil() as usize;
@@ -437,8 +497,8 @@ pub fn phase_vocoder(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::array;
     use approx::assert_abs_diff_eq;
+    use ndarray::array;
 
     const EPSILON: f32 = 1e-6;
 
@@ -446,9 +506,21 @@ mod tests {
     fn test_interpolate_at() {
         let x = vec![0.1, 0.2, 0.3, 0.4];
         let freqs = vec![0.0, 100.0, 200.0, 300.0];
-        assert_abs_diff_eq!(interpolate_at(&x, &freqs, 100.0).unwrap(), 0.2, epsilon = EPSILON);
-        assert_abs_diff_eq!(interpolate_at(&x, &freqs, 150.0).unwrap(), 0.25, epsilon = EPSILON);
-        assert_abs_diff_eq!(interpolate_at(&x, &freqs, 400.0).unwrap(), 0.0, epsilon = EPSILON);
+        assert_abs_diff_eq!(
+            interpolate_at(&x, &freqs, 100.0).unwrap(),
+            0.2,
+            epsilon = EPSILON
+        );
+        assert_abs_diff_eq!(
+            interpolate_at(&x, &freqs, 150.0).unwrap(),
+            0.25,
+            epsilon = EPSILON
+        );
+        assert_abs_diff_eq!(
+            interpolate_at(&x, &freqs, 400.0).unwrap(),
+            0.0,
+            epsilon = EPSILON
+        );
         assert_abs_diff_eq!(
             interpolate_at(&x, &[100.0, 100.0], 100.0).unwrap(),
             0.1,
@@ -488,12 +560,20 @@ mod tests {
         let freqs = vec![0.0, 100.0];
         let harmonics = vec![1.0];
         let result = interp_harmonics(&x, &freqs, &harmonics);
-        assert!(matches!(result, Err(HarmonicsError::NonFiniteInput(_))), "Expected NonFiniteInput error, got {result:?}");
+        assert!(
+            matches!(result, Err(HarmonicsError::NonFiniteInput(_))),
+            "Expected NonFiniteInput error, got {result:?}"
+        );
     }
 
     #[test]
     fn test_salience() {
-        let s = array![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9], [1.0, 1.1, 1.2]];
+        let s = array![
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6],
+            [0.7, 0.8, 0.9],
+            [1.0, 1.1, 1.2]
+        ];
         let freqs = vec![0.0, 100.0, 200.0, 300.0];
         let harmonics = vec![1.0, 2.0];
         let weights: Option<&[f32]> = Some(&[1.0, 0.5]);

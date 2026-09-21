@@ -75,7 +75,11 @@ impl DtwBuilder<'_> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn dtw<'a>(x: &'a Array2<f32>, y: &'a Array2<f32>) -> DtwBuilder<'a> {
-    DtwBuilder { x, y, metric: DtwMetric::Euclidean }
+    DtwBuilder {
+        x,
+        y,
+        metric: DtwMetric::Euclidean,
+    }
 }
 
 fn dtw_impl(
@@ -88,7 +92,9 @@ fn dtw_impl(
     let nf = x.shape()[0];
 
     if n == 0 || m == 0 {
-        return Err(SequenceError::InvalidInput("Input sequence has zero frames".into()));
+        return Err(SequenceError::InvalidInput(
+            "Input sequence has zero frames".into(),
+        ));
     }
     if nf != y.shape()[0] {
         return Err(SequenceError::InvalidInput(format!(
@@ -275,8 +281,16 @@ fn col_dist(a: ArrayView1<f32>, b: ArrayView1<f32>, metric: DtwMetric) -> f32 {
 /// ```
 pub fn transition_loop(n_states: usize, prob: f32) -> Array2<f32> {
     let prob = prob.clamp(0.0, 1.0);
-    let off = if n_states > 1 { (1.0 - prob) / (n_states - 1) as f32 } else { 0.0 };
-    let log_off = if off > 0.0 { off.ln() } else { f32::NEG_INFINITY };
+    let off = if n_states > 1 {
+        (1.0 - prob) / (n_states - 1) as f32
+    } else {
+        0.0
+    };
+    let log_off = if off > 0.0 {
+        off.ln()
+    } else {
+        f32::NEG_INFINITY
+    };
     let mut t = Array2::from_elem((n_states, n_states), log_off);
     for i in 0..n_states {
         t[[i, i]] = prob.max(f32::MIN_POSITIVE).ln();

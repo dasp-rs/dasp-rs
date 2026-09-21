@@ -13,7 +13,9 @@
 /// assert_eq!(notes, vec!["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]);
 /// ```
 pub fn key_to_notes(_key: &str) -> Vec<String> {
-    let notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    let notes = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
     notes.iter().map(|&n| n.to_string()).collect()
 }
 
@@ -48,15 +50,27 @@ pub fn key_to_degrees(key: &str) -> Vec<usize> {
     } else {
         vec![0, 2, 4, 5, 7, 9, 11]
     };
-    degrees.into_iter().map(|d| (d + tonic_shift) % 12).collect()
+    degrees
+        .into_iter()
+        .map(|d| (d + tonic_shift) % 12)
+        .collect()
 }
 
 /// Maps a lowercase note name to its chromatic semitone index; unknown names map to 0 (C).
 fn note_to_semitone(note: &str) -> usize {
     match note {
-        "c#" | "db" => 1, "d" => 2, "d#" | "eb" => 3, "e" => 4,
-        "f" => 5, "f#" | "gb" => 6, "g" => 7, "g#" | "ab" => 8, "a" => 9,
-        "a#" | "bb" => 10, "b" => 11, _ => 0,
+        "c#" | "db" => 1,
+        "d" => 2,
+        "d#" | "eb" => 3,
+        "e" => 4,
+        "f" => 5,
+        "f#" | "gb" => 6,
+        "g" => 7,
+        "g#" | "ab" => 8,
+        "a" => 9,
+        "a#" | "bb" => 10,
+        "b" => 11,
+        _ => 0,
     }
 }
 
@@ -83,7 +97,11 @@ fn note_to_semitone(note: &str) -> usize {
 /// assert_eq!(svaras, vec!["shadjam", "rishabham1", "gandharam1", "madhyamam1", "panchamam", "dhaivatam1", "nishadam1"]);
 /// ```
 pub fn mela_to_svara(mela: usize) -> MelaToSvaraBuilder {
-    MelaToSvaraBuilder { mela, abbr: false, unicode: false }
+    MelaToSvaraBuilder {
+        mela,
+        abbr: false,
+        unicode: false,
+    }
 }
 
 /// Builder for [`mela_to_svara`].
@@ -118,26 +136,87 @@ impl MelaToSvaraBuilder {
 fn mela_to_svara_impl(mela: usize, abbr: bool, unicode: bool) -> Vec<String> {
     let degrees = mela_to_degrees(mela);
     let svara_full = if unicode {
-        vec!["ṣaḍjam", "ṛṣabham", "gāndhāram", "madhyamam", "pañcamam", "dhaivatam", "niṣādam"]
+        vec![
+            "ṣaḍjam",
+            "ṛṣabham",
+            "gāndhāram",
+            "madhyamam",
+            "pañcamam",
+            "dhaivatam",
+            "niṣādam",
+        ]
     } else {
-        vec!["shadjam", "rishabham", "gandharam", "madhyamam", "panchamam", "dhaivatam", "nishadam"]
+        vec![
+            "shadjam",
+            "rishabham",
+            "gandharam",
+            "madhyamam",
+            "panchamam",
+            "dhaivatam",
+            "nishadam",
+        ]
     };
     let mut result = Vec::new();
     for (i, &deg) in degrees.iter().enumerate() {
         let (base, variant) = match i {
-            1 => ("R", match deg { 1 => "1", 2 => "2", 3 => "3", _ => "" }),
-            2 => ("G", match deg { 2 => "1", 3 => "2", 4 => "3", _ => "" }),
-            3 => ("M", match deg { 5 => "1", 6 => "2", _ => "" }),
+            1 => (
+                "R",
+                match deg {
+                    1 => "1",
+                    2 => "2",
+                    3 => "3",
+                    _ => "",
+                },
+            ),
+            2 => (
+                "G",
+                match deg {
+                    2 => "1",
+                    3 => "2",
+                    4 => "3",
+                    _ => "",
+                },
+            ),
+            3 => (
+                "M",
+                match deg {
+                    5 => "1",
+                    6 => "2",
+                    _ => "",
+                },
+            ),
             4 => ("P", ""),
-            5 => ("D", match deg { 8 => "1", 9 => "2", 10 => "3", _ => "" }),
-            6 => ("N", match deg { 9 => "1", 10 => "2", 11 => "3", _ => "" }),
+            5 => (
+                "D",
+                match deg {
+                    8 => "1",
+                    9 => "2",
+                    10 => "3",
+                    _ => "",
+                },
+            ),
+            6 => (
+                "N",
+                match deg {
+                    9 => "1",
+                    10 => "2",
+                    11 => "3",
+                    _ => "",
+                },
+            ),
             _ => ("S", ""),
         };
         let name = if abbr {
             format!("{base}{variant}")
         } else {
             let idx = match base {
-                "R" => 1, "G" => 2, "M" => 3, "P" => 4, "D" => 5, "N" => 6, _ => 0,
+                "R" => 1,
+                "G" => 2,
+                "M" => 3,
+                "P" => 4,
+                "D" => 5,
+                "N" => 6,
+                _ => 0,
             };
             format!("{}{}", svara_full[idx], variant)
         };
@@ -168,7 +247,9 @@ fn mela_to_svara_impl(mela: usize, abbr: bool, unicode: bool) -> Vec<String> {
 /// assert_eq!(degrees, vec![0, 1, 2, 5, 7, 8, 9]);
 /// ```
 pub fn mela_to_degrees(mela: usize) -> Vec<usize> {
-    if !(1..=72).contains(&mela) { return vec![0, 2, 4, 5, 7, 9, 11]; }
+    if !(1..=72).contains(&mela) {
+        return vec![0, 2, 4, 5, 7, 9, 11];
+    }
     let index = mela - 1;
     let (ri, ga) = match (index % 36) / 6 {
         0 => (1, 2),
@@ -242,22 +323,84 @@ pub fn thaat_to_degrees(thaat: &str) -> Vec<usize> {
 /// ```
 pub fn list_mela() -> Vec<(usize, String)> {
     let names = vec![
-        "Kanakangi", "Ratnangi", "Ganamurti", "Vanaspati", "Manavati", "Tanarupi",
-        "Senavati", "Hanumatodi", "Dhenuka", "Natakapriya", "Kokilapriya", "Rupavati",
-        "Gayakapriya", "Vakulabharanam", "Mayamalavagowla", "Chakravakam", "Suryakantam",
-        "Hatakambari", "Jhankaradhwani", "Natabhairavi", "Keeravani", "Kharaharapriya",
-        "Gourimanohari", "Varunapriya", "Mararanjani", "Charukesi", "Sarasangi",
-        "Harikambhoji", "Dheerasankarabharanam", "Naganandini", "Yagapriya", "Ragavardhini",
-        "Gangeyabhushani", "Vagadheeswari", "Shulini", "Chalanata", "Salagam", "Jalarnavam",
-        "Jhalavarali", "Navaneetam", "Pavani", "Raghupriya", "Gavambodhi", "Bhavapriya",
-        "Shubhapantuvarali", "Shadvidamargini", "Suvarnangi", "Divyamani", "Dhavalambari",
-        "Namanarayani", "Kamavardhini", "Ramapriya", "Gamanashrama", "Vishwambari",
-        "Shamalangi", "Shanmukhapriya", "Simhendramadhyamam", "Hemavati", "Dharmavati",
-        "Neetimati", "Kantamani", "Rishabhapriya", "Latangi", "Vachaspati", "Mechakalyani",
-        "Chitrambari", "Sucharitra", "Jyotiswarupini", "Dhatuvardhani", "Nasikabhushani",
-        "Kosalam", "Rasikapriya",
+        "Kanakangi",
+        "Ratnangi",
+        "Ganamurti",
+        "Vanaspati",
+        "Manavati",
+        "Tanarupi",
+        "Senavati",
+        "Hanumatodi",
+        "Dhenuka",
+        "Natakapriya",
+        "Kokilapriya",
+        "Rupavati",
+        "Gayakapriya",
+        "Vakulabharanam",
+        "Mayamalavagowla",
+        "Chakravakam",
+        "Suryakantam",
+        "Hatakambari",
+        "Jhankaradhwani",
+        "Natabhairavi",
+        "Keeravani",
+        "Kharaharapriya",
+        "Gourimanohari",
+        "Varunapriya",
+        "Mararanjani",
+        "Charukesi",
+        "Sarasangi",
+        "Harikambhoji",
+        "Dheerasankarabharanam",
+        "Naganandini",
+        "Yagapriya",
+        "Ragavardhini",
+        "Gangeyabhushani",
+        "Vagadheeswari",
+        "Shulini",
+        "Chalanata",
+        "Salagam",
+        "Jalarnavam",
+        "Jhalavarali",
+        "Navaneetam",
+        "Pavani",
+        "Raghupriya",
+        "Gavambodhi",
+        "Bhavapriya",
+        "Shubhapantuvarali",
+        "Shadvidamargini",
+        "Suvarnangi",
+        "Divyamani",
+        "Dhavalambari",
+        "Namanarayani",
+        "Kamavardhini",
+        "Ramapriya",
+        "Gamanashrama",
+        "Vishwambari",
+        "Shamalangi",
+        "Shanmukhapriya",
+        "Simhendramadhyamam",
+        "Hemavati",
+        "Dharmavati",
+        "Neetimati",
+        "Kantamani",
+        "Rishabhapriya",
+        "Latangi",
+        "Vachaspati",
+        "Mechakalyani",
+        "Chitrambari",
+        "Sucharitra",
+        "Jyotiswarupini",
+        "Dhatuvardhani",
+        "Nasikabhushani",
+        "Kosalam",
+        "Rasikapriya",
     ];
-    names.into_iter().enumerate().map(|(i, name)| (i + 1, name.to_string())).collect()
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(i, name)| (i + 1, name.to_string()))
+        .collect()
 }
 
 /// Lists the 10 traditional Hindustani thaats.
@@ -313,14 +456,58 @@ pub fn fifths_to_note(unison: &str, fifths: i32, unicode: Option<bool>) -> Strin
     let base = note_to_semitone(&unison.to_lowercase()) as i32;
     let note_idx = (base + semitones + 12) % 12;
     let note = match note_idx {
-        1 => if unicode { "C♯" } else { "C#" }, 2 => "D",
-        3 => if unicode { "D♯" } else { "D#" }, 4 => "E", 5 => "F",
-        6 => if unicode { "F♯" } else { "F#" }, 7 => "G",
-        8 => if unicode { "G♯" } else { "G#" }, 9 => "A",
-        10 => if unicode { "A♯" } else { "A#" }, 11 => "B",
+        1 => {
+            if unicode {
+                "C♯"
+            } else {
+                "C#"
+            }
+        }
+        2 => "D",
+        3 => {
+            if unicode {
+                "D♯"
+            } else {
+                "D#"
+            }
+        }
+        4 => "E",
+        5 => "F",
+        6 => {
+            if unicode {
+                "F♯"
+            } else {
+                "F#"
+            }
+        }
+        7 => "G",
+        8 => {
+            if unicode {
+                "G♯"
+            } else {
+                "G#"
+            }
+        }
+        9 => "A",
+        10 => {
+            if unicode {
+                "A♯"
+            } else {
+                "A#"
+            }
+        }
+        11 => "B",
         _ => "C",
     };
-    format!("{}{}", note, if octave_shift != 0 { octave_shift.to_string() } else { String::new() })
+    format!(
+        "{}{}",
+        note,
+        if octave_shift != 0 {
+            octave_shift.to_string()
+        } else {
+            String::new()
+        }
+    )
 }
 
 /// Converts an interval ratio to Functional Just System (FJS) notation.
@@ -349,10 +536,10 @@ pub fn interval_to_fjs(interval: f32, unison: Option<f32>) -> String {
     let ratio = interval / unison;
     match ratio {
         r if (r - 1.0).abs() < 1e-6 => "1/1".to_string(),
-        r if (r - 3.0/2.0).abs() < 1e-6 => "3/2".to_string(),
-        r if (r - 4.0/3.0).abs() < 1e-6 => "4/3".to_string(),
-        r if (r - 5.0/4.0).abs() < 1e-6 => "5/4".to_string(),
-        r if (r - 6.0/5.0).abs() < 1e-6 => "6/5".to_string(),
+        r if (r - 3.0 / 2.0).abs() < 1e-6 => "3/2".to_string(),
+        r if (r - 4.0 / 3.0).abs() < 1e-6 => "4/3".to_string(),
+        r if (r - 5.0 / 4.0).abs() < 1e-6 => "5/4".to_string(),
+        r if (r - 6.0 / 5.0).abs() < 1e-6 => "6/5".to_string(),
         _ => format!("{ratio:.2}/1"),
     }
 }
@@ -402,7 +589,10 @@ pub fn interval_frequencies(n_bins: usize, fmin: f32, intervals: &[f32]) -> Vec<
 /// ```
 // Repeated halving/doubling keeps the exact powers-of-two arithmetic of the
 // classical derivation; a log2-based rewrite would change rounding.
-#[expect(clippy::while_float, reason = "octave folding is exact in binary floating point")]
+#[expect(
+    clippy::while_float,
+    reason = "octave folding is exact in binary floating point"
+)]
 pub fn pythagorean_intervals(bins_per_octave: Option<usize>) -> Vec<f32> {
     let bins = bins_per_octave.unwrap_or(12);
     let mut intervals = Vec::with_capacity(bins);
@@ -411,8 +601,12 @@ pub fn pythagorean_intervals(bins_per_octave: Option<usize>) -> Vec<f32> {
     for i in 0..bins {
         intervals.push(ratio);
         ratio *= if i % 2 == 0 { fifth } else { 1.0 / fifth };
-        while ratio > 2.0 { ratio /= 2.0; }
-        while ratio < 1.0 { ratio *= 2.0; }
+        while ratio > 2.0 {
+            ratio /= 2.0;
+        }
+        while ratio < 1.0 {
+            ratio *= 2.0;
+        }
     }
     intervals.sort_by(f32::total_cmp);
     intervals
@@ -435,7 +629,10 @@ pub fn pythagorean_intervals(bins_per_octave: Option<usize>) -> Vec<f32> {
 /// assert!(intervals.contains(&1.5));
 /// assert!(intervals.contains(&1.3333333)); // ~4/3
 /// ```
-#[expect(clippy::while_float, reason = "ratio expansion terminates on float bounds by construction")]
+#[expect(
+    clippy::while_float,
+    reason = "ratio expansion terminates on float bounds by construction"
+)]
 pub fn plimit_intervals(primes: &[usize]) -> Vec<f32> {
     let mut intervals = vec![1.0];
     for &p in primes {

@@ -6,7 +6,7 @@
 
 use std::f32::consts::PI;
 
-use dasp_rs::proc::{istft, stft, Window};
+use dasp_rs::proc::{Window, istft, stft};
 
 fn sine(freq_bins: f32, n_fft: usize, len: usize) -> Vec<f32> {
     (0..len)
@@ -29,7 +29,11 @@ fn stft_centered_frame_count() {
 fn stft_window_choice_changes_output() {
     let y = sine(8.0, 256, 2048);
     let hann = stft(&y).n_fft(256).window(Window::Hann).compute().unwrap();
-    let hamm = stft(&y).n_fft(256).window(Window::Hamming).compute().unwrap();
+    let hamm = stft(&y)
+        .n_fft(256)
+        .window(Window::Hamming)
+        .compute()
+        .unwrap();
     assert_eq!(hann.shape(), hamm.shape());
     let diff: f32 = hann
         .iter()
@@ -70,7 +74,17 @@ fn istft_inverts_stft_in_the_interior() {
 fn non_centered_stft_starts_at_sample_zero() {
     // With center=false there is no leading pad: frame 0 covers samples 0..n_fft.
     let y = sine(5.0, 128, 2048);
-    let centered = stft(&y).n_fft(128).hop_length(32).center(true).compute().unwrap();
-    let raw = stft(&y).n_fft(128).hop_length(32).center(false).compute().unwrap();
+    let centered = stft(&y)
+        .n_fft(128)
+        .hop_length(32)
+        .center(true)
+        .compute()
+        .unwrap();
+    let raw = stft(&y)
+        .n_fft(128)
+        .hop_length(32)
+        .center(false)
+        .compute()
+        .unwrap();
     assert!(centered.shape()[1] > raw.shape()[1]);
 }

@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Frequency unit conversions ────────────────────────────────────────────
     let hz: Vec<f32> = vec![261.63, 440.0, 880.0]; // C4, A4, A5
 
-    let mels = util::hz_to_mel(&hz, None);       // None → HTK scale
+    let mels = util::hz_to_mel(&hz, None); // None → HTK scale
     let hz_back = util::mel_to_hz(&mels, None);
     println!("\nhz → mel:  {:?}", mels);
     println!("mel → hz:  {:?}", hz_back);
@@ -67,9 +67,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Frequency bin arrays ──────────────────────────────────────────────────
     // fft_frequencies: linearly spaced 0 → Nyquist
-    let fft_freqs = util::fft_frequencies().sample_rate(sr).n_fft(2048).compute();
-    println!("\nFFT freqs:  {} bins, first={:.1} Hz, last={:.1} Hz",
-        fft_freqs.len(), fft_freqs[0], fft_freqs.last().copied().unwrap_or(0.0));
+    let fft_freqs = util::fft_frequencies()
+        .sample_rate(sr)
+        .n_fft(2048)
+        .compute();
+    println!(
+        "\nFFT freqs:  {} bins, first={:.1} Hz, last={:.1} Hz",
+        fft_freqs.len(),
+        fft_freqs[0],
+        fft_freqs.last().copied().unwrap_or(0.0)
+    );
 
     // mel_frequencies: Mel-scaled filter bank centre frequencies
     let mel_freqs = util::mel_frequencies()
@@ -77,19 +84,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .fmin(0.0)
         .fmax(sr as f32 / 2.0)
         .compute();
-    println!("Mel freqs:  {} bins, first={:.1} Hz, last={:.1} Hz",
-        mel_freqs.len(), mel_freqs[0], mel_freqs.last().copied().unwrap_or(0.0));
+    println!(
+        "Mel freqs:  {} bins, first={:.1} Hz, last={:.1} Hz",
+        mel_freqs.len(),
+        mel_freqs[0],
+        mel_freqs.last().copied().unwrap_or(0.0)
+    );
 
     // cqt_frequencies: logarithmically spaced starting from fmin (C1 by default)
     let cqt_freqs = util::cqt_frequencies(84, None); // 7 octaves × 12 bins
-    println!("CQT freqs:  {} bins, first={:.2} Hz, last={:.1} Hz",
-        cqt_freqs.len(), cqt_freqs[0], cqt_freqs.last().copied().unwrap_or(0.0));
+    println!(
+        "CQT freqs:  {} bins, first={:.2} Hz, last={:.1} Hz",
+        cqt_freqs.len(),
+        cqt_freqs[0],
+        cqt_freqs.last().copied().unwrap_or(0.0)
+    );
 
     // tempo_frequencies: BPM axis for tempogram analysis
-    let tempo_freqs = util::tempo_frequencies(384).sample_rate(sr).hop_length(hop).compute();
-    println!("Tempo freqs: {} bins, BPM range [{:.1}, {:.1}]",
-        tempo_freqs.len(), tempo_freqs.iter().copied().fold(f32::INFINITY, f32::min),
-        tempo_freqs.iter().copied().fold(f32::NEG_INFINITY, f32::max));
+    let tempo_freqs = util::tempo_frequencies(384)
+        .sample_rate(sr)
+        .hop_length(hop)
+        .compute();
+    println!(
+        "Tempo freqs: {} bins, BPM range [{:.1}, {:.1}]",
+        tempo_freqs.len(),
+        tempo_freqs.iter().copied().fold(f32::INFINITY, f32::min),
+        tempo_freqs
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max)
+    );
 
     // ── Tuning helpers ────────────────────────────────────────────────────────
     // a4_to_tuning: semitone offset from A4=440 Hz for a given A4 frequency

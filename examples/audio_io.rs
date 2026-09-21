@@ -12,17 +12,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let samples = tone(440.0, sr).duration(1.0).compute();
     let audio = AudioData::new(samples, sr, 1)?;
     io::export(path, &audio)?;
-    println!("Exported '{}' ({} bytes)", path, std::fs::metadata(path)?.len());
+    println!(
+        "Exported '{}' ({} bytes)",
+        path,
+        std::fs::metadata(path)?.len()
+    );
 
     // ── Decoder builder (recommended for loading) ────────────────────────────
     // Decoder lets you set sample rate, mono-conversion, and time windows.
     let loaded = io::Decoder::new(path)
-        .sample_rate(22050)   // resample on load
-        .mono()               // mix to mono
+        .sample_rate(22050) // resample on load
+        .mono() // mix to mono
         .load()?;
     println!(
         "Loaded:  {} samples at {} Hz ({} channel)",
-        loaded.samples.len(), loaded.sample_rate, loaded.channels
+        loaded.samples.len(),
+        loaded.sample_rate,
+        loaded.channels
     );
 
     // ── Duration helpers ─────────────────────────────────────────────────────
@@ -38,7 +44,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // stream(path, block_length, frame_length, hop_length) → Vec<Vec<f32>>
     let blocks = io::stream(path, 1024, 2048, Some(512))?;
     let total_samples: usize = blocks.iter().map(|b| b.len()).sum();
-    println!("Streamed {} block(s), {} total samples", blocks.len(), total_samples);
+    println!(
+        "Streamed {} block(s), {} total samples",
+        blocks.len(),
+        total_samples
+    );
 
     std::fs::remove_file(path)?;
     Ok(())

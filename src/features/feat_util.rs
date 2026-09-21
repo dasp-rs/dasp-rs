@@ -61,7 +61,12 @@ impl SoftmaskBuilder<'_> {
 /// assert!((mask[[0, 0]] - 0.75).abs() < 1e-5);
 /// ```
 pub fn softmask<'a>(x: &'a Array2<f32>, x_ref: &'a Array2<f32>) -> SoftmaskBuilder<'a> {
-    SoftmaskBuilder { x, x_ref, power: 1.0, split_zeros: false }
+    SoftmaskBuilder {
+        x,
+        x_ref,
+        power: 1.0,
+        split_zeros: false,
+    }
 }
 
 fn softmask_impl(
@@ -75,7 +80,13 @@ fn softmask_impl(
         let a = x[[i, j]];
         let b = x_ref[[i, j]];
         if power == f32::INFINITY {
-            if a > b { 1.0 } else if a < b { 0.0 } else { 0.5 }
+            if a > b {
+                1.0
+            } else if a < b {
+                0.0
+            } else {
+                0.5
+            }
         } else {
             let ap = a.powf(power);
             let bp = b.powf(power);
@@ -135,7 +146,12 @@ impl NormalizeBuilder<'_> {
 
     /// Compute the normalized array.
     pub fn compute(self) -> Array2<f32> {
-        normalize_impl(self.x, self.norm, self.axis, self.threshold.unwrap_or(1e-10))
+        normalize_impl(
+            self.x,
+            self.norm,
+            self.axis,
+            self.threshold.unwrap_or(1e-10),
+        )
     }
 }
 
@@ -158,7 +174,12 @@ impl NormalizeBuilder<'_> {
 /// assert!((n[[1, 0]] - 0.8).abs() < 1e-5);
 /// ```
 pub fn normalize(x: &Array2<f32>) -> NormalizeBuilder<'_> {
-    NormalizeBuilder { x, norm: FeatureNorm::L2, axis: 0, threshold: None }
+    NormalizeBuilder {
+        x,
+        norm: FeatureNorm::L2,
+        axis: 0,
+        threshold: None,
+    }
 }
 
 fn normalize_impl(x: &Array2<f32>, norm: FeatureNorm, axis: usize, threshold: f32) -> Array2<f32> {
@@ -267,7 +288,7 @@ fn sparsify_rows_impl(x: &Array2<f32>, quantile: f32) -> Array2<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{arr2, Array2};
+    use ndarray::{Array2, arr2};
 
     // softmask
 
@@ -331,7 +352,11 @@ mod tests {
     fn test_sparsify_zeros_smallest() {
         let x = arr2(&[[0.001_f32, 1.0, 2.0, 3.0]]);
         let s = sparsify_rows_impl(&x, 0.25);
-        assert_eq!(s[[0, 0]], 0.0, "0.001 is below 25th percentile and should be zeroed");
+        assert_eq!(
+            s[[0, 0]],
+            0.0,
+            "0.001 is below 25th percentile and should be zeroed"
+        );
     }
 
     #[test]

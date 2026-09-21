@@ -70,8 +70,8 @@ pub fn stereo_pan(signal: &AudioData, pan: f32) -> Result<AudioData, PanningErro
 
     let mut samples = Vec::with_capacity(signal.samples.len() * 2);
     for &sample in &signal.samples {
-        samples.push(sample * left_gain);  
-        samples.push(sample * right_gain); 
+        samples.push(sample * left_gain);
+        samples.push(sample * right_gain);
     }
 
     Ok(AudioData {
@@ -171,8 +171,16 @@ pub fn multi_channel_pan(
             let hi = (lo + 1) % n;
             let (lo_ch, lo_angle) = SPEAKERS[lo];
             let (hi_ch, hi_angle) = SPEAKERS[hi];
-            let span = if hi_angle > lo_angle { hi_angle - lo_angle } else { 360.0 - lo_angle + hi_angle };
-            let offset = if azimuth >= lo_angle { azimuth - lo_angle } else { 360.0 - lo_angle + azimuth };
+            let span = if hi_angle > lo_angle {
+                hi_angle - lo_angle
+            } else {
+                360.0 - lo_angle + hi_angle
+            };
+            let offset = if azimuth >= lo_angle {
+                azimuth - lo_angle
+            } else {
+                360.0 - lo_angle + azimuth
+            };
             let pan = (offset / span).clamp(0.0, 1.0);
             gains[lo_ch] = 1.0 - pan;
             gains[hi_ch] = pan;

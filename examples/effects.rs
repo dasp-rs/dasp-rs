@@ -11,7 +11,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Trim silence ──────────────────────────────────────────────────────────
     // Removes leading and trailing silence below top_db below the peak level.
     let (trimmed, (start, end)) = proc::trim(&y).top_db(60.0).compute();
-    println!("Trim:          [{start}..{end}] → {} samples (was {})", trimmed.len(), y.len());
+    println!(
+        "Trim:          [{start}..{end}] → {} samples (was {})",
+        trimmed.len(),
+        y.len()
+    );
 
     // ── Split on silence ──────────────────────────────────────────────────────
     // Returns non-silent intervals as (start, end) sample pairs.
@@ -35,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Preemphasis / deemphasis ─────────────────────────────────────────────
     // Preemphasis boosts high frequencies (common before speech feature extraction).
     let y_pre = proc::preemphasis(&y).coef(0.97).compute();
-    let y_de  = proc::deemphasis(&y_pre).coef(0.97).compute();
+    let y_de = proc::deemphasis(&y_pre).coef(0.97).compute();
     println!("Preemphasis:   {} samples", y_pre.len());
     println!("Deemphasis:    {} samples (roundtrip)", y_de.len());
 
@@ -44,7 +48,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // intervals: (start_sample, end_sample)
     let segs: &[(usize, usize)] = &[(0, 8000), (16000, 22050)];
     let y_remix = proc::remix(&y, segs).align_zeros(true).compute();
-    println!("Remix:         {} samples from {} segments", y_remix.len(), segs.len());
+    println!(
+        "Remix:         {} samples from {} segments",
+        y_remix.len(),
+        segs.len()
+    );
 
     Ok(())
 }

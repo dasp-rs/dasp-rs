@@ -26,12 +26,12 @@
 //! ```no_run
 //! // Option 1: Use prelude for convenience
 //! use dasp_rs::prelude::*;
-//! 
+//!
 //! let audio = Decoder::new("example.wav")
 //!     .sample_rate(22050)
 //!     .mono()
 //!     .load()?;
-//! 
+//!
 //! let duration = get_duration(&audio);
 //! println!("Duration: {} seconds", duration);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -40,12 +40,12 @@
 //! ```no_run
 //! // Option 2: Explicit imports for clarity
 //! use dasp_rs::{types::AudioData, io::{Decoder, export}, util::get_duration};
-//! 
+//!
 //! let audio = Decoder::new("example.wav")
 //!     .sample_rate(22050)
 //!     .mono()
 //!     .load()?;
-//! 
+//!
 //! let duration = get_duration(&audio);
 //! println!("Duration: {} seconds", duration);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -65,12 +65,12 @@
 
 // Internal modules
 mod core;
-mod signal_processing;
-mod signal_generation;
 mod features;
 mod magnitude;
-mod utils;
 mod pitch_core;
+mod signal_generation;
+mod signal_processing;
+mod utils;
 
 /// Core audio data types
 pub mod types {
@@ -79,7 +79,7 @@ pub mod types {
 
 /// Audio input/output operations
 pub mod io {
-    pub use crate::core::io::{load, export, stream, stream_lazy, Decoder};
+    pub use crate::core::io::{Decoder, export, load, stream, stream_lazy};
 }
 
 /// Sample-wise signal operations
@@ -90,31 +90,18 @@ pub mod ops {
 /// Signal processing algorithms
 pub mod proc {
     pub use crate::signal_processing::{
-        mono::*,
-        amplitude::*,
-        mixing::*,
-        panning::*,
-        resampling::*,
+        amplitude::*, effects::*, mixing::*, mono::*, panning::*, resampling::*, time_domain::*,
         time_frequency::*,
-        time_domain::*,
-        effects::*,
     };
 }
 
 /// Audio feature extraction
 pub mod feat {
-    pub use crate::features::{
-        harmonics::*,
-        rhythm::*,
-        manipulation::*,
-        phase_recovery::*,
-        inverse::*,
-        segment::*,
-        decompose::*,
-        sequence::*,
-        feat_util::*,
-    };
     pub use crate::features::spectral::*;
+    pub use crate::features::{
+        decompose::*, feat_util::*, harmonics::*, inverse::*, manipulation::*, phase_recovery::*,
+        rhythm::*, segment::*, sequence::*,
+    };
 }
 
 /// Magnitude spectrum operations
@@ -129,12 +116,7 @@ pub mod pitch {
 
 /// Utility functions
 pub mod util {
-    pub use crate::utils::{
-        time::*,
-        frequency::*,
-        notation::*,
-        array::*,
-    };
+    pub use crate::utils::{array::*, frequency::*, notation::*, time::*};
 }
 
 /// Signal generation
@@ -150,7 +132,7 @@ pub mod generate {
 /// # Example
 /// ```no_run
 /// use dasp_rs::prelude::*;
-/// 
+///
 /// // Now you can use common items directly
 /// let audio = Decoder::new("file.wav").mono().load()?;
 /// let duration = get_duration(&audio);
@@ -159,27 +141,20 @@ pub mod generate {
 pub mod prelude {
     // Core types
     pub use crate::core::{AudioData, AudioError};
-    
+
     // I/O operations
     pub use crate::core::io::{Decoder, export};
-    
+
     // Utility functions
-    pub use crate::utils::time::get_duration;
     pub use crate::utils::frequency::{hz_to_midi, midi_to_hz};
-    
+    pub use crate::utils::time::get_duration;
+
     // Common signal processing
-    pub use crate::signal_processing::{
-        mono::to_mono,
-        resampling::resample,
-        time_frequency::stft,
-    };
-    
+    pub use crate::signal_processing::{mono::to_mono, resampling::resample, time_frequency::stft};
+
     // Common features
-    pub use crate::features::{
-        harmonics::salience,
-        rhythm::tempo,
-    };
     pub use crate::features::spectral::spectral;
+    pub use crate::features::{harmonics::salience, rhythm::tempo};
 
     // Pitch operations
     pub use crate::pitch_core::*;

@@ -193,11 +193,7 @@ pub fn subtract_signals(
         .enumerate()
         .filter_map(|(i, (&s1, &s2))| {
             let result = s1 - s2;
-            if result.is_finite() {
-                None
-            } else {
-                Some(i)
-            }
+            if result.is_finite() { None } else { Some(i) }
         })
         .collect();
     if !non_finite.is_empty() {
@@ -269,11 +265,7 @@ pub fn multiply_signals(
         .enumerate()
         .filter_map(|(i, (&s1, &s2))| {
             let result = s1 * s2;
-            if result.is_finite() {
-                None
-            } else {
-                Some(i)
-            }
+            if result.is_finite() { None } else { Some(i) }
         })
         .collect();
     if !non_finite.is_empty() {
@@ -349,11 +341,7 @@ pub fn divide_signals(
                 return None;
             }
             let result = s1 / s2;
-            if result.is_finite() {
-                None
-            } else {
-                Some(i)
-            }
+            if result.is_finite() { None } else { Some(i) }
         })
         .collect();
     if !non_finite.is_empty() {
@@ -452,11 +440,7 @@ pub fn scalar_operation(
                     s / scalar
                 }
             };
-            if result.is_finite() {
-                None
-            } else {
-                Some(i)
-            }
+            if result.is_finite() { None } else { Some(i) }
         })
         .collect();
 
@@ -473,13 +457,11 @@ pub fn scalar_operation(
     let samples: Vec<f32> = signal
         .samples
         .par_iter()
-        .map(|&s| {
-            match op {
-                ScalarOp::Add => s + scalar,
-                ScalarOp::Subtract => s - scalar,
-                ScalarOp::Multiply => s * scalar,
-                ScalarOp::Divide => s / scalar,
-            }
+        .map(|&s| match op {
+            ScalarOp::Add => s + scalar,
+            ScalarOp::Subtract => s - scalar,
+            ScalarOp::Multiply => s * scalar,
+            ScalarOp::Divide => s / scalar,
         })
         .collect();
 

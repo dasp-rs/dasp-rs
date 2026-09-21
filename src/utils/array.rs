@@ -22,7 +22,9 @@ use ndarray::{Array1, Array2, Axis};
 /// ```
 pub fn localmax(x: &[f32]) -> Vec<bool> {
     let n = x.len();
-    if n == 0 { return vec![]; }
+    if n == 0 {
+        return vec![];
+    }
     let mut out = vec![false; n];
     for i in 0..n {
         let prev = if i > 0 { x[i] > x[i - 1] } else { true };
@@ -47,7 +49,9 @@ pub fn localmax(x: &[f32]) -> Vec<bool> {
 /// ```
 pub fn localmin(x: &[f32]) -> Vec<bool> {
     let n = x.len();
-    if n == 0 { return vec![]; }
+    if n == 0 {
+        return vec![];
+    }
     let mut out = vec![false; n];
     for i in 0..n {
         let prev = if i > 0 { x[i] < x[i - 1] } else { true };
@@ -74,22 +78,40 @@ pub struct PeakPickBuilder<'a> {
 impl PeakPickBuilder<'_> {
     /// Samples before peak that must all be ≤ peak (default: 3).
     #[must_use]
-    pub fn pre_max(mut self, v: usize) -> Self { self.pre_max = v; self }
+    pub fn pre_max(mut self, v: usize) -> Self {
+        self.pre_max = v;
+        self
+    }
     /// Samples after peak that must all be ≤ peak (default: 3).
     #[must_use]
-    pub fn post_max(mut self, v: usize) -> Self { self.post_max = v; self }
+    pub fn post_max(mut self, v: usize) -> Self {
+        self.post_max = v;
+        self
+    }
     /// Samples before peak used to compute the mean threshold (default: 3).
     #[must_use]
-    pub fn pre_avg(mut self, v: usize) -> Self { self.pre_avg = v; self }
+    pub fn pre_avg(mut self, v: usize) -> Self {
+        self.pre_avg = v;
+        self
+    }
     /// Samples after peak used to compute the mean threshold (default: 3).
     #[must_use]
-    pub fn post_avg(mut self, v: usize) -> Self { self.post_avg = v; self }
+    pub fn post_avg(mut self, v: usize) -> Self {
+        self.post_avg = v;
+        self
+    }
     /// Minimum amount by which peak must exceed the local mean (default: 0.07).
     #[must_use]
-    pub fn delta(mut self, v: f32) -> Self { self.delta = v; self }
+    pub fn delta(mut self, v: f32) -> Self {
+        self.delta = v;
+        self
+    }
     /// Minimum number of samples between consecutive peaks (default: 30).
     #[must_use]
-    pub fn wait(mut self, v: usize) -> Self { self.wait = v; self }
+    pub fn wait(mut self, v: usize) -> Self {
+        self.wait = v;
+        self
+    }
 
     /// Compute peak indices.
     pub fn compute(self) -> Vec<usize> {
@@ -122,7 +144,15 @@ impl PeakPickBuilder<'_> {
 /// assert!(peaks.contains(&2));
 /// ```
 pub fn peak_pick(x: &[f32]) -> PeakPickBuilder<'_> {
-    PeakPickBuilder { x, pre_max: 3, post_max: 3, pre_avg: 3, post_avg: 3, delta: 0.07, wait: 30 }
+    PeakPickBuilder {
+        x,
+        pre_max: 3,
+        post_max: 3,
+        pre_avg: 3,
+        post_avg: 3,
+        delta: 0.07,
+        wait: 30,
+    }
 }
 
 fn peak_pick_impl(
@@ -135,7 +165,9 @@ fn peak_pick_impl(
     wait: usize,
 ) -> Vec<usize> {
     let n = x.len();
-    if n == 0 { return vec![]; }
+    if n == 0 {
+        return vec![];
+    }
 
     let mut peaks = Vec::new();
     let mut last_peak: Option<usize> = None;
@@ -147,7 +179,10 @@ fn peak_pick_impl(
         let hi_avg = (i + post_avg + 1).min(n);
 
         // Local max check
-        let local_max = x[lo_max..hi_max].iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let local_max = x[lo_max..hi_max]
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
         if x[i] < local_max {
             continue;
         }
@@ -191,7 +226,10 @@ pub struct FrameBuilder<'a> {
 impl FrameBuilder<'_> {
     /// Set the hop length in samples (default: 512).
     #[must_use]
-    pub fn hop_length(mut self, v: usize) -> Self { self.hop_length = v; self }
+    pub fn hop_length(mut self, v: usize) -> Self {
+        self.hop_length = v;
+        self
+    }
 
     /// Compute the framed matrix of shape `(frame_length, n_frames)`.
     pub fn compute(self) -> Array2<f32> {
@@ -215,7 +253,11 @@ impl FrameBuilder<'_> {
 /// assert_eq!(f[[0, 1]], 2.0);
 /// ```
 pub fn frame(y: &[f32], frame_length: usize) -> FrameBuilder<'_> {
-    FrameBuilder { y, frame_length, hop_length: 512 }
+    FrameBuilder {
+        y,
+        frame_length,
+        hop_length: 512,
+    }
 }
 
 fn frame_impl(y: &[f32], frame_length: usize, hop_length: usize) -> Array2<f32> {
@@ -306,12 +348,18 @@ pub struct SyncBuilder<'a> {
 impl SyncBuilder<'_> {
     /// Set the aggregation function (default: [`SyncAggregate::Mean`]).
     #[must_use]
-    pub fn aggregate(mut self, v: SyncAggregate) -> Self { self.aggregate = v; self }
+    pub fn aggregate(mut self, v: SyncAggregate) -> Self {
+        self.aggregate = v;
+        self
+    }
 
     /// If `true`, prepend a segment `[0, frames[0])` and append `[frames[-1], n_frames)`
     /// so the entire time axis is covered (default: `true`).
     #[must_use]
-    pub fn pad(mut self, v: bool) -> Self { self.pad = v; self }
+    pub fn pad(mut self, v: bool) -> Self {
+        self.pad = v;
+        self
+    }
 
     /// Compute the synchronized feature matrix.
     pub fn compute(self) -> Array2<f32> {
@@ -339,7 +387,12 @@ impl SyncBuilder<'_> {
 /// assert_eq!(s.shape()[1], 3); // 3 segments: [0,3), [3,6), [6,10)
 /// ```
 pub fn sync<'a>(data: &'a Array2<f32>, frames: &'a [usize]) -> SyncBuilder<'a> {
-    SyncBuilder { data, frames, aggregate: SyncAggregate::Mean, pad: true }
+    SyncBuilder {
+        data,
+        frames,
+        aggregate: SyncAggregate::Mean,
+        pad: true,
+    }
 }
 
 fn sync_impl(
@@ -353,19 +406,27 @@ fn sync_impl(
 
     let mut bounds: Vec<usize> = frames.iter().map(|&f| f.min(n_frames)).collect();
     if pad {
-        if bounds.first() != Some(&0) { bounds.insert(0, 0); }
-        if bounds.last() != Some(&n_frames) { bounds.push(n_frames); }
+        if bounds.first() != Some(&0) {
+            bounds.insert(0, 0);
+        }
+        if bounds.last() != Some(&n_frames) {
+            bounds.push(n_frames);
+        }
     }
     bounds.dedup();
 
     let n_segs = bounds.len().saturating_sub(1);
-    if n_segs == 0 { return Array2::zeros((n_features, 0)); }
+    if n_segs == 0 {
+        return Array2::zeros((n_features, 0));
+    }
 
     let mut out = Array2::zeros((n_features, n_segs));
     for s in 0..n_segs {
         let lo = bounds[s];
         let hi = bounds[s + 1].min(n_frames);
-        if lo >= hi { continue; }
+        if lo >= hi {
+            continue;
+        }
         for f in 0..n_features {
             let vals: Vec<f32> = (lo..hi).map(|t| data[[f, t]]).collect();
             out[[f, s]] = aggregate_vals(&vals, aggregate);
@@ -375,7 +436,9 @@ fn sync_impl(
 }
 
 fn aggregate_vals(vals: &[f32], mode: SyncAggregate) -> f32 {
-    if vals.is_empty() { return 0.0; }
+    if vals.is_empty() {
+        return 0.0;
+    }
     match mode {
         SyncAggregate::Mean => vals.iter().sum::<f32>() / vals.len() as f32,
         SyncAggregate::Max => vals.iter().copied().fold(f32::NEG_INFINITY, f32::max),
@@ -384,7 +447,11 @@ fn aggregate_vals(vals: &[f32], mode: SyncAggregate) -> f32 {
             let mut v = vals.to_vec();
             v.sort_by(f32::total_cmp);
             let mid = v.len() / 2;
-            if v.len() % 2 == 0 { f32::midpoint(v[mid - 1], v[mid]) } else { v[mid] }
+            if v.len() % 2 == 0 {
+                f32::midpoint(v[mid - 1], v[mid])
+            } else {
+                v[mid]
+            }
         }
     }
 }
@@ -412,11 +479,10 @@ fn aggregate_vals(vals: &[f32], mode: SyncAggregate) -> f32 {
 /// assert_eq!(idx[0], 0); // (0,1) best matches (0,0.8)
 /// assert_eq!(idx[1], 1); // (2,3) best matches (1.9,3.1)
 /// ```
-pub fn match_intervals(
-    intervals_from: &[(f32, f32)],
-    intervals_to: &[(f32, f32)],
-) -> Vec<usize> {
-    if intervals_to.is_empty() { return vec![]; }
+pub fn match_intervals(intervals_from: &[(f32, f32)], intervals_to: &[(f32, f32)]) -> Vec<usize> {
+    if intervals_to.is_empty() {
+        return vec![];
+    }
     intervals_from
         .iter()
         .map(|&(a_start, a_end)| {
@@ -455,13 +521,17 @@ pub fn match_intervals(
 /// ```
 pub fn expand_to(x: &Array1<f32>, axis: usize) -> Array2<f32> {
     if axis == 0 {
-        x.view().insert_axis(Axis(1)).to_owned().into_dimensionality().unwrap_or_else(|_| {
-            Array2::from_shape_fn((x.len(), 1), |(i, _)| x[i])
-        })
+        x.view()
+            .insert_axis(Axis(1))
+            .to_owned()
+            .into_dimensionality()
+            .unwrap_or_else(|_| Array2::from_shape_fn((x.len(), 1), |(i, _)| x[i]))
     } else {
-        x.view().insert_axis(Axis(0)).to_owned().into_dimensionality().unwrap_or_else(|_| {
-            Array2::from_shape_fn((1, x.len()), |(_, j)| x[j])
-        })
+        x.view()
+            .insert_axis(Axis(0))
+            .to_owned()
+            .into_dimensionality()
+            .unwrap_or_else(|_| Array2::from_shape_fn((1, x.len()), |(_, j)| x[j]))
     }
 }
 
@@ -549,7 +619,7 @@ mod tests {
     #[test]
     fn test_match_intervals_basic() {
         let from = vec![(0.0_f32, 1.0), (2.0, 3.0)];
-        let to   = vec![(0.0_f32, 0.8), (1.9, 3.1)];
+        let to = vec![(0.0_f32, 0.8), (1.9, 3.1)];
         let idx = match_intervals(&from, &to);
         assert_eq!(idx[0], 0);
         assert_eq!(idx[1], 1);

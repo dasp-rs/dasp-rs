@@ -46,7 +46,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Merge contiguous frames into k segments by centroid similarity.
     let k = 4_usize;
     let seg_labels = feat::agglomerative(&chroma, k).compute();
-    println!("Agglomerative ({k} segs): {} frame labels", seg_labels.len());
+    println!(
+        "Agglomerative ({k} segs): {} frame labels",
+        seg_labels.len()
+    );
     println!("  Unique segments: {:?}", unique(&seg_labels));
 
     // ── Subsegmentation ───────────────────────────────────────────────────────
@@ -55,13 +58,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // boundaries: frame indices that delimit coarse segments; k: sub-segments per segment.
     let boundaries = vec![chroma.shape()[1] / 4, chroma.shape()[1] / 2];
     let sub_labels = feat::subsegment(&chroma, &boundaries, 2).compute();
-    println!("Subsegmented ({} boundaries → {} sub-boundary indices)", boundaries.len(), sub_labels.len());
+    println!(
+        "Subsegmented ({} boundaries → {} sub-boundary indices)",
+        boundaries.len(),
+        sub_labels.len()
+    );
 
     // ── Beat synchronisation ──────────────────────────────────────────────────
     // Aggregate feature frames to beat-aligned frames.
     let (_, beat_frames) = feat::beat_track(&y, sr).compute()?;
     let sync_chroma = feat::beat_sync(&chroma, &beat_frames).compute();
-    println!("Beat-sync chroma:  {:?} (12 × n_beats)", sync_chroma.shape());
+    println!(
+        "Beat-sync chroma:  {:?} (12 × n_beats)",
+        sync_chroma.shape()
+    );
 
     Ok(())
 }

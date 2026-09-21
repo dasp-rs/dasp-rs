@@ -54,7 +54,11 @@ pub enum TimeDomainError {
 /// assert_eq!(extended.samples, vec![0.0, 0.0, 0.0, 1.0, 2.0, 3.0]);
 /// ```
 pub fn delay(signal: &AudioData, delay_seconds: f32) -> DelayBuilder<'_> {
-    DelayBuilder { signal, delay_seconds, preserve_length: false }
+    DelayBuilder {
+        signal,
+        delay_seconds,
+        preserve_length: false,
+    }
 }
 
 /// Builder for [`delay`].
@@ -397,7 +401,11 @@ pub fn lpc(signal: &AudioData, order: usize) -> Result<Vec<f32>, TimeDomainError
 /// assert_eq!(crossings, vec![1, 3]);
 /// ```
 pub fn zero_crossings(signal: &AudioData) -> ZeroCrossingsBuilder<'_> {
-    ZeroCrossingsBuilder { signal, threshold: None, pad: None }
+    ZeroCrossingsBuilder {
+        signal,
+        threshold: None,
+        pad: None,
+    }
 }
 
 /// Builder for [`zero_crossings`].
@@ -485,7 +493,11 @@ fn zero_crossings_impl(
 /// assert!(compressed[0] > 0.0 && compressed[1] < 0.0);
 /// ```
 pub fn mu_compress(signal: &AudioData) -> MuCompressBuilder<'_> {
-    MuCompressBuilder { signal, mu: 255.0, quantize: false }
+    MuCompressBuilder {
+        signal,
+        mu: 255.0,
+        quantize: false,
+    }
 }
 
 /// Builder for [`mu_compress`].
@@ -582,7 +594,11 @@ fn mu_compress_impl(
 /// assert!(expanded[0] > 0.0 && expanded[1] < 0.0);
 /// ```
 pub fn mu_expand(signal: &AudioData) -> MuExpandBuilder<'_> {
-    MuExpandBuilder { signal, mu: 255.0, quantize: false }
+    MuExpandBuilder {
+        signal,
+        mu: 255.0,
+        quantize: false,
+    }
 }
 
 /// Builder for [`mu_expand`].
@@ -673,7 +689,11 @@ fn mu_expand_impl(
 /// assert_eq!(energy.len(), 4); // (5 - 2) / 1 + 1
 /// ```
 pub fn log_energy(signal: &AudioData) -> LogEnergyBuilder<'_> {
-    LogEnergyBuilder { signal, frame_length: None, hop_length: None }
+    LogEnergyBuilder {
+        signal,
+        frame_length: None,
+        hop_length: None,
+    }
 }
 
 /// Builder for [`log_energy`].
