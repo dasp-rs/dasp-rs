@@ -5,6 +5,7 @@ type: software
 version: 0.5.2
 date-released: 2026-09-21
 license: MIT
+doi: "10.5281/zenodo.22871122"
 repository-code: "https://github.com/dasp-rs/dasp-rs"
 url: "https://crates.io/crates/dasp-rs"
 abstract: "Pure-Rust digital audio signal processing: I/O, STFT/CQT, spectral and MIR features, pitch, and music/phonetics notation."
