@@ -29,6 +29,7 @@ LINE = re.compile(r"(?:REFERENCE ([\w.-]+)|(diagnostic_[\w.-]+)): ([^\r\n]+)")
 NUMBER = re.compile(r"([\w]+)=([-+]?(?:\d+(?:\.\d*)?(?:[eE][-+]?\d+)?|nan|inf(?:inity)?))(?![\w.])", re.IGNORECASE)
 TARGET = re.compile(r"Running tests[/\\]([\w]+)\.rs")
 TEST = re.compile(r"^test ([\w:]+) \.\.\.")
+ANSI_CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 MANIFEST_PATH = FIXTURES / "reference_inputs.json"
@@ -141,11 +142,18 @@ def capture(command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
 
 
+def parsed_lines(log):
+    # Cargo may force color even when piped: its reset sequence separates
+    # "Running" from the target path. Normalize only the parsing view; the
+    # original subprocess output remains untouched in the saved raw log.
+    return ANSI_CSI.sub("", log).splitlines()
+
+
 def observations_from_log(log):
     observations = []
     target = test = None
     occurrences = {}
-    for line in log.splitlines():
+    for line in parsed_lines(log):
         if re.search(r"Running unittests src[/\\]lib\.rs", line):
             target, test = "lib", None
         if match := TARGET.search(line):
@@ -181,7 +189,7 @@ def validate_runs(log, groups, observations):
     target = None
     summaries = {}
     errors = []
-    for line in log.splitlines():
+    for line in parsed_lines(log):
         if re.search(r"Running unittests src[/\\]lib\.rs", line):
             target = "lib"
         if match := TARGET.search(line):
@@ -309,6 +317,31 @@ def self_test():
     log = "\n".join(logs)
     observed = observations_from_log(log)
     require(not validate_runs(log, GROUPS, observed)[1], "complete run accepted")
+    def colored(text):
+        # Match Cargo's actual bold/green prefix and reset after Running;
+        # also exercise libtest styling around test names, status and metrics.
+        return (text.replace("Running", "\x1b[1m\x1b[92m     Running\x1b[0m")
+                .replace("test ", "\x1b[36mtest\x1b[0m ")
+                .replace("ok.", "\x1b[32mok\x1b[0m.")
+                .replace("max_abs=0", "max_abs=\x1b[32m0\x1b[0m"))
+
+    colored_log = colored(log)
+    colored_observed = observations_from_log(colored_log)
+    require(colored_observed == observed, "colored Cargo/libtest observations match plain output")
+    require(validate_runs(colored_log, GROUPS, colored_observed) == validate_runs(log, GROUPS, observed),
+            "colored integration and private library runs match plain output")
+    require(bool(validate_runs(colored_log, GROUPS, colored_observed[:-1])[1]),
+            "colored output still rejects missing metrics")
+    failed_colored = colored(log.replace("test result: ok.", "test result: FAILED."))
+    require(bool(validate_runs(failed_colored, GROUPS, observations_from_log(failed_colored))[1]),
+            "colored output still rejects failed runs")
+    library_start = logs.index("Running unittests src/lib.rs")
+    library_end = next(i for i in range(library_start + 1, len(logs)) if logs[i].startswith("Running "))
+    missing_library = colored("\n".join(logs[:library_start] + logs[library_end:]))
+    require(bool(validate_runs(missing_library, GROUPS, observations_from_log(missing_library))[1]),
+            "colored output still rejects missing private library run")
+    require("\x1b[92m" in colored_log and "\x1b[0m" in colored_log,
+            "parsing preserves original colored log")
     require(bool(validate_runs(log, GROUPS, observed[:-1])[1]), "missing metric rejected")
     nonfinite = observations_from_log(log.replace("max_abs=0", "max_abs=NaN", 1))
     require(bool(validate_runs(log, GROUPS, nonfinite)[1]), "nonfinite metric rejected")

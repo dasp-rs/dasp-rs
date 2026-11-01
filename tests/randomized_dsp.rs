@@ -379,16 +379,15 @@ fn randomized_channel_and_time_operations_preserve_frames() {
             );
         }
         let mono = to_mono(&combined.samples, channels);
-        for frame in 0..frames {
+        assert_eq!(mono.len(), frames, "{context}: downmix frame count");
+        for (frame, &sample) in mono.iter().enumerate() {
             let expected = inputs
                 .iter()
                 .map(|v| f64::from(v.samples[frame]))
                 .sum::<f64>()
                 / channels as f64;
-            assert!(
-                (f64::from(mono[frame]) - expected).abs() < 1e-7,
-                "{context}: downmix"
-            );
+            let error = (f64::from(sample) - expected).abs();
+            assert!(error < 1e-7, "{context}: downmix error {error}");
         }
         let reversed = time_reversal(&combined).expect(&context);
         assert_eq!(
