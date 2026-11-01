@@ -79,35 +79,57 @@ fn clicks_impl(
 ) -> Result<Vec<f32>, GeneratorError> {
     let sample_rate = sr.unwrap_or(44100);
     let hop = hop_length.unwrap_or(512);
-    let max_samples = if let Some(t) = times {
-        let max_time = t.iter().copied().max_by(f32::total_cmp).ok_or_else(|| {
-            GeneratorError::InvalidInput("Times array cannot be empty".to_string())
-        })?;
-        (max_time * sample_rate as f32) as usize + 1
-    } else if let Some(f) = frames {
-        let max_frame = f.iter().copied().max().ok_or_else(|| {
-            GeneratorError::InvalidInput("Frames array cannot be empty".to_string())
-        })?;
-        max_frame * hop + 1
-    } else {
-        44100
+    if sample_rate == 0 || hop == 0 {
+        return Err(GeneratorError::InvalidInput(
+            "Sample rate and hop length must be positive".to_string(),
+        ));
+    }
+    let invalid_offset = || {
+        GeneratorError::InvalidInput(
+            "Click position exceeds the supported signal length".to_string(),
+        )
     };
-    let mut signal = vec![0.0; max_samples];
-
-    if let Some(ts) = times {
-        for &t in ts {
-            let idx = (t * sample_rate as f32) as usize;
-            if idx < signal.len() {
-                signal[idx] = 1.0;
-            }
+    let indices: Vec<usize> = if let Some(times) = times {
+        if times.is_empty() || times.iter().any(|t| !t.is_finite() || *t < 0.0) {
+            return Err(GeneratorError::InvalidInput(
+                "Times must be non-empty, finite and non-negative".to_string(),
+            ));
         }
-    } else if let Some(fs) = frames {
-        for &f in fs {
-            let idx = f * hop;
-            if idx < signal.len() {
-                signal[idx] = 1.0;
-            }
+        times
+            .iter()
+            .map(|&t| {
+                let sample = t * sample_rate as f32;
+                if !sample.is_finite() || sample >= usize::MAX as f32 {
+                    Err(invalid_offset())
+                } else {
+                    Ok(sample as usize)
+                }
+            })
+            .collect::<Result<_, _>>()?
+    } else if let Some(frames) = frames {
+        if frames.is_empty() {
+            return Err(GeneratorError::InvalidInput(
+                "Frames array cannot be empty".to_string(),
+            ));
         }
+        frames
+            .iter()
+            .map(|f| f.checked_mul(hop).ok_or_else(invalid_offset))
+            .collect::<Result<_, _>>()?
+    } else {
+        Vec::new()
+    };
+    let max_samples = match indices.iter().max() {
+        Some(&last) => last.checked_add(1).ok_or_else(invalid_offset)?,
+        None => sample_rate as usize,
+    };
+    let mut signal = Vec::new();
+    signal
+        .try_reserve_exact(max_samples)
+        .map_err(|_| invalid_offset())?;
+    signal.resize(max_samples, 0.0);
+    for idx in indices {
+        signal[idx] = 1.0;
     }
     Ok(signal)
 }
@@ -173,7 +195,11 @@ impl ToneBuilder {
 fn tone_impl(frequency: f32, sr: u32, duration: f32, phase: f32) -> Vec<f32> {
     let len = (duration * sr as f32) as usize;
     (0..len)
-        .map(|n| (2.0 * std::f32::consts::PI * frequency * n as f32 / sr as f32 + phase).cos())
+        .map(|n| {
+            (std::f64::consts::TAU * f64::from(frequency) * n as f64 / f64::from(sr)
+                + f64::from(phase))
+            .cos() as f32
+        })
         .collect()
 }
 
@@ -230,16 +256,19 @@ impl ChirpBuilder {
 /// Internal chirp implementation.
 fn chirp_impl(fmin: f32, fmax: f32, sr: u32, duration: f32) -> Vec<f32> {
     let len = (duration * sr as f32) as usize;
-    let sr_f = sr as f32;
-    let two_pi = 2.0 * std::f32::consts::PI;
+    let sr_f = f64::from(sr);
+    let two_pi = std::f64::consts::TAU;
+    let fmin = f64::from(fmin);
+    let fmax = f64::from(fmax);
+    let duration = f64::from(duration);
     // For linear chirp: f(t) = f0 + (f1 - f0) * t / T
     // Phase is integral of frequency: φ(t) = 2π * ∫[f0 + (f1-f0)*τ/T]dτ
     // φ(t) = 2π * [f0*t + (f1-f0)*t²/(2*T)]
     (0..len)
         .map(|n| {
-            let t = n as f32 / sr_f; // Time in seconds
+            let t = n as f64 / sr_f; // Time in seconds
             let phase = two_pi * (fmin * t + (fmax - fmin) * t * t / (2.0 * duration));
-            phase.cos()
+            phase.cos() as f32
         })
         .collect()
 }

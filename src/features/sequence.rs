@@ -48,8 +48,8 @@ impl DtwBuilder<'_> {
     /// `(0, 0)` to `(n_frames_x − 1, n_frames_y − 1)`.
     ///
     /// # Errors
-    /// Returns an error if either input has zero frames, or if the two inputs
-    /// have different feature dimensions.
+    /// Returns an error for zero frames/features, mismatched feature dimensions,
+    /// nonfinite inputs, or a total cost outside the finite f32 range.
     pub fn compute(self) -> Result<(f32, Vec<(usize, usize)>), SequenceError> {
         dtw_impl(self.x, self.y, self.metric)
     }
@@ -91,9 +91,9 @@ fn dtw_impl(
     let m = y.shape()[1];
     let nf = x.shape()[0];
 
-    if n == 0 || m == 0 {
+    if n == 0 || m == 0 || nf == 0 {
         return Err(SequenceError::InvalidInput(
-            "Input sequence has zero frames".into(),
+            "Input sequence has zero frames or features".into(),
         ));
     }
     if nf != y.shape()[0] {
@@ -101,6 +101,12 @@ fn dtw_impl(
             "Feature dimension mismatch: x={nf}, y={}",
             y.shape()[0]
         )));
+    }
+
+    if !x.iter().chain(y.iter()).all(|v| v.is_finite()) {
+        return Err(SequenceError::InvalidInput(
+            "Features must be finite".into(),
+        ));
     }
 
     // Build DP cost matrix
@@ -121,6 +127,11 @@ fn dtw_impl(
     }
 
     let cost = dp[n - 1][m - 1];
+    if !cost.is_finite() {
+        return Err(SequenceError::InvalidInput(
+            "DTW cost exceeds finite f32 range".into(),
+        ));
+    }
 
     // Backtrack to recover path
     let mut path = Vec::new();
@@ -166,7 +177,8 @@ fn dtw_impl(
 ///
 /// # Errors
 /// Returns an error if inputs are empty or the transition matrix shape doesn't
-/// match `(n_states, n_states)`.
+/// match `(n_states, n_states)`, or either matrix contains NaN or positive infinity.
+/// Negative infinity is accepted to represent an impossible event.
 ///
 /// # Examples
 /// ```no_run
@@ -200,6 +212,16 @@ fn viterbi_impl(
             "log_trans shape {:?} does not match n_states={n_states}",
             log_trans.shape()
         )));
+    }
+
+    if log_prob
+        .iter()
+        .chain(log_trans.iter())
+        .any(|v| v.is_nan() || *v == f32::INFINITY)
+    {
+        return Err(SequenceError::InvalidInput(
+            "Log probabilities must be finite or negative infinity".into(),
+        ));
     }
 
     // delta[t][s] = best log-prob path to state s at frame t
@@ -244,16 +266,28 @@ fn col_dist(a: ArrayView1<f32>, b: ArrayView1<f32>, metric: DtwMetric) -> f32 {
         DtwMetric::Euclidean => a
             .iter()
             .zip(b.iter())
-            .map(|(&x, &y)| (x - y).powi(2))
-            .sum::<f32>()
-            .sqrt(),
+            .map(|(&x, &y)| (f64::from(x) - f64::from(y)).powi(2))
+            .sum::<f64>()
+            .sqrt() as f32,
         DtwMetric::Cosine => {
-            let dot: f32 = a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum();
-            let na = a.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-10);
-            let nb = b.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-10);
-            1.0 - dot / (na * nb)
+            let dot: f64 = a
+                .iter()
+                .zip(b.iter())
+                .map(|(&x, &y)| f64::from(x) * f64::from(y))
+                .sum();
+            let na = a.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>().sqrt();
+            let nb = b.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>().sqrt();
+            if na == 0.0 || nb == 0.0 {
+                1.0
+            } else {
+                (1.0 - (dot / (na * nb)).clamp(-1.0, 1.0)) as f32
+            }
         }
-        DtwMetric::Manhattan => a.iter().zip(b.iter()).map(|(&x, &y)| (x - y).abs()).sum(),
+        DtwMetric::Manhattan => a
+            .iter()
+            .zip(b.iter())
+            .map(|(&x, &y)| (f64::from(x) - f64::from(y)).abs())
+            .sum::<f64>() as f32,
     }
 }
 
@@ -262,7 +296,8 @@ fn col_dist(a: ArrayView1<f32>, b: ArrayView1<f32>, metric: DtwMetric) -> f32 {
 /// Builds a self-loop log-transition matrix.
 ///
 /// Each state remains in itself with probability `prob` and transitions
-/// uniformly to any other state with the remaining probability.
+/// uniformly to any other state with the remaining probability. A single state
+/// is absorbing. Zero-probability transitions are represented by negative infinity.
 ///
 /// # Arguments
 /// * `n_states` — Number of HMM states.
@@ -293,7 +328,7 @@ pub fn transition_loop(n_states: usize, prob: f32) -> Array2<f32> {
     };
     let mut t = Array2::from_elem((n_states, n_states), log_off);
     for i in 0..n_states {
-        t[[i, i]] = prob.max(f32::MIN_POSITIVE).ln();
+        t[[i, i]] = if n_states == 1 { 0.0 } else { prob.ln() };
     }
     t
 }
@@ -319,7 +354,7 @@ pub fn transition_local(n_states: usize, width: usize) -> Array2<f32> {
     let mut t = Array2::from_elem((n_states, n_states), f32::NEG_INFINITY);
     for i in 0..n_states {
         let lo = i.saturating_sub(width);
-        let hi = (i + width + 1).min(n_states);
+        let hi = i.saturating_add(width).saturating_add(1).min(n_states);
         let log_p = -((hi - lo) as f32).ln();
         for j in lo..hi {
             t[[i, j]] = log_p;
@@ -363,7 +398,9 @@ pub fn transition_uniform(n_states: usize) -> Array2<f32> {
 /// `(log_likelihood, state_sequence)` — the same form as [`viterbi`].
 ///
 /// # Errors
-/// Returns an error if any input has incompatible shapes or zero size.
+/// Returns an error if any input has incompatible shapes or zero size, if
+/// posteriors or priors are outside `[0, 1]` or non-finite, or if a zero prior
+/// has a positive posterior. Zero posteriors remain impossible events.
 ///
 /// # Examples
 /// ```no_run
@@ -387,6 +424,15 @@ pub fn viterbi_discriminative(
         return Err(SequenceError::InvalidInput("Empty input".into()));
     }
 
+    if prob
+        .iter()
+        .any(|p| !p.is_finite() || !(0.0..=1.0).contains(p))
+    {
+        return Err(SequenceError::InvalidInput(
+            "Posteriors must be finite and in [0, 1]".into(),
+        ));
+    }
+
     // Estimate priors if not provided
     let priors: Vec<f32> = match p_state {
         Some(p) => {
@@ -403,11 +449,24 @@ pub fn viterbi_discriminative(
             .collect(),
     };
 
+    if priors.iter().enumerate().any(|(s, p)| {
+        !p.is_finite()
+            || !(0.0..=1.0).contains(p)
+            || (*p == 0.0 && prob.row(s).iter().any(|&v| v > 0.0))
+    }) {
+        return Err(SequenceError::InvalidInput(
+            "State priors must be finite probabilities, positive for observed states".into(),
+        ));
+    }
+
     // Convert posteriors to log-likelihoods: log P(obs|state) ≈ log P(state|obs) - log P(state)
     let log_prob = Array2::from_shape_fn((n_states, n_frames), |(s, t)| {
-        let posterior = prob[[s, t]].max(f32::MIN_POSITIVE);
-        let prior = priors[s].max(f32::MIN_POSITIVE);
-        posterior.ln() - prior.ln()
+        let posterior = prob[[s, t]];
+        if posterior == 0.0 {
+            f32::NEG_INFINITY
+        } else {
+            posterior.ln() - priors[s].ln()
+        }
     });
 
     viterbi_impl(&log_prob, log_trans)
@@ -418,7 +477,8 @@ pub fn viterbi_discriminative(
 /// Builds a cyclic log-transition matrix.
 ///
 /// Each state advances to the next with probability `prob` and stays put with
-/// `1 − prob`. State `n − 1` wraps back to state `0`.
+/// `1 − prob`. State `n − 1` wraps back to state `0`. A single state is
+/// absorbing. Zero-probability transitions are represented by negative infinity.
 ///
 /// # Examples
 /// ```
@@ -429,12 +489,12 @@ pub fn viterbi_discriminative(
 /// ```
 pub fn transition_cycle(n_states: usize, prob: f32) -> Array2<f32> {
     let prob = prob.clamp(0.0, 1.0);
-    let stay = (1.0 - prob).max(f32::MIN_POSITIVE).ln();
-    let advance = prob.max(f32::MIN_POSITIVE).ln();
+    let stay = (1.0 - prob).ln();
+    let advance = prob.ln();
     let mut t = Array2::from_elem((n_states, n_states), f32::NEG_INFINITY);
     for i in 0..n_states {
         t[[i, i]] = stay;
-        t[[i, (i + 1) % n_states]] = advance;
+        t[[i, (i + 1) % n_states]] = if n_states == 1 { 0.0 } else { advance };
     }
     t
 }
@@ -454,8 +514,8 @@ pub fn transition_cycle(n_states: usize, prob: f32) -> Array2<f32> {
 /// ```
 pub fn transition_acyclic(n_states: usize, prob: f32) -> Array2<f32> {
     let prob = prob.clamp(0.0, 1.0);
-    let stay = (1.0 - prob).max(f32::MIN_POSITIVE).ln();
-    let advance = prob.max(f32::MIN_POSITIVE).ln();
+    let stay = (1.0 - prob).ln();
+    let advance = prob.ln();
     let mut t = Array2::from_elem((n_states, n_states), f32::NEG_INFINITY);
     for i in 0..n_states {
         t[[i, i]] = stay;
@@ -485,7 +545,8 @@ pub fn transition_acyclic(n_states: usize, prob: f32) -> Array2<f32> {
 /// `(log_likelihood, states)` where `states[t] ∈ {0, 1}`.
 ///
 /// # Errors
-/// Returns an error if `prob` is empty or `log_trans` is not 2×2.
+/// Returns an error if `prob` is empty, has non-finite values or values outside
+/// `[0, 1]`, or if `log_trans` is not 2×2 or contains invalid log probabilities.
 ///
 /// # Examples
 /// ```
@@ -511,9 +572,18 @@ pub fn viterbi_binary(
         ));
     }
 
+    if prob
+        .iter()
+        .any(|p| !p.is_finite() || !(0.0..=1.0).contains(p))
+    {
+        return Err(SequenceError::InvalidInput(
+            "Posteriors must be finite and in [0, 1]".into(),
+        ));
+    }
+
     // Build 2×n_frames log-prob from posterior P(state=1)
     let log_prob = Array2::from_shape_fn((2, n_frames), |(s, t)| {
-        let p = prob[t].clamp(f32::MIN_POSITIVE, 1.0 - f32::MIN_POSITIVE);
+        let p = prob[t];
         if s == 1 { p.ln() } else { (1.0 - p).ln() }
     });
 

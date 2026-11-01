@@ -20,7 +20,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! dasp-rs = "0.4"
+//! dasp-rs = "0.5"
 //! ```
 //!
 //! ```no_run

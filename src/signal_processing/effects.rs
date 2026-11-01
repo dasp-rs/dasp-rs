@@ -55,7 +55,7 @@ impl TimeStretchBuilder<'_> {
 /// Stretches or compresses a signal in time without altering pitch.
 ///
 /// Uses the phase vocoder. `rate > 1` speeds up playback (shorter output),
-/// `rate < 1` slows down (longer output).
+/// `rate < 1` slows down (longer output). Output length is `round(y.len() / rate)`.
 ///
 /// # Examples
 /// ```no_run
@@ -92,6 +92,12 @@ fn time_stretch_impl(
             "n_fft and hop_length must be positive".into(),
         ));
     }
+    let output_length = (y.len() as f64 / f64::from(rate)).round();
+    if output_length >= (isize::MAX as usize / size_of::<f32>()) as f64 {
+        return Err(EffectsError::InvalidParameter(
+            "Stretched length exceeds the supported range".into(),
+        ));
+    }
     let spec = stft(y)
         .n_fft(n_fft)
         .hop_length(hop_length)
@@ -102,6 +108,7 @@ fn time_stretch_impl(
     istft(&stretched)
         .n_fft(n_fft)
         .hop_length(hop_length)
+        .length(output_length as usize)
         .compute()
         .map_err(|e| EffectsError::Dsp(e.to_string()))
 }
@@ -257,17 +264,17 @@ pub fn trim(y: &[f32]) -> TrimBuilder<'_> {
     }
 }
 
-fn rms_frames(y: &[f32], frame_length: usize, hop_length: usize) -> Vec<f32> {
+fn rms_frames(y: &[f32], frame_length: usize, hop_length: usize) -> Vec<f64> {
     if y.is_empty() || frame_length == 0 || hop_length == 0 {
         return Vec::new();
     }
-    let n_frames = y.len().saturating_sub(frame_length) / hop_length + 1;
+    let n_frames = (y.len() - 1) / hop_length + 1;
     (0..n_frames)
         .map(|i| {
             let start = i * hop_length;
-            let end = (start + frame_length).min(y.len());
+            let end = start.saturating_add(frame_length).min(y.len());
             let sl = &y[start..end];
-            let mean_sq = sl.iter().map(|&v| v * v).sum::<f32>() / sl.len() as f32;
+            let mean_sq = sl.iter().map(|&v| f64::from(v).powi(2)).sum::<f64>() / sl.len() as f64;
             mean_sq.sqrt()
         })
         .collect()
@@ -283,16 +290,23 @@ fn trim_impl(
     if rms.is_empty() {
         return (y.to_vec(), (0, y.len()));
     }
-    let peak = rms.iter().copied().fold(0.0_f32, f32::max).max(1e-10);
-    let threshold = peak * 10.0_f32.powf(-top_db / 20.0);
+    let peak = rms.iter().copied().fold(0.0_f64, f64::max);
+    if peak == 0.0 {
+        return (Vec::new(), (0, 0));
+    }
+    let threshold = peak * 10.0_f64.powf(-f64::from(top_db) / 20.0);
 
-    let first_frame = rms.iter().position(|r| *r >= threshold).unwrap_or(0);
+    let Some(first_frame) = rms.iter().position(|r| *r > 0.0 && *r >= threshold) else {
+        return (Vec::new(), (0, 0));
+    };
     let last_frame = (0..rms.len())
-        .rfind(|&i| rms[i] >= threshold)
+        .rfind(|&i| rms[i] > 0.0 && rms[i] >= threshold)
         .unwrap_or_else(|| rms.len().saturating_sub(1));
 
     let start = (first_frame * hop_length).min(y.len());
-    let end = ((last_frame + 1) * hop_length + frame_length).min(y.len());
+    let end = (last_frame * hop_length)
+        .saturating_add(frame_length)
+        .min(y.len());
     (y[start..end].to_vec(), (start, end))
 }
 
@@ -368,25 +382,25 @@ fn split_impl(
     if rms.is_empty() {
         return Vec::new();
     }
-    let peak = rms.iter().copied().fold(0.0_f32, f32::max).max(1e-10);
-    let threshold = peak * 10.0_f32.powf(-top_db / 20.0);
+    let peak = rms.iter().copied().fold(0.0_f64, f64::max);
+    if peak == 0.0 {
+        return Vec::new();
+    }
+    let threshold = peak * 10.0_f64.powf(-f64::from(top_db) / 20.0);
 
     let mut intervals: Vec<(usize, usize)> = Vec::new();
-    let mut in_segment = false;
-    let mut seg_start = 0usize;
-
     for (i, &r) in rms.iter().enumerate() {
-        if r >= threshold && !in_segment {
-            seg_start = i * hop_length;
-            in_segment = true;
-        } else if r < threshold && in_segment {
-            let end = (i * hop_length + frame_length).min(y.len());
-            intervals.push((seg_start, end));
-            in_segment = false;
+        if r > 0.0 && r >= threshold {
+            let start = i * hop_length;
+            let end = start.saturating_add(frame_length).min(y.len());
+            if let Some(last) = intervals.last_mut() {
+                if start <= last.1 {
+                    last.1 = last.1.max(end);
+                    continue;
+                }
+            }
+            intervals.push((start, end));
         }
-    }
-    if in_segment {
-        intervals.push((seg_start, y.len()));
     }
     intervals
 }
@@ -611,7 +625,7 @@ mod tests {
     fn test_time_stretch_silence() {
         let y = vec![0.0_f32; 8192];
         let out = time_stretch_impl(&y, 2.0, 2048, 512).unwrap();
-        assert!(!out.is_empty());
+        assert_eq!(out.len(), 4096);
         assert!(out.iter().all(|&v| v.abs() < 1e-4));
     }
 
@@ -626,8 +640,8 @@ mod tests {
     fn test_trim_all_silence() {
         let y = vec![0.0_f32; 8192];
         let (trimmed, (start, end)) = trim_impl(&y, 60.0, 2048, 512);
-        // All silence: trim should return the whole signal (no non-silent content found)
-        let _ = (trimmed, start, end);
+        assert_eq!(trimmed, Vec::<f32>::new());
+        assert_eq!((start, end), (0, 0));
     }
 
     #[test]
@@ -637,7 +651,7 @@ mod tests {
         let (trimmed, (start, end)) = trim_impl(&y, 60.0, 512, 128);
         assert!(start < 3000 + 512, "trim start should be near signal onset");
         assert!(end > 4000 - 512, "trim end should be near signal offset");
-        assert!(!trimmed.is_empty());
+        assert_eq!(trimmed, y[start..end]);
     }
 
     #[test]
@@ -655,7 +669,7 @@ mod tests {
 
     #[test]
     fn test_preemphasis_empty() {
-        assert!(preemphasis_impl(&[], 0.97).is_empty());
+        assert_eq!(preemphasis_impl(&[], 0.97), Vec::<f32>::new());
     }
 
     #[test]

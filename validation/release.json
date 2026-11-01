@@ -1,0 +1,467 @@
+{
+  "schema_version": 1,
+  "scope": "Local release validation and evidence catalog; does not publish or assert ecosystem maturity.",
+  "inventory_scope": "Exported free functions in source modules; builder methods/types are not a complete rustdoc API inventory.",
+  "api_inventory": {
+    "io::load": "src/core/io.rs",
+    "io::export": "src/core/io.rs",
+    "io::stream": "src/core/io.rs",
+    "io::stream_lazy": "src/core/io.rs",
+    "ops::mix_signals": "src/core/ops.rs",
+    "ops::subtract_signals": "src/core/ops.rs",
+    "ops::multiply_signals": "src/core/ops.rs",
+    "ops::divide_signals": "src/core/ops.rs",
+    "ops::scalar_operation": "src/core/ops.rs",
+    "feat::decompose": "src/features/decompose.rs",
+    "feat::softmask": "src/features/feat_util.rs",
+    "feat::normalize": "src/features/feat_util.rs",
+    "feat::sparsify_rows": "src/features/feat_util.rs",
+    "feat::interp_harmonics": "src/features/harmonics.rs",
+    "feat::salience": "src/features/harmonics.rs",
+    "feat::f0_harmonics": "src/features/harmonics.rs",
+    "feat::phase_vocoder": "src/features/harmonics.rs",
+    "feat::compute_delta": "src/features/inverse.rs",
+    "feat::mel_to_stft": "src/features/inverse.rs",
+    "feat::mel_to_audio": "src/features/inverse.rs",
+    "feat::mfcc_to_mel": "src/features/inverse.rs",
+    "feat::mfcc_to_audio": "src/features/inverse.rs",
+    "feat::stack_memory": "src/features/manipulation.rs",
+    "feat::temporal_kurtosis": "src/features/manipulation.rs",
+    "feat::zero_crossing_rate": "src/features/manipulation.rs",
+    "feat::griffinlim": "src/features/phase_recovery.rs",
+    "feat::griffinlim_cqt": "src/features/phase_recovery.rs",
+    "feat::tempo": "src/features/rhythm.rs",
+    "feat::tempogram": "src/features/rhythm.rs",
+    "feat::tempogram_ratio": "src/features/rhythm.rs",
+    "feat::onset_strength": "src/features/rhythm.rs",
+    "feat::onset_detect": "src/features/rhythm.rs",
+    "feat::beat_track": "src/features/rhythm.rs",
+    "feat::beat_sync": "src/features/rhythm.rs",
+    "feat::plp": "src/features/rhythm.rs",
+    "feat::fourier_tempogram": "src/features/rhythm.rs",
+    "feat::onset_strength_multi": "src/features/rhythm.rs",
+    "feat::recurrence_matrix": "src/features/segment.rs",
+    "feat::cross_similarity": "src/features/segment.rs",
+    "feat::agglomerative": "src/features/segment.rs",
+    "feat::subsegment": "src/features/segment.rs",
+    "feat::path_enhance": "src/features/segment.rs",
+    "feat::timelag_filter": "src/features/segment.rs",
+    "feat::dtw": "src/features/sequence.rs",
+    "feat::viterbi": "src/features/sequence.rs",
+    "feat::transition_loop": "src/features/sequence.rs",
+    "feat::transition_local": "src/features/sequence.rs",
+    "feat::transition_uniform": "src/features/sequence.rs",
+    "feat::viterbi_discriminative": "src/features/sequence.rs",
+    "feat::transition_cycle": "src/features/sequence.rs",
+    "feat::transition_acyclic": "src/features/sequence.rs",
+    "feat::viterbi_binary": "src/features/sequence.rs",
+    "feat::spectral": "src/features/spectral.rs",
+    "feat::chroma_stft": "src/features/spectral.rs",
+    "feat::chroma_cqt": "src/features/spectral.rs",
+    "feat::chroma_cens": "src/features/spectral.rs",
+    "feat::melspectrogram": "src/features/spectral.rs",
+    "feat::mfcc": "src/features/spectral.rs",
+    "feat::rms": "src/features/spectral.rs",
+    "feat::spectral_centroid": "src/features/spectral.rs",
+    "feat::spectral_bandwidth": "src/features/spectral.rs",
+    "feat::spectral_contrast": "src/features/spectral.rs",
+    "feat::spectral_flatness": "src/features/spectral.rs",
+    "feat::spectral_rolloff": "src/features/spectral.rs",
+    "feat::poly_features": "src/features/spectral.rs",
+    "feat::tonnetz": "src/features/spectral.rs",
+    "feat::spectral_flux": "src/features/spectral.rs",
+    "feat::spectral_entropy": "src/features/spectral.rs",
+    "feat::pitch_chroma": "src/features/spectral.rs",
+    "feat::cmvn": "src/features/spectral.rs",
+    "feat::hpss": "src/features/spectral.rs",
+    "feat::pitch_autocorr": "src/features/spectral.rs",
+    "feat::vad_features": "src/features/spectral.rs",
+    "feat::spectral_subband_centroids": "src/features/spectral.rs",
+    "feat::formant_frequencies": "src/features/spectral.rs",
+    "feat::harmonic": "src/features/spectral.rs",
+    "feat::percussive": "src/features/spectral.rs",
+    "feat::chroma_vqt": "src/features/spectral.rs",
+    "mag::amplitude_to_db": "src/magnitude/scaling.rs",
+    "mag::db_to_amplitude": "src/magnitude/scaling.rs",
+    "mag::power_to_db": "src/magnitude/scaling.rs",
+    "mag::db_to_power": "src/magnitude/scaling.rs",
+    "mag::perceptual_weighting": "src/magnitude/scaling.rs",
+    "mag::frequency_weighting": "src/magnitude/scaling.rs",
+    "mag::multi_frequency_weighting": "src/magnitude/scaling.rs",
+    "mag::a_weighting": "src/magnitude/scaling.rs",
+    "mag::b_weighting": "src/magnitude/scaling.rs",
+    "mag::c_weighting": "src/magnitude/scaling.rs",
+    "mag::d_weighting": "src/magnitude/scaling.rs",
+    "mag::pcen": "src/magnitude/scaling.rs",
+    "pitch::pyin": "src/pitch_core/tuning.rs",
+    "pitch::yin": "src/pitch_core/tuning.rs",
+    "pitch::estimate_tuning": "src/pitch_core/tuning.rs",
+    "pitch::pitch_tuning": "src/pitch_core/tuning.rs",
+    "pitch::piptrack": "src/pitch_core/tuning.rs",
+    "generate::clicks": "src/signal_generation/generators.rs",
+    "generate::tone": "src/signal_generation/generators.rs",
+    "generate::chirp": "src/signal_generation/generators.rs",
+    "proc::amplify": "src/signal_processing/amplitude.rs",
+    "proc::attenuate": "src/signal_processing/amplitude.rs",
+    "proc::normalize": "src/signal_processing/amplitude.rs",
+    "proc::time_stretch": "src/signal_processing/effects.rs",
+    "proc::pitch_shift": "src/signal_processing/effects.rs",
+    "proc::trim": "src/signal_processing/effects.rs",
+    "proc::split": "src/signal_processing/effects.rs",
+    "proc::preemphasis": "src/signal_processing/effects.rs",
+    "proc::deemphasis": "src/signal_processing/effects.rs",
+    "proc::remix": "src/signal_processing/effects.rs",
+    "proc::stereo_mix": "src/signal_processing/mixing.rs",
+    "proc::multi_channel_mix": "src/signal_processing/mixing.rs",
+    "proc::dry_wet_mix": "src/signal_processing/mixing.rs",
+    "proc::to_mono": "src/signal_processing/mono.rs",
+    "proc::stereo_pan": "src/signal_processing/panning.rs",
+    "proc::multi_channel_pan": "src/signal_processing/panning.rs",
+    "proc::resample": "src/signal_processing/resampling.rs",
+    "proc::delay": "src/signal_processing/time_domain.rs",
+    "proc::time_reversal": "src/signal_processing/time_domain.rs",
+    "proc::time_crop": "src/signal_processing/time_domain.rs",
+    "proc::zero_padding": "src/signal_processing/time_domain.rs",
+    "proc::autocorrelate": "src/signal_processing/time_domain.rs",
+    "proc::lpc": "src/signal_processing/time_domain.rs",
+    "proc::zero_crossings": "src/signal_processing/time_domain.rs",
+    "proc::mu_compress": "src/signal_processing/time_domain.rs",
+    "proc::mu_expand": "src/signal_processing/time_domain.rs",
+    "proc::log_energy": "src/signal_processing/time_domain.rs",
+    "proc::window_vec": "src/signal_processing/time_frequency.rs",
+    "proc::stft": "src/signal_processing/time_frequency.rs",
+    "proc::istft": "src/signal_processing/time_frequency.rs",
+    "proc::magphase": "src/signal_processing/time_frequency.rs",
+    "proc::reassigned_spectrogram": "src/signal_processing/time_frequency.rs",
+    "proc::cqt": "src/signal_processing/time_frequency.rs",
+    "proc::icqt": "src/signal_processing/time_frequency.rs",
+    "proc::hybrid_cqt": "src/signal_processing/time_frequency.rs",
+    "proc::pseudo_cqt": "src/signal_processing/time_frequency.rs",
+    "proc::vqt": "src/signal_processing/time_frequency.rs",
+    "proc::fmt": "src/signal_processing/time_frequency.rs",
+    "proc::iirt": "src/signal_processing/time_frequency.rs",
+    "proc::phasor": "src/signal_processing/time_frequency.rs",
+    "util::localmax": "src/utils/array.rs",
+    "util::localmin": "src/utils/array.rs",
+    "util::peak_pick": "src/utils/array.rs",
+    "util::frame": "src/utils/array.rs",
+    "util::pad_center": "src/utils/array.rs",
+    "util::fix_length": "src/utils/array.rs",
+    "util::sync": "src/utils/array.rs",
+    "util::match_intervals": "src/utils/array.rs",
+    "util::expand_to": "src/utils/array.rs",
+    "util::hz_to_note": "src/utils/frequency.rs",
+    "util::hz_to_midi": "src/utils/frequency.rs",
+    "util::hz_to_svara_h": "src/utils/frequency.rs",
+    "util::hz_to_svara_c": "src/utils/frequency.rs",
+    "util::hz_to_fjs": "src/utils/frequency.rs",
+    "util::midi_to_hz": "src/utils/frequency.rs",
+    "util::midi_to_note": "src/utils/frequency.rs",
+    "util::midi_to_svara_h": "src/utils/frequency.rs",
+    "util::midi_to_svara_c": "src/utils/frequency.rs",
+    "util::note_to_hz": "src/utils/frequency.rs",
+    "util::note_to_midi": "src/utils/frequency.rs",
+    "util::note_to_svara_h": "src/utils/frequency.rs",
+    "util::note_to_svara_c": "src/utils/frequency.rs",
+    "util::hz_to_mel": "src/utils/frequency.rs",
+    "util::hz_to_octs": "src/utils/frequency.rs",
+    "util::mel_to_hz": "src/utils/frequency.rs",
+    "util::octs_to_hz": "src/utils/frequency.rs",
+    "util::a4_to_tuning": "src/utils/frequency.rs",
+    "util::tuning_to_a4": "src/utils/frequency.rs",
+    "util::fft_frequencies": "src/utils/frequency.rs",
+    "util::cqt_frequencies": "src/utils/frequency.rs",
+    "util::mel_frequencies": "src/utils/frequency.rs",
+    "util::tempo_frequencies": "src/utils/frequency.rs",
+    "util::fourier_tempo_frequencies": "src/utils/frequency.rs",
+    "util::key_to_notes": "src/utils/notation.rs",
+    "util::key_to_degrees": "src/utils/notation.rs",
+    "util::mela_to_svara": "src/utils/notation.rs",
+    "util::mela_to_degrees": "src/utils/notation.rs",
+    "util::thaat_to_degrees": "src/utils/notation.rs",
+    "util::list_mela": "src/utils/notation.rs",
+    "util::list_thaat": "src/utils/notation.rs",
+    "util::fifths_to_note": "src/utils/notation.rs",
+    "util::interval_to_fjs": "src/utils/notation.rs",
+    "util::interval_frequencies": "src/utils/notation.rs",
+    "util::pythagorean_intervals": "src/utils/notation.rs",
+    "util::plimit_intervals": "src/utils/notation.rs",
+    "util::get_duration": "src/utils/time.rs",
+    "util::get_duration_from_path": "src/utils/time.rs",
+    "util::frames_to_samples": "src/utils/time.rs",
+    "util::frames_to_time": "src/utils/time.rs",
+    "util::samples_to_frames": "src/utils/time.rs",
+    "util::samples_to_time": "src/utils/time.rs",
+    "util::time_to_frames": "src/utils/time.rs",
+    "util::time_to_samples": "src/utils/time.rs",
+    "util::blocks_to_frames": "src/utils/time.rs",
+    "util::blocks_to_samples": "src/utils/time.rs",
+    "util::blocks_to_time": "src/utils/time.rs",
+    "util::samples_like": "src/utils/time.rs",
+    "util::times_like": "src/utils/time.rs",
+    "util::get_samplerate": "src/utils/time.rs"
+  },
+  "evidence_areas": [
+    {
+      "area": "Fourier transforms and effects",
+      "level": "independent_reference",
+      "files": [
+        "tests/reference_transforms.rs",
+        "tests/randomized_dsp.rs",
+        "tests/correctness_regressions.rs"
+      ],
+      "scope": "STFT/ISTFT, phase vocoder, time stretch, resampling; boundary and filter differences have separate budgets."
+    },
+    {
+      "area": "Wavelet transforms and inversion",
+      "level": "independent_reference",
+      "files": [
+        "tests/reference_cqt.rs",
+        "tests/reference_cqt_sweep.rs",
+        "tests/reference_cqt_inverse.rs"
+      ],
+      "scope": "Full-rate CQT/VQT, independent SVD, localization and coefficient objectives; recursive parity and universal waveform recovery are not claimed."
+    },
+    {
+      "area": "IIR and reassignment",
+      "level": "independent_reference",
+      "files": [
+        "tests/reference_iir.rs",
+        "tests/reference_reassignment.rs",
+        "src/signal_processing/time_frequency.rs"
+      ],
+      "scope": "SciPy filter response/impulse and causal RMS; explicit nearest-grid reassigned magnitude."
+    },
+    {
+      "area": "Spectral features",
+      "level": "independent_reference",
+      "files": [
+        "tests/reference_spectral.rs",
+        "tests/randomized_features.rs"
+      ],
+      "scope": "Mel/MFCC, inverse DCT, centroid/bandwidth/rolloff/flatness/contrast/RMS, HPSS and deltas."
+    },
+    {
+      "area": "Magnitude, prediction and sequences",
+      "level": "independent_reference",
+      "files": [
+        "tests/reference_core.rs",
+        "tests/randomized_features.rs"
+      ],
+      "scope": "LPC/autocorrelation, dB/weighting/PCEN/mu-law, DTW/Viterbi; matching estimator/initial-state conventions."
+    },
+    {
+      "area": "Rhythm",
+      "level": "independent_and_analytic",
+      "files": [
+        "tests/reference_rhythm.rs"
+      ],
+      "scope": "Declared flux/tempogram/Fourier/PLP algorithms; exact pulse timing, silent behavior and beat endpoints."
+    },
+    {
+      "area": "Phase recovery and decomposition",
+      "level": "independent_and_objective",
+      "files": [
+        "tests/reference_recovery.rs"
+      ],
+      "scope": "Matched Griffin-Lim iterations; independently generated low-rank NMF targets, objective and gain checks; factors/phases are nonunique."
+    },
+    {
+      "area": "Pitch and tuning",
+      "level": "independent_and_analytic",
+      "files": [
+        "tests/pitch_correctness.rs",
+        "tests/tuning_robustness.rs"
+      ],
+      "scope": "Librosa pitch fixture within documented cents allowance; voicing, analytic tones and scale/sweep tests."
+    },
+    {
+      "area": "Audio workflows",
+      "level": "independent_and_workflow",
+      "files": [
+        "tests/real_audio_workflows.rs",
+        "tests/io_correctness.rs",
+        "tests/fixtures/audio/manifest.json"
+      ],
+      "scope": "Three attributed four-second mono recordings, independent feature summaries, decode/resample/reconstruction/feature consistency and corruption errors."
+    },
+    {
+      "area": "Channels, utilities and robustness",
+      "level": "analytic_and_regression",
+      "files": [
+        "tests/time_domain_robustness.rs",
+        "tests/utilities_magnitude_robustness.rs",
+        "tests/feature_robustness.rs",
+        "tests/transforms_features_robustness.rs",
+        "tests/randomized_dsp.rs",
+        "tests/randomized_features.rs"
+      ],
+      "scope": "Bounded deterministic invariants, malformed inputs, integer and numerical boundaries; not exhaustive input-space coverage."
+    }
+  ],
+  "gates": [
+    {
+      "id": "manifest",
+      "command": [
+        "{python}",
+        "scripts/validate_release.py",
+        "--check"
+      ]
+    },
+    {
+      "id": "reference_runner",
+      "command": [
+        "{python}",
+        "scripts/reference_benchmarks.py",
+        "--self-test"
+      ]
+    },
+    {
+      "id": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ]
+    },
+    {
+      "id": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    },
+    {
+      "id": "debug",
+      "command": [
+        "cargo",
+        "test",
+        "--all-targets"
+      ]
+    },
+    {
+      "id": "release",
+      "command": [
+        "cargo",
+        "test",
+        "--release",
+        "--all-targets"
+      ]
+    },
+    {
+      "id": "doctests",
+      "command": [
+        "cargo",
+        "test",
+        "--doc",
+        "--",
+        "--test-threads=2"
+      ],
+      "maximum_ignored": 20
+    },
+    {
+      "id": "documentation",
+      "command": [
+        "cargo",
+        "doc",
+        "--no-deps"
+      ],
+      "env": {
+        "RUSTDOCFLAGS": "-D warnings"
+      }
+    },
+    {
+      "id": "msrv",
+      "command": [
+        "cargo",
+        "+1.85.0",
+        "test",
+        "--all-targets"
+      ],
+      "env": {
+        "CARGO_TARGET_DIR": "target/msrv"
+      }
+    },
+    {
+      "id": "corpus",
+      "command": [
+        "{python}",
+        "scripts/prepare_audio_corpus.py",
+        "--verify"
+      ]
+    },
+    {
+      "id": "references",
+      "command": [
+        "{python}",
+        "scripts/reference_benchmarks.py",
+        "--check-fixtures",
+        "--python",
+        "{reference_python}"
+      ]
+    },
+    {
+      "id": "performance",
+      "command": [
+        "{python}",
+        "scripts/performance_benchmarks.py",
+        "run",
+        "--repetitions",
+        "15",
+        "--warmup",
+        "3",
+        "--allocation-repetitions",
+        "3",
+        "--rss",
+        "--output",
+        "target/performance-final.json"
+      ],
+      "criterion": "Workloads complete with finite measurements and unchanged source; no wall-clock threshold."
+    }
+  ],
+  "required_ci": {
+    "workflow": ".github/workflows/ci.yml",
+    "jobs": [
+      "test",
+      "release",
+      "quality",
+      "references",
+      "performance"
+    ],
+    "platforms": [
+      "Linux",
+      "macOS",
+      "Windows"
+    ],
+    "local_execution_does_not_verify_remote_ci": true
+  },
+  "remaining_independent_reference_gaps": [
+    "FMT",
+    "chroma/CENS/tonnetz",
+    "formant, polynomial, entropy and subband features",
+    "inverse-mel weighting and complete mel/MFCC-to-audio pipelines",
+    "pitch shifting as an end-to-end effect",
+    "segmentation/clustering and several harmonic utilities"
+  ],
+  "limitations": [
+    "Coverage gaps are not claims that those APIs are untested or defective.",
+    "Guarded inverse CQT is not regularization; finite coefficient improvement does not imply faithful or bounded-amplitude waveform recovery.",
+    "Librosa conventions differ where explicitly documented; no full API/output parity claim.",
+    "Performance reports are workload/machine measurements, not a realtime callback guarantee.",
+    "The three-recording corpus has no annotated pitch, beat, onset, separation or transcript ground truth.",
+    "Randomized and malformed-input sweeps are bounded; arithmetic dimension checks do not prevent every possible resource exhaustion.",
+    "Twenty existing ignored documentation examples remain outside executed doctest coverage."
+  ],
+  "review_rules": [
+    "Every new or changed public operation needs documented units, geometry, input/error behavior and a meaningful regression or reference/invariant check.",
+    "Changes to fixture generators, error budgets, recorded inputs and release criteria must be reviewed with implementation changes.",
+    "Numerical behavior/API changes require changelog notes and maintainer version review before publication.",
+    "Maintain corpus attribution and source hashes; additions need explicit redistribution terms."
+  ]
+}

@@ -24,6 +24,18 @@ pub enum MixingError {
     IncompatibleFormat(String),
 }
 
+fn validate_signal(signal: &AudioData) -> Result<(), MixingError> {
+    signal
+        .validate()
+        .map_err(|e| MixingError::IncompatibleFormat(e.to_string()))?;
+    if signal.samples.iter().any(|v| !v.is_finite()) {
+        return Err(MixingError::InvalidParameter(
+            "Samples must be finite".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Combines two mono signals into a stereo signal.
 ///
 /// This function takes two mono audio signals and interleaves them into a single
@@ -52,6 +64,8 @@ pub enum MixingError {
 /// Returns an error if the input is invalid (e.g., empty signal or
 /// out-of-range parameters) or if the computation cannot be completed.
 pub fn stereo_mix(left: &AudioData, right: &AudioData) -> Result<AudioData, MixingError> {
+    validate_signal(left)?;
+    validate_signal(right)?;
     if left.channels != 1 || right.channels != 1 {
         return Err(MixingError::IncompatibleFormat(
             "Both signals must be mono".to_string(),
@@ -127,6 +141,7 @@ pub fn multi_channel_mix(signals: &[&AudioData], channels: u16) -> Result<AudioD
     let length = signals[0].samples.len();
     let sample_rate = signals[0].sample_rate;
     for &signal in signals {
+        validate_signal(signal)?;
         if signal.channels != 1 {
             return Err(MixingError::IncompatibleFormat(
                 "All signals must be mono".to_string(),
@@ -189,6 +204,8 @@ pub fn dry_wet_mix(
     wet: &AudioData,
     wet_mix: f32,
 ) -> Result<AudioData, MixingError> {
+    validate_signal(dry)?;
+    validate_signal(wet)?;
     if !(0.0..=1.0).contains(&wet_mix) {
         return Err(MixingError::InvalidParameter(
             "Wet mix must be between 0.0 and 1.0".to_string(),

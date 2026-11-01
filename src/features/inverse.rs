@@ -25,11 +25,12 @@ pub enum MfccError {
 }
 
 /// Computes the first-order delta coefficients of MFCCs.
+/// Uses a local linear regression with nearest-value padding at both boundaries.
 ///
 /// # Parameters
 /// - `mfcc`: Input MFCC matrix, shape `(n_mfcc, n_frames)`.
 /// - `width`: Optional window width for delta computation; defaults to 9.
-/// - `axis`: Optional time axis; -1 (frames) or 0 (mfcc), defaults to -1.
+/// - `axis`: Optional time axis; -1 or 1 (frames), or 0 (mfcc), defaults to -1.
 ///
 /// # Returns
 /// - `Ok(Array2<f32>)`: Delta coefficients, same shape as input MFCCs.
@@ -62,7 +63,7 @@ impl ComputeDeltaBuilder<'_> {
         self
     }
 
-    /// Set the time axis (-1 for frames, 0 for coefficients; default: -1).
+    /// Set the time axis (-1 or 1 for frames, 0 for coefficients; default: -1).
     #[must_use]
     pub fn axis(mut self, axis: isize) -> Self {
         self.axis = axis;
@@ -91,7 +92,11 @@ fn compute_delta_impl(
             "Width must be a positive odd integer".to_string(),
         ));
     }
-    let ax = usize::from(axis < 0);
+    let ax = match axis {
+        -1 | 1 => 1,
+        0 => 0,
+        _ => return Err(MfccError::InvalidInput("Axis must be -1, 0, or 1".into())),
+    };
     let (n_mfcc, n_frames) = if ax == 1 {
         mfcc.dim()
     } else {
@@ -108,6 +113,10 @@ fn compute_delta_impl(
         )));
     }
 
+    if mfcc.iter().any(|v| !v.is_finite()) {
+        return Err(MfccError::InvalidInput("MFCCs must be finite".into()));
+    }
+
     let half_width = width / 2;
     let weights: Vec<f32> = (-(half_width as isize)..=half_width as isize)
         .map(|i| i as f32)
@@ -121,11 +130,11 @@ fn compute_delta_impl(
 
     let mut delta = Array2::zeros(mfcc.dim());
     delta
-        .axis_iter_mut(Axis(ax))
+        .axis_iter_mut(Axis(1 - ax))
         .into_par_iter()
         .enumerate()
         .for_each(|(i, mut slice)| {
-            let row = mfcc.index_axis(Axis(ax), i);
+            let row = mfcc.index_axis(Axis(1 - ax), i);
             for j in 0..row.len() {
                 let mut sum = 0.0;
                 for (w_idx, &w) in weights.iter().enumerate() {
@@ -222,11 +231,17 @@ fn mel_to_stft_impl(
             "n_fft must be at least 2".to_string(),
         ));
     }
-    if power <= 0.0 {
+    if sr == 0 || !power.is_finite() || power <= 0.0 {
         return Err(MfccError::InvalidInput(
-            "Power must be positive".to_string(),
+            "Sample rate and finite power must be positive".to_string(),
         ));
     }
+    if m.iter().any(|v| !v.is_finite() || *v < 0.0) {
+        return Err(MfccError::InvalidInput(
+            "Mel energies must be finite and non-negative".into(),
+        ));
+    }
+    validate_inverse_shape(n_fft / 2 + 1, m.ncols())?;
 
     let n_mels = m.shape()[0];
     let n_frames = m.shape()[1];
@@ -259,7 +274,13 @@ fn mel_to_stft_impl(
             }
         });
 
-    Ok(s.mapv(|x: f32| x.powf(1.0 / power)))
+    let magnitude = s.mapv(|x: f32| x.powf(1.0 / power));
+    if magnitude.iter().any(|v| !v.is_finite()) {
+        return Err(MfccError::ComputationFailed(
+            "STFT magnitude overflowed".into(),
+        ));
+    }
+    Ok(magnitude)
 }
 
 /// Converts mel spectrogram to audio waveform.
@@ -363,7 +384,9 @@ fn mel_to_audio_impl(
 
 /// Converts MFCCs back to mel spectrogram using inverse DCT.
 ///
-/// Reconstructs a mel spectrogram from MFCCs via inverse discrete cosine transform (type II).
+/// Exponentiates an orthonormal inverse DCT of natural-log mel coefficients.
+/// Coefficients are truncated or zero-padded to `n_mels` before inversion.
+/// Types I through IV are supported; type I requires `n_mels >= 2`.
 ///
 /// # Parameters
 /// - `mfcc`: MFCC matrix, shape `(n_mfcc, n_frames)`.
@@ -416,6 +439,19 @@ impl MfccToMelBuilder<'_> {
     }
 }
 
+fn validate_inverse_shape(rows: usize, columns: usize) -> Result<(), MfccError> {
+    if rows == 0
+        || rows
+            .checked_mul(columns)
+            .is_none_or(|n| n > isize::MAX as usize / std::mem::size_of::<f32>())
+    {
+        return Err(MfccError::InvalidDimensions(
+            "Output dimensions must be positive and fit in memory".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn mfcc_to_mel_impl(
     mfcc: &Array2<f32>,
     n_mels: Option<usize>,
@@ -434,9 +470,20 @@ fn mfcc_to_mel_impl(
         )));
     }
 
+    validate_inverse_shape(n_mels, mfcc.ncols())?;
+    if mfcc.iter().any(|v| !v.is_finite()) {
+        return Err(MfccError::InvalidInput("MFCCs must be finite".into()));
+    }
     let n_frames = mfcc.shape()[1];
-    let n_mfcc = mfcc.shape()[0];
-    let n = n_mels as f32;
+    if dct_type == 1 && n_mels < 2 {
+        return Err(MfccError::InvalidInput(
+            "DCT type 1 requires at least two mel bands".into(),
+        ));
+    }
+    // The inverse transform length is n_mels: truncate excess coefficients or
+    // implicitly zero-pad missing ones, as for any resized inverse DCT.
+    let n_mfcc = mfcc.shape()[0].min(n_mels);
+    let n = n_mels as f64;
     let mut mel = Array2::zeros((n_mels, n_frames));
     mel.axis_iter_mut(Axis(1))
         .into_par_iter()
@@ -447,8 +494,7 @@ fn mfcc_to_mel_impl(
                 // negative whenever the true mel energy is below 1.0, so it must
                 // not be clamped before `exp()` (which is already always positive).
                 let sum = match dct_type {
-                    // Orthonormal inverse of a type-2 DCT: scaling on the input
-                    // (mfcc) index k.
+                    // Orthonormal inverse of type II: scaling on input index k.
                     2 => (0..n_mfcc)
                         .map(|k| {
                             let ck = if k == 0 {
@@ -456,12 +502,11 @@ fn mfcc_to_mel_impl(
                             } else {
                                 (2.0 / n).sqrt()
                             };
-                            let theta = std::f32::consts::PI * k as f32 * (out_n as f32 + 0.5) / n;
-                            ck * mfcc[[k, t]] * theta.cos()
+                            let theta = std::f64::consts::PI * k as f64 * (out_n as f64 + 0.5) / n;
+                            ck * f64::from(mfcc[[k, t]]) * theta.cos()
                         })
-                        .sum::<f32>(),
-                    // Orthonormal inverse of a type-3 DCT (= type-2 DCT forward):
-                    // scaling on the output (mel) index n.
+                        .sum::<f64>(),
+                    // Orthonormal inverse of type III: scaling on output index.
                     3 => {
                         let cn = if out_n == 0 {
                             1.0 / n.sqrt()
@@ -471,45 +516,54 @@ fn mfcc_to_mel_impl(
                         cn * (0..n_mfcc)
                             .map(|k| {
                                 let theta =
-                                    std::f32::consts::PI * (2.0 * k as f32 + 1.0) * out_n as f32
-                                        / (2.0 * n);
-                                mfcc[[k, t]] * theta.cos()
+                                    std::f64::consts::PI * (k as f64 + 0.5) * out_n as f64 / n;
+                                f64::from(mfcc[[k, t]]) * theta.cos()
                             })
-                            .sum::<f32>()
+                            .sum::<f64>()
                     }
-                    // Type-4 DCT is self-inverse (up to orthonormal scaling).
                     4 => {
                         (2.0 / n).sqrt()
                             * (0..n_mfcc)
                                 .map(|k| {
-                                    let theta = std::f32::consts::PI
-                                        * (2.0 * out_n as f32 + 1.0)
-                                        * (2.0 * k as f32 + 1.0)
-                                        / (4.0 * n);
-                                    mfcc[[k, t]] * theta.cos()
+                                    let theta = std::f64::consts::PI
+                                        * (out_n as f64 + 0.5)
+                                        * (k as f64 + 0.5)
+                                        / n;
+                                    f64::from(mfcc[[k, t]]) * theta.cos()
                                 })
-                                .sum::<f32>()
+                                .sum::<f64>()
                     }
-                    // Type-1 DCT is self-inverse (up to orthonormal scaling);
-                    // requires at least 2 coefficients.
-                    _ if n_mfcc >= 2 => {
-                        let nm1 = (n_mfcc - 1) as f32;
-                        let boundary = 0.5 * mfcc[[0, t]]
-                            + 0.5 * (-1.0f32).powi(out_n as i32) * mfcc[[n_mfcc - 1, t]];
-                        let mid: f32 = (1..n_mfcc - 1)
-                            .map(|k| {
-                                let theta = std::f32::consts::PI * k as f32 * out_n as f32 / nm1;
-                                mfcc[[k, t]] * theta.cos()
-                            })
-                            .sum();
-                        (2.0 / nm1).sqrt() * (boundary + mid)
+                    // Type I is self-inverse. Both input and output endpoints
+                    // carry 1/sqrt(2), with endpoints defined by transform length.
+                    _ => {
+                        let cn = if out_n == 0 || out_n == n_mels - 1 {
+                            std::f64::consts::FRAC_1_SQRT_2
+                        } else {
+                            1.0
+                        };
+                        (2.0 / (n - 1.0)).sqrt()
+                            * cn
+                            * (0..n_mfcc)
+                                .map(|k| {
+                                    let ck = if k == 0 || k == n_mels - 1 {
+                                        std::f64::consts::FRAC_1_SQRT_2
+                                    } else {
+                                        1.0
+                                    };
+                                    let theta =
+                                        std::f64::consts::PI * k as f64 * out_n as f64 / (n - 1.0);
+                                    ck * f64::from(mfcc[[k, t]]) * theta.cos()
+                                })
+                                .sum::<f64>()
                     }
-                    _ => mfcc[[0, t]],
                 };
-                col[out_n] = sum;
+                col[out_n] = sum.exp() as f32;
             }
         });
-    Ok(mel.mapv(f32::exp))
+    if mel.iter().any(|v| !v.is_finite()) {
+        return Err(MfccError::ComputationFailed("Mel energy overflowed".into()));
+    }
+    Ok(mel)
 }
 
 /// Converts MFCCs to audio waveform.

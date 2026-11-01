@@ -16,6 +16,32 @@ pub enum AmplitudeError {
     InvalidSignal(String),
 }
 
+fn scale(signal: &AudioData, gain: f64) -> Result<AudioData, AmplitudeError> {
+    signal
+        .validate()
+        .map_err(|e| AmplitudeError::InvalidSignal(e.to_string()))?;
+    if signal.samples.iter().any(|v| !v.is_finite()) {
+        return Err(AmplitudeError::InvalidSignal(
+            "Samples must be finite".into(),
+        ));
+    }
+    let samples: Vec<f32> = signal
+        .samples
+        .iter()
+        .map(|&s| (f64::from(s) * gain) as f32)
+        .collect();
+    if samples.iter().any(|v| !v.is_finite()) {
+        return Err(AmplitudeError::InvalidGain(
+            "Scaled samples exceed the finite f32 range".into(),
+        ));
+    }
+    Ok(AudioData {
+        samples,
+        sample_rate: signal.sample_rate,
+        channels: signal.channels,
+    })
+}
+
 /// Amplifies an audio signal by a specified gain factor.
 ///
 /// This function increases the amplitude of the signal by multiplying each sample
@@ -41,18 +67,13 @@ pub enum AmplitudeError {
 /// Returns an error if the input is invalid (e.g., empty signal or
 /// out-of-range parameters) or if the computation cannot be completed.
 pub fn amplify(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeError> {
-    if gain <= 0.0 {
+    if !gain.is_finite() || gain <= 0.0 {
         return Err(AmplitudeError::InvalidGain(
             "Gain must be positive".to_string(),
         ));
     }
 
-    let samples = signal.samples.iter().map(|&s| s * gain).collect();
-    Ok(AudioData {
-        samples,
-        sample_rate: signal.sample_rate,
-        channels: signal.channels,
-    })
+    scale(signal, f64::from(gain))
 }
 
 /// Attenuates an audio signal by a specified gain factor.
@@ -80,18 +101,13 @@ pub fn amplify(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeErro
 /// Returns an error if the input is invalid (e.g., empty signal or
 /// out-of-range parameters) or if the computation cannot be completed.
 pub fn attenuate(signal: &AudioData, gain: f32) -> Result<AudioData, AmplitudeError> {
-    if gain < 0.0 {
+    if !gain.is_finite() || gain < 0.0 {
         return Err(AmplitudeError::InvalidGain(
             "Gain must be non-negative".to_string(),
         ));
     }
 
-    let samples = signal.samples.iter().map(|&s| s * gain).collect();
-    Ok(AudioData {
-        samples,
-        sample_rate: signal.sample_rate,
-        channels: signal.channels,
-    })
+    scale(signal, f64::from(gain))
 }
 
 /// Normalizes an audio signal to a target peak or RMS level.
@@ -163,14 +179,14 @@ fn normalize_impl(
     target: f32,
     mode: NormalizeMode,
 ) -> Result<AudioData, AmplitudeError> {
-    if target <= 0.0 {
+    if !target.is_finite() || target <= 0.0 {
         return Err(AmplitudeError::InvalidGain(
             "Target level must be positive".to_string(),
         ));
     }
-    if signal.samples.is_empty() {
+    if signal.samples.is_empty() || signal.samples.iter().any(|v| !v.is_finite()) {
         return Err(AmplitudeError::InvalidSignal(
-            "Signal cannot be empty".to_string(),
+            "Signal must contain finite samples".to_string(),
         ));
     }
 
@@ -187,25 +203,24 @@ fn normalize_impl(
                     "Signal has no amplitude to normalize".to_string(),
                 ));
             }
-            target / max_amplitude
+            f64::from(target) / f64::from(max_amplitude)
         }
         NormalizeMode::Rms => {
-            let rms = (signal.samples.iter().map(|&s| s * s).sum::<f32>()
-                / signal.samples.len() as f32)
+            let rms = (signal
+                .samples
+                .iter()
+                .map(|&s| f64::from(s).powi(2))
+                .sum::<f64>()
+                / signal.samples.len() as f64)
                 .sqrt();
             if rms == 0.0 {
                 return Err(AmplitudeError::InvalidSignal(
                     "Signal has no RMS level to normalize".to_string(),
                 ));
             }
-            target / rms
+            f64::from(target) / rms
         }
     };
 
-    let samples = signal.samples.iter().map(|&s| s * gain).collect();
-    Ok(AudioData {
-        samples,
-        sample_rate: signal.sample_rate,
-        channels: signal.channels,
-    })
+    scale(signal, gain)
 }

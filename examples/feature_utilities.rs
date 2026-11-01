@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // mask[i,j] = x[i,j]^p / (x[i,j]^p + x_ref[i,j]^p + ε)
     // power=2 → smooth mask; power=∞ → hard (binary) mask
     let spec = proc::stft(&y).n_fft(n_fft).hop_length(hop).compute()?;
-    let mag = spec.mapv(|c| c.norm());
+    let mag = spec.mapv(num_complex::Complex::norm);
     let ones = Array2::from_elem(mag.raw_dim(), 1.0_f32);
     let mask_soft = feat::softmask(&mag, &ones).power(2.0).compute();
     let mask_hard = feat::softmask(&mag, &ones).power(f32::INFINITY).compute();

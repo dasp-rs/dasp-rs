@@ -16,6 +16,95 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- STFT now rejects computed coefficients outside finite `f32` range. ISTFT uses
+  double-precision inverse FFT and overlap accumulation, preserving representable
+  large reconstructions and rejecting unrepresentable results. Extreme finite
+  resampling inputs use reusable `f64` blocks, avoiding backend panics while
+  preserving distant quiet regions beside large peaks.
+- IIRT now implements its documented twelve semitone bands with proper
+  Butterworth second-order sections, continuous causal filtering, and frame RMS.
+  Ordinary sample rates work; zero hops return errors. Its values differ from
+  the previous octave-spaced, frame-reset filterbank and from librosa's IIRT.
+- Reassignment now uses consistent periodic windows, double-precision ratios,
+  and documented nearest-grid rasterization. Quiet magnitudes are preserved and
+  unrepresentable accumulated output returns an error.
+- Silence produces zero tempo and no beats/onsets. Rhythm transforms validate
+  frame/window geometry, preserve large finite inputs, align multiband frame zero,
+  and select the earliest equally optimal beat endpoint so padding adds no beat.
+- Griffin–Lim preserves quiet-signal phase and starts from deterministic broadband
+  noise instead of a narrowband sinusoid. Recovered waveforms change; matching
+  independent iterations and gain behavior are regression-tested. CQT recovery
+  validates passbands even with no iterations or an empty-length result.
+- Malformed supplied spectra, oversized feature dimensions, empty DTW features,
+  and unrepresentable inverse-dB/DTW outputs now return errors. Rolloff uses
+  stable accumulation, and zero PCEN input stays zero with very large finite gain.
+- CQT/VQT and inverse-CQT filter construction stores only taps that can overlap
+  the signal, preserving full-filter normalization and phase. Extremely low
+  minimum frequencies on short inputs no longer allocate entire huge filters.
+- Inverse CQT now retains only improvements measured after conversion to its
+  public `f32` waveform. Guarded conjugate-gradient least squares prevents
+  ill-conditioned inputs from returning a reconstruction worse than zero and
+  preserves an earlier finite solution if a later iteration overflows. This
+  remains an unregularized, bounded-iteration inverse.
+- Independent numerical references exposed additional transform and feature
+  errors: short STFT inputs now reflect repeatedly, ISTFT normalizes small
+  nonzero window weights, and resampling avoids fractional delay caused by odd
+  internal FFT lengths. Resampling coefficients consequently change.
+- CQT/VQT now use correctly scaled, centered full-rate Hann wavelets with proper
+  constant/variable-Q bandwidths. Numerical values and boundary behavior change;
+  out-of-Nyquist passbands and unrepresentable outputs return errors. Singleton
+  Hann wavelets remain finite. `hybrid_cqt` is an explicit full-CQT compatibility
+  alias; `pseudo_cqt` rejects aliased channels instead of wrapping them to DC.
+- Inverse CQT now solves the corresponding real least-squares problem with up to
+  32 conjugate-gradient iterations. It remains approximate, with documented
+  conditioning, bandwidth, output-length, and computational-cost limits.
+- Quiet spectral centroids retain their frequencies; spectral flatness applies
+  the same magnitude floor on both input paths. Inverse orthonormal DCT-I uses
+  correct endpoint weights, including when coefficients are truncated.
+- Spectrum RMS now uses one-sided Parseval normalization and correct DC/Nyquist
+  weights. Waveform RMS and contrast quantile means avoid intermediate underflow
+  and overflow. HPSS preserves isolated-bin energy and tiny components using
+  stable complementary masks. B-weighting uses the precise 158.48932 Hz pole.
+- Time-domain cropping, padding, delay, and reversal now operate on complete
+  interleaved channel frames. Preserved-length delays never extend the input,
+  and invalid metadata, nonfinite times, and overflowing lengths are rejected.
+- LPC now preserves its leading coefficient and uses the correct Levinson–Durbin
+  coefficient update. Double-precision accumulation makes LPC and normalization
+  work with both quiet and large finite signals. LPC, autocorrelation, and log
+  energy reject interleaved input; split channels or convert to mono first.
+- Averaging, RMS normalization, log energy, and mu-law transforms avoid intermediate
+  overflow or cancellation. Amplitude processing, mixing, panning, and resampling
+  reject nonfinite inputs; unrepresentable amplitude/autocorrelation outputs return errors.
+- Phase vocoding preserves initial phase and pitch, interpolates magnitudes, and
+  retains the final frame. Time stretching returns exactly `round(input_len / rate)`
+  samples. Silence detection includes partial tail frames and works across amplitude
+  scales; trimming an entirely silent signal now returns an empty clip and `(0, 0)`.
+- Feature deltas now differentiate along time. Spectral bandwidth uses the supplied
+  spectrum and analysis configuration; centroid validates spectrum dimensions.
+- Harmonic interpolation accepts non-monotonic magnitudes and pitch contours,
+  handles singleton frequency grids, and supports arbitrary default harmonic counts.
+- Reassignment uses consistent centered frames and complex derivative ratios. Zero-magnitude
+  `magphase` bins have finite phase, and CQT Griffin–Lim keeps frame counts fixed.
+- STFT/CQT and inverse feature transforms reject invalid parameters and unsupported
+  dimensions. Tempo estimation now honors its configured analysis window and FFT.
+- HMM transition matrices preserve impossible edges as negative infinity and
+  normalize single-state models. Viterbi validates probabilities and retains zero
+  posterior support. Large transition widths and memory delays no longer overflow.
+- Feature normalization, masks, distances, affinities, clustering, kurtosis, and
+  zero-crossing rates remain meaningful across amplitude scales. NMF rejects
+  negative/nonfinite inputs and uses stable updates with balanced output factors.
+- Tuning reports signed cent offsets from the nearest semitone and quantizes by
+  the requested resolution. Supplied spectra work in the tuning builder; peak
+  interpolation preserves boundary-bin frequencies and quiet peaks.
+- Odd FFT grids use the correct bin spacing; note conversion handles low and
+  negative MIDI octaves. Pythagorean and prime-limit interval generation no longer
+  returns duplicate/empty scales or loops forever on zero and one.
+- dB conversion, frequency weighting, PCEN, tiny HTK mel conversions, and generated
+  tone/chirp phase use numerically stable arithmetic. Click generation validates
+  times and offsets and honors the selected sample rate for its default duration.
+- Infallible shape/index helpers now document and assert preconditions instead of
+  silently accepting incompatible shapes or wrapping integer indices in release builds.
+
 - YIN now selects the first acceptable normalized-difference trough and refines
   its period by parabolic interpolation. Fixed comparison windows and `f64`
   accumulation remove lag-length bias and amplitude-dependent failures on quiet audio.
@@ -54,6 +143,29 @@ All notable changes to this project are documented here. The format is based on
   including nonzero lower frequency bounds.
 
 ### Added
+
+- Seeded randomized DSP/feature suites, independent IIR/reassignment/rhythm/
+  phase-recovery references, and NMF reconstruction-objective checks. A small
+  attributed FLAC corpus adds offline workflows and independent feature summaries.
+- A release evidence inventory and executable local validation gates, explicit
+  remaining reference gaps, and CI performance artifacts without timing thresholds.
+- Reproducible release performance workloads for STFT, resampling, CQT/iCQT,
+  and YIN/pYIN, with separate allocation probes, optional RSS, environment/source
+  provenance, and comparisons that require unchanged workload definitions.
+- CQT/VQT sweeps across 8–48 kHz, varied frequency/hop geometry, subnormal and
+  large amplitudes, chirps, noise, transients, and calibrated tones. Independent
+  SVD inverse fixtures cover varied hops and inconsistent coefficient targets;
+  recursive-librosa differences are measured separately at boundaries/interiors.
+- Four independent numerical reference suites with pinned NumPy/SciPy/librosa
+  generators, explicit error budgets, and amplitude/boundary/conditioning cases.
+  A standard-library Python runner writes accuracy reports with provenance hashes;
+  CI checks fixture regeneration and uploads reports. Rust tests require no Python.
+- Adversarial regression suites for time-domain DSP, tuning, transforms, features,
+  magnitude operations, generation, and utilities. Tests include independent
+  Toeplitz solves for LPC, exhaustive small DTW/Viterbi models, mathematical
+  invariants, amplitude-scale sweeps, invalid inputs, and integer boundaries.
+- CI for stable Rust on Linux/macOS/Windows, Rust 1.85, release tests, doctests,
+  formatting, strict Clippy, and documentation warnings.
 
 - `PyinBuilder::compute_with_voicing()` and `PyinResult` expose decoded frequencies,
   voicing flags, and frame-local voiced probabilities while preserving the

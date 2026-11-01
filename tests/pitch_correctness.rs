@@ -457,17 +457,36 @@ fn pitch_matches_independent_librosa_reference_with_documented_tolerance() {
             .compute_with_voicing()
             .unwrap();
         let mut frames = 0;
+        let mut voiced_frames = 0;
+        let mut yin_max_cents = 0.0_f64;
+        let mut pyin_max_cents = 0.0_f64;
+        let mut yin_squared_cents = 0.0_f64;
+        let mut pyin_squared_cents = 0.0_f64;
+        let mut voicing_mismatches = 0;
+
         for row in fixture.lines().filter(|row| row.starts_with(name)) {
             let columns: Vec<_> = row.split(',').collect();
             let index: usize = columns[1].parse().unwrap();
             let expected_yin: f32 = columns[2].parse().unwrap();
             let expected_pyin: f32 = columns[3].parse().unwrap();
             let voiced = columns[4] == "1";
+            voicing_mismatches += usize::from(actual_pyin.voiced_flag[index] != voiced);
             assert_eq!(
                 actual_pyin.voiced_flag[index], voiced,
                 "case {name}, frame {index}"
             );
             if voiced {
+                voiced_frames += 1;
+                let yin_cents = (1200.0
+                    * (f64::from(actual_yin[index]) / f64::from(expected_yin)).log2())
+                .abs();
+                let pyin_cents = (1200.0
+                    * (f64::from(actual_pyin.f0[index]) / f64::from(expected_pyin)).log2())
+                .abs();
+                yin_max_cents = yin_max_cents.max(yin_cents);
+                pyin_max_cents = pyin_max_cents.max(pyin_cents);
+                yin_squared_cents += yin_cents * yin_cents;
+                pyin_squared_cents += pyin_cents * pyin_cents;
                 assert_pitch(&actual_yin[index..=index], expected_yin, 15.0);
                 assert_pitch(&actual_pyin.f0[index..=index], expected_pyin, 15.0);
             } else {
@@ -475,6 +494,12 @@ fn pitch_matches_independent_librosa_reference_with_documented_tolerance() {
             }
             frames += 1;
         }
+        let denominator = f64::from(voiced_frames.max(1));
+        let yin_rms_cents = (yin_squared_cents / denominator).sqrt();
+        let pyin_rms_cents = (pyin_squared_cents / denominator).sqrt();
+        eprintln!(
+            "REFERENCE pitch_{name}: frames={frames} voiced_frames={voiced_frames} voicing_mismatches={voicing_mismatches} yin_max_cents={yin_max_cents:.6e} yin_rms_cents={yin_rms_cents:.6e} pyin_max_cents={pyin_max_cents:.6e} pyin_rms_cents={pyin_rms_cents:.6e} cents_bound=15"
+        );
         assert_eq!(frames, actual_yin.len());
         assert_eq!(frames, actual_pyin.f0.len());
     }

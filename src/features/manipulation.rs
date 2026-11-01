@@ -38,9 +38,9 @@ pub fn stack_memory(
     let n_features = data.shape()[0];
     let mut stacked = Array2::zeros((n_features * n_steps, n_frames));
     for step in 0..n_steps {
-        let offset = step * delay;
+        let offset = step.saturating_mul(delay);
         for t in 0..n_frames {
-            let src_t = (t as isize - offset as isize).max(0) as usize;
+            let src_t = t.saturating_sub(offset);
             for f in 0..n_features {
                 stacked[[f + step * n_features, t]] = data[[f, src_t]];
             }
@@ -129,11 +129,19 @@ fn temporal_kurtosis_impl(
     for i in 0..n_frames {
         let start = i * hop;
         let frame = &y[start..(start + frame_len).min(y.len())];
-        let mean = frame.iter().sum::<f32>() / frame.len() as f32;
-        let m2 = frame.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / frame.len() as f32;
-        let m4 = frame.iter().map(|&x| (x - mean).powi(4)).sum::<f32>() / frame.len() as f32;
-        kurtosis[i] = if m2 > 1e-10 {
-            m4 / m2.powi(2) - 3.0
+        let mean = frame.iter().map(|&x| f64::from(x)).sum::<f64>() / frame.len() as f64;
+        let m2 = frame
+            .iter()
+            .map(|&x| (f64::from(x) - mean).powi(2))
+            .sum::<f64>()
+            / frame.len() as f64;
+        let m4 = frame
+            .iter()
+            .map(|&x| (f64::from(x) - mean).powi(4))
+            .sum::<f64>()
+            / frame.len() as f64;
+        kurtosis[i] = if m2 > 0.0 {
+            (m4 / m2.powi(2) - 3.0) as f32
         } else {
             0.0
         };
@@ -210,7 +218,10 @@ fn zero_crossing_rate_impl(y: &[f32], frame_length: usize, hop_length: usize) ->
     for i in 0..n_frames {
         let start = i * hop;
         let slice = &y[start..(start + frame_len).min(y.len())];
-        let count = slice.windows(2).filter(|w| w[0] * w[1] < 0.0).count();
+        let count = slice
+            .windows(2)
+            .filter(|w| (w[0] < 0.0 && w[1] > 0.0) || (w[0] > 0.0 && w[1] < 0.0))
+            .count();
         zcr[i] = count as f32 / frame_len as f32;
     }
     zcr

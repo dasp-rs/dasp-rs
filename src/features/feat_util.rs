@@ -33,6 +33,9 @@ impl SoftmaskBuilder<'_> {
     }
 
     /// Compute the soft mask.
+    ///
+    /// # Panics
+    /// Panics if the input matrices have different shapes. Broadcasting is not supported.
     pub fn compute(self) -> Array2<f32> {
         softmask_impl(self.x, self.x_ref, self.power, self.split_zeros)
     }
@@ -75,10 +78,17 @@ fn softmask_impl(
     power: f32,
     split_zeros: bool,
 ) -> Array2<f32> {
-    const EPS: f32 = 1e-16;
+    assert_eq!(
+        x.shape(),
+        x_ref.shape(),
+        "softmask requires identical input shapes"
+    );
     Array2::from_shape_fn(x.raw_dim(), |(i, j)| {
         let a = x[[i, j]];
         let b = x_ref[[i, j]];
+        if a == 0.0 && b == 0.0 {
+            return if split_zeros { 0.5 } else { 0.0 };
+        }
         if power == f32::INFINITY {
             if a > b {
                 1.0
@@ -88,14 +98,10 @@ fn softmask_impl(
                 0.5
             }
         } else {
-            let ap = a.powf(power);
-            let bp = b.powf(power);
-            let total = ap + bp;
-            if total < EPS {
-                if split_zeros { 0.5 } else { 0.0 }
-            } else {
-                ap / total
-            }
+            let scale = f64::from(a.max(b));
+            let ap = (f64::from(a) / scale).powf(f64::from(power));
+            let bp = (f64::from(b) / scale).powf(f64::from(power));
+            (ap / (ap + bp)) as f32
         }
     })
 }
@@ -145,6 +151,9 @@ impl NormalizeBuilder<'_> {
     }
 
     /// Compute the normalized array.
+    ///
+    /// # Panics
+    /// Panics if the configured axis is not 0 or 1.
     pub fn compute(self) -> Array2<f32> {
         normalize_impl(
             self.x,
@@ -183,15 +192,16 @@ pub fn normalize(x: &Array2<f32>) -> NormalizeBuilder<'_> {
 }
 
 fn normalize_impl(x: &Array2<f32>, norm: FeatureNorm, axis: usize, threshold: f32) -> Array2<f32> {
+    assert!(axis <= 1, "normalize axis must be 0 or 1");
     let mut out = x.to_owned();
     match axis {
         0 => {
             for j in 0..x.ncols() {
                 let col: Vec<f32> = x.column(j).iter().copied().collect();
                 let n = norm_value(&col, norm);
-                if n > threshold {
+                if n > f64::from(threshold) {
                     for i in 0..x.nrows() {
-                        out[[i, j]] /= n;
+                        out[[i, j]] = (f64::from(out[[i, j]]) / n) as f32;
                     }
                 }
             }
@@ -200,9 +210,9 @@ fn normalize_impl(x: &Array2<f32>, norm: FeatureNorm, axis: usize, threshold: f3
             for i in 0..x.nrows() {
                 let row: Vec<f32> = x.row(i).iter().copied().collect();
                 let n = norm_value(&row, norm);
-                if n > threshold {
+                if n > f64::from(threshold) {
                     for j in 0..x.ncols() {
-                        out[[i, j]] /= n;
+                        out[[i, j]] = (f64::from(out[[i, j]]) / n) as f32;
                     }
                 }
             }
@@ -211,11 +221,14 @@ fn normalize_impl(x: &Array2<f32>, norm: FeatureNorm, axis: usize, threshold: f3
     out
 }
 
-fn norm_value(v: &[f32], norm: FeatureNorm) -> f32 {
+fn norm_value(v: &[f32], norm: FeatureNorm) -> f64 {
     match norm {
-        FeatureNorm::L1 => v.iter().map(|&x| x.abs()).sum(),
-        FeatureNorm::L2 => v.iter().map(|&x| x * x).sum::<f32>().sqrt(),
-        FeatureNorm::LInf => v.iter().map(|&x| x.abs()).fold(0.0_f32, f32::max),
+        FeatureNorm::L1 => v.iter().map(|&x| f64::from(x).abs()).sum(),
+        FeatureNorm::L2 => v.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>().sqrt(),
+        FeatureNorm::LInf => v
+            .iter()
+            .map(|&x| f64::from(x).abs())
+            .fold(0.0_f64, f64::max),
     }
 }
 
@@ -363,8 +376,8 @@ mod tests {
     fn test_sparsify_zero_quantile_preserves_all() {
         let x = Array2::from_shape_fn((3, 5), |(i, j)| (i * j) as f32 + 0.1);
         let s = sparsify_rows_impl(&x, 0.0);
-        for ((i, j), &v) in x.indexed_iter() {
-            assert_eq!(s[[i, j]], v);
+        for (index, &v) in x.indexed_iter() {
+            assert_eq!(s[index], v);
         }
     }
 }

@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Phase:         {:?}", phase.shape());
 
     // ── Phasor: rebuild complex spec from angles + magnitude ──────────────────
-    let angles = phase.mapv(|c| c.arg()); // convert unit-phase to radians
+    let angles = phase.mapv(num_complex::Complex::arg); // convert unit-phase to radians
     let rebuilt = proc::phasor(&angles, Some(&magnitude));
     println!("Phasor rebuilt: {:?}", rebuilt.shape());
 

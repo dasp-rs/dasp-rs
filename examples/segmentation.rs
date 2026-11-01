@@ -5,6 +5,8 @@
 
 use dasp_rs::{feat, generate::tone};
 
+use dasp_rs::feat::{RecurrenceMode, SimilarityMetric};
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sr = 22050_u32;
     let y = tone(440.0, sr).duration(4.0).compute();
@@ -17,7 +19,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Self-similarity matrix — high values where two frames sound alike.
     // SimilarityMetric: Cosine (default) | Euclidean | Manhattan
     // RecurrenceMode:   Affinity (default) | Binary
-    use dasp_rs::feat::{RecurrenceMode, SimilarityMetric};
     let r = feat::recurrence_matrix(&chroma)
         .metric(SimilarityMetric::Cosine)
         .mode(RecurrenceMode::Affinity)

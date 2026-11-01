@@ -9,9 +9,8 @@
 /// of the corresponding samples across all channels.
 ///
 /// # Panics
-/// Does not explicitly panic, but if `samples.len()` is not a multiple of `channels`,
-/// the last incomplete chunk will be averaged over fewer samples, potentially leading
-/// to unexpected results.
+/// Panics if `channels` is zero. If `samples.len()` is not a multiple of
+/// `channels`, the last incomplete frame is averaged over its available samples.
 ///
 /// # Examples
 /// ```
@@ -22,10 +21,11 @@
 /// assert_eq!(mono, vec![0.6, 0.6]); // [(0.5 + 0.7)/2, (0.3 + 0.9)/2]
 /// ```
 pub fn to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
+    assert!(channels > 0, "Channel count must be positive");
     let mut mono = Vec::with_capacity(samples.len() / channels);
     for chunk in samples.chunks(channels) {
-        let sum: f32 = chunk.iter().sum();
-        mono.push(sum / chunk.len() as f32);
+        let sum: f64 = chunk.iter().map(|&sample| f64::from(sample)).sum();
+        mono.push((sum / chunk.len() as f64) as f32);
     }
     mono
 }

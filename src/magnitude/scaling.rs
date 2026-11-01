@@ -119,7 +119,7 @@ fn amplitude_to_db_impl(
         "Top dB",
     )?;
 
-    let db = spectrogram.mapv(|x| 20.0 * (x.max(amin) / ref_val).log10());
+    let db = spectrogram.mapv(|x| 20.0 * (x.max(amin).log10() - ref_val.log10()));
     let max_db = db.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     Ok(db.mapv(|v| v.max(max_db - top_db)))
 }
@@ -138,7 +138,8 @@ fn amplitude_to_db_impl(
 ///
 /// # Errors
 /// * `ScalingError::InsufficientData` - If the spectrogram is empty.
-/// * `ScalingError::InvalidInput` - If `ref_val` is non-positive.
+/// * `ScalingError::InvalidInput` - If `ref_val` is non-positive/nonfinite,
+///   or the reconstructed output exceeds the finite f32 range.
 ///
 /// # Example
 /// ```
@@ -157,13 +158,20 @@ pub fn db_to_amplitude(
     let ref_val = ref_val.unwrap_or(1.0);
 
     validate_spectrogram(spectrogram_db, "decibel")?;
-    if ref_val <= 0.0 {
+    if !ref_val.is_finite() || ref_val <= 0.0 {
         return Err(ScalingError::InvalidInput(
             "Reference value must be positive".to_string(),
         ));
     }
 
-    Ok(spectrogram_db.mapv(|x| ref_val * 10.0f32.powf(x / 20.0)))
+    let output =
+        spectrogram_db.mapv(|x| (f64::from(ref_val) * 10.0f64.powf(f64::from(x) / 20.0)) as f32);
+    if output.iter().any(|value| !value.is_finite()) {
+        return Err(ScalingError::InvalidInput(
+            "Inverse decibel output exceeds finite f32 range".into(),
+        ));
+    }
+    Ok(output)
 }
 
 /// Converts a power spectrogram to decibels (dB).
@@ -261,7 +269,7 @@ fn power_to_db_impl(
         "Top dB",
     )?;
 
-    let db = spectrogram.mapv(|x| 10.0 * (x.max(amin) / ref_val).log10());
+    let db = spectrogram.mapv(|x| 10.0 * (x.max(amin).log10() - ref_val.log10()));
     let max_db = db.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     Ok(db.mapv(|v| v.max(max_db - top_db)))
 }
@@ -280,7 +288,8 @@ fn power_to_db_impl(
 ///
 /// # Errors
 /// * `ScalingError::InsufficientData` - If the spectrogram is empty.
-/// * `ScalingError::InvalidInput` - If `ref_val` is non-positive.
+/// * `ScalingError::InvalidInput` - If `ref_val` is non-positive/nonfinite,
+///   or the reconstructed output exceeds the finite f32 range.
 ///
 /// # Example
 /// ```
@@ -299,13 +308,20 @@ pub fn db_to_power(
     let ref_val = ref_val.unwrap_or(1.0);
 
     validate_spectrogram(spectrogram_db, "decibel")?;
-    if ref_val <= 0.0 {
+    if !ref_val.is_finite() || ref_val <= 0.0 {
         return Err(ScalingError::InvalidInput(
             "Reference value must be positive".to_string(),
         ));
     }
 
-    Ok(spectrogram_db.mapv(|x| ref_val * 10.0f32.powf(x / 10.0)))
+    let output =
+        spectrogram_db.mapv(|x| (f64::from(ref_val) * 10.0f64.powf(f64::from(x) / 10.0)) as f32);
+    if output.iter().any(|value| !value.is_finite()) {
+        return Err(ScalingError::InvalidInput(
+            "Inverse decibel output exceeds finite f32 range".into(),
+        ));
+    }
+    Ok(output)
 }
 
 /// Applies perceptual frequency weighting to a spectrogram.
@@ -462,17 +478,17 @@ pub fn multi_frequency_weighting(
 /// use dasp_rs::mag::a_weighting;
 /// let freqs = vec![1000.0];
 /// let weights = a_weighting(&freqs, None)?;
-/// assert!((weights[0] - 1.2589).abs() < 1e-4); // A-weighting at 1 kHz
+/// assert!((weights[0] - 1.0).abs() < 1e-3); // Approximately 0 dB at 1 kHz
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn a_weighting(frequencies: &[f32], min_db: Option<f32>) -> Result<Vec<f32>, ScalingError> {
     compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let f4 = f2 * f2;
-        let num = 12_194.217_f32.powi(2) * f4;
-        let den = (f2 + 20.598_997_f32.powi(2))
-            * (f2 + 12_194.217_f32.powi(2))
-            * ((f2 + 107.652_65_f32.powi(2)) * (f2 + 737.862_23_f32.powi(2))).sqrt();
+        let num = 12_194.217_f64.powi(2) * f4;
+        let den = (f2 + 20.598_997_f64.powi(2))
+            * (f2 + 12_194.217_f64.powi(2))
+            * ((f2 + 107.652_65_f64.powi(2)) * (f2 + 737.862_23_f64.powi(2))).sqrt();
         20.0 * (num / den).log10() + 2.0
     })
 }
@@ -504,10 +520,10 @@ pub fn b_weighting(frequencies: &[f32], min_db: Option<f32>) -> Result<Vec<f32>,
     compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
         let f3 = f2 * f;
-        let num = 12_194.217_f32.powi(2) * f3;
-        let den = (f2 + 20.598_997_f32.powi(2))
-            * (f2 + 158.5_f32.powi(2)).sqrt()
-            * (f2 + 12_194.217_f32.powi(2));
+        let num = 12_194.217_f64.powi(2) * f3;
+        let den = (f2 + 20.598_997_f64.powi(2))
+            * (f2 + 158.489_32_f64.powi(2)).sqrt()
+            * (f2 + 12_194.217_f64.powi(2));
         20.0 * (num / den).log10() + 0.17
     })
 }
@@ -538,8 +554,8 @@ pub fn b_weighting(frequencies: &[f32], min_db: Option<f32>) -> Result<Vec<f32>,
 pub fn c_weighting(frequencies: &[f32], min_db: Option<f32>) -> Result<Vec<f32>, ScalingError> {
     compute_weighting(frequencies, min_db, |f| {
         let f2 = f * f;
-        let num = 12_194.217_f32.powi(2) * f2;
-        let den = (f2 + 20.598_997_f32.powi(2)) * (f2 + 12_194.217_f32.powi(2));
+        let num = 12_194.217_f64.powi(2) * f2;
+        let den = (f2 + 20.598_997_f64.powi(2)) * (f2 + 12_194.217_f64.powi(2));
         20.0 * (num / den).log10() + 0.062
     })
 }
@@ -580,15 +596,15 @@ pub fn d_weighting(frequencies: &[f32], min_db: Option<f32>) -> Result<Vec<f32>,
 /// Applies Per-Channel Energy Normalization (PCEN) to a spectrogram.
 ///
 /// PCEN normalizes a spectrogram to reduce background noise and enhance foreground signals.
-/// The formula is: `P[f, t] = (S[f, t] / (eps + M[f, t]))^gain + bias - bias`, where
+/// The formula is: `P = sqrt(S / (eps + M)^gain + bias) - sqrt(bias)`, where
 /// `M[f, t]` is an exponentially smoothed version of the spectrogram.
 ///
 /// # Arguments
 /// * `spectrogram` - Spectrogram as a 2D array (`Array2<f32>`, frequencies × time).
 /// * `sample_rate` - Sample rate in Hz (defaults to 44100 if `None`).
 /// * `hop_length` - Hop length in samples (defaults to 512 if `None`).
-/// * `gain` - Gain exponent for normalization (defaults to 0.8 if `None`).
-/// * `bias` - Bias term to stabilize output (defaults to 10.0 if `None`).
+/// * `gain` - Gain exponent for normalization (defaults to 0.98).
+/// * `bias` - Bias term to stabilize output (defaults to 2.0).
 ///
 /// # Returns
 /// A `Result` containing the normalized spectrogram as `Array2<f32>`.
@@ -677,44 +693,51 @@ fn pcen_impl(
     gain: f32,
     bias: f32,
 ) -> Result<Array2<f32>, ScalingError> {
-    const EPS: f32 = 1e-6;
-    const POWER: f32 = 0.5;
-    const TIME_CONSTANT: f32 = 0.4;
+    const EPS: f64 = 1e-6;
+    const TIME_CONSTANT: f64 = 0.4;
 
     validate_spectrogram(spectrogram, "spectrogram")?;
-    if gain < 0.0 || bias < 0.0 {
+    if !gain.is_finite() || !bias.is_finite() || gain < 0.0 || bias < 0.0 {
         return Err(ScalingError::InvalidInput(
-            "Gain and bias must be non-negative".to_string(),
+            "Gain and bias must be finite and non-negative".to_string(),
+        ));
+    }
+    if sr == 0 || hop_length == 0 {
+        return Err(ScalingError::InvalidInput(
+            "Sample rate and hop length must be positive".to_string(),
         ));
     }
 
     let n_freqs = spectrogram.shape()[0];
     let n_frames = spectrogram.shape()[1];
-    // IIR smoothing coefficient derived from the time constant:
-    // `b = (sqrt(1 + 4T^2) - 1) / (2T^2)` where T is the time constant in
-    // frames, rather than a plain exponential-decay approximation.
-    let t_frames = TIME_CONSTANT * sr as f32 / hop_length as f32;
-    let b = ((1.0 + 4.0 * t_frames * t_frames).sqrt() - 1.0) / (2.0 * t_frames * t_frames);
-    let alpha = 1.0 - b;
-    let one_minus_alpha = b;
-
-    let mut m = Array2::zeros((n_freqs, n_frames));
-    for f in 0..n_freqs {
-        m[[f, 0]] = spectrogram[[f, 0]];
-        for t in 1..n_frames {
-            m[[f, t]] = alpha * m[[f, t - 1]] + one_minus_alpha * spectrogram[[f, t]];
-        }
-    }
-
+    // Rationalizing the time-constant formula avoids cancellation as T -> 0.
+    let t_frames = TIME_CONSTANT * f64::from(sr) / hop_length as f64;
+    let b = 2.0 / ((1.0 + 4.0 * t_frames * t_frames).sqrt() + 1.0);
+    let bias = f64::from(bias);
     let mut p = Array2::zeros((n_freqs, n_frames));
     for f in 0..n_freqs {
+        let mut smooth = f64::from(spectrogram[[f, 0]]);
         for t in 0..n_frames {
-            let m_val = m[[f, t]] + EPS;
-            p[[f, t]] =
-                (spectrogram[[f, t]] / m_val.powf(gain) + bias).powf(POWER) - bias.powf(POWER);
+            let sample = f64::from(spectrogram[[f, t]]);
+            if t > 0 {
+                smooth = (1.0 - b) * smooth + b * sample;
+            }
+            let normalized = sample / (smooth + EPS).powf(f64::from(gain));
+            // Rationalize sqrt(normalized + bias) - sqrt(bias), retaining
+            // small signals even when the bias dominates the sum.
+            p[[f, t]] = if sample == 0.0 || normalized == 0.0 {
+                0.0
+            } else {
+                (normalized / ((normalized + bias).sqrt() + bias.sqrt())) as f32
+            };
         }
     }
 
+    if p.iter().any(|value| !value.is_finite()) {
+        return Err(ScalingError::InvalidInput(
+            "PCEN output exceeds finite f32 range".into(),
+        ));
+    }
     Ok(p)
 }
 
@@ -724,6 +747,14 @@ fn validate_spectrogram(spectrogram: &Array2<f32>, context: &str) -> Result<(), 
     if spectrogram.is_empty() {
         return Err(ScalingError::InsufficientData(format!(
             "{context} spectrogram is empty"
+        )));
+    }
+    if spectrogram
+        .iter()
+        .any(|&x| !(x.is_finite() || context == "decibel" && x == f32::NEG_INFINITY))
+    {
+        return Err(ScalingError::InvalidInput(format!(
+            "{context} spectrogram contains non-finite values"
         )));
     }
     if context != "decibel" && spectrogram.iter().any(|&x| x < 0.0) {
@@ -742,17 +773,17 @@ fn validate_positive_params(
     amin_name: &str,
     top_db_name: &str,
 ) -> Result<(), ScalingError> {
-    if ref_val <= 0.0 {
+    if !ref_val.is_finite() || ref_val <= 0.0 {
         return Err(ScalingError::InvalidInput(format!(
             "{ref_name} must be positive"
         )));
     }
-    if amin <= 0.0 {
+    if !amin.is_finite() || amin <= 0.0 {
         return Err(ScalingError::InvalidInput(format!(
             "{amin_name} must be positive"
         )));
     }
-    if top_db <= 0.0 {
+    if !top_db.is_finite() || top_db <= 0.0 {
         return Err(ScalingError::InvalidInput(format!(
             "{top_db_name} must be positive"
         )));
@@ -768,9 +799,9 @@ fn validate_frequencies(frequencies: &[f32], n_rows: usize) -> Result<(), Scalin
             n_rows
         )));
     }
-    if frequencies.iter().any(|&f| f < 0.0) {
+    if frequencies.iter().any(|&f| !f.is_finite() || f < 0.0) {
         return Err(ScalingError::InvalidInput(
-            "Frequencies must be non-negative".to_string(),
+            "Frequencies must be finite and non-negative".to_string(),
         ));
     }
     Ok(())
@@ -782,19 +813,24 @@ fn compute_weighting<F>(
     gain_fn: F,
 ) -> Result<Vec<f32>, ScalingError>
 where
-    F: Fn(f32) -> f32,
+    F: Fn(f64) -> f64,
 {
     const EPS: f32 = 1e-6;
     let min_db = min_db.unwrap_or(-80.0);
+    if !min_db.is_finite() {
+        return Err(ScalingError::InvalidInput(
+            "Minimum dB must be finite".to_string(),
+        ));
+    }
 
     if frequencies.is_empty() {
         return Err(ScalingError::InsufficientData(
             "Frequency array is empty".to_string(),
         ));
     }
-    if frequencies.iter().any(|&f| f < 0.0) {
+    if frequencies.iter().any(|&f| !f.is_finite() || f < 0.0) {
         return Err(ScalingError::InvalidInput(
-            "Frequencies must be non-negative".to_string(),
+            "Frequencies must be finite and non-negative".to_string(),
         ));
     }
 
@@ -804,11 +840,11 @@ where
             if f < EPS {
                 0.0
             } else {
-                let gain_db = gain_fn(f);
-                if gain_db < min_db {
+                let gain_db = gain_fn(f64::from(f));
+                if gain_db < f64::from(min_db) {
                     0.0
                 } else {
-                    10.0_f32.powf(gain_db / 20.0)
+                    10.0_f64.powf(gain_db / 20.0) as f32
                 }
             }
         })

@@ -1,4 +1,4 @@
-use ndarray::{Array2, ArrayView1, Axis};
+use ndarray::Array2;
 use num_complex::Complex;
 use thiserror::Error;
 
@@ -30,9 +30,6 @@ const N_FFT_FACTOR: usize = 2;
 
 /// Default hop length divisor: `hop_length = n_fft / 4`.
 const HOP_DIVISOR: usize = 4;
-
-/// Default weights array for salience computation (supports up to 16 harmonics).
-const DEFAULT_WEIGHTS_ARRAY: &[f32] = &[1.0; 16];
 
 /// Validates input arrays for length, emptiness, sortedness, and finite values.
 ///
@@ -139,8 +136,12 @@ fn interpolate_at(x: &[f32], freqs: &[f32], target_freq: f32) -> Result<f32, Har
     let max_freq = freqs.last().ok_or_else(|| {
         HarmonicsError::InvalidInput("Frequency bins cannot be empty".to_string())
     })?;
-    if target_freq > *max_freq {
+    if target_freq < freqs[0] || target_freq > *max_freq {
         return Ok(0.0);
+    }
+
+    if freqs.len() == 1 {
+        return Ok(x[0]);
     }
 
     let left_idx = freqs
@@ -211,10 +212,11 @@ pub fn interp_harmonics(
         &[(x, "amplitudes"), (freqs, "frequencies")],
         None,
         None,
-        true,
+        false,
         true,
         true,
     )?;
+    validate_harmonic_grid(freqs, harmonics)?;
 
     let n_bins = freqs.len();
     let n_harmonics = harmonics.len();
@@ -284,9 +286,16 @@ pub fn salience(
     let n_bins = s.shape()[0];
     let n_frames = s.shape()[1];
     let n_harmonics = harmonics.len();
-    let weights = weights.unwrap_or(DEFAULT_WEIGHTS_ARRAY);
-    if weights.len() < n_harmonics {
-        return Err(HarmonicsError::LengthMismatch(weights.len(), n_harmonics));
+    validate_harmonic_grid(freqs, harmonics)?;
+    if let Some(weights) = weights {
+        if weights.len() != n_harmonics {
+            return Err(HarmonicsError::LengthMismatch(weights.len(), n_harmonics));
+        }
+        if weights.iter().any(|w| !w.is_finite()) {
+            return Err(HarmonicsError::NonFiniteInput(
+                "Weights must be finite".into(),
+            ));
+        }
     }
 
     let mut salience_map = Array2::zeros((n_bins, n_frames));
@@ -299,7 +308,7 @@ pub fn salience(
                 let mut total = 0.0;
                 for (h_idx, &h) in harmonics.iter().enumerate() {
                     if let Ok(interp) = interpolate_at(&column, freqs, f * h) {
-                        total += interp * weights[h_idx];
+                        total += interp * weights.map_or(1.0, |w| w[h_idx]);
                     }
                 }
                 col[bin] = total;
@@ -352,10 +361,11 @@ pub fn f0_harmonics(
         &[(x, "amplitudes"), (f0, "f0"), (freqs, "frequencies")],
         None,
         None,
-        true,
+        false,
         true,
         false,
     )?;
+    validate_harmonic_grid(freqs, harmonics)?;
     if x.len() != freqs.len() {
         return Err(HarmonicsError::LengthMismatch(x.len(), freqs.len()));
     }
@@ -379,26 +389,15 @@ pub fn f0_harmonics(
     Ok(result)
 }
 
-/// Computes angular frequencies for phase vocoding.
-fn compute_omega(n_bins: usize, n_fft: usize) -> Vec<f32> {
-    (0..n_bins)
-        .map(|k| 2.0 * std::f32::consts::PI * k as f32 / n_fft as f32)
-        .collect()
-}
-
-/// Unwraps phase differences for phase vocoding.
-fn unwrap_phase(delta_phase: ArrayView1<f32>) -> Vec<f32> {
-    delta_phase
-        .iter()
-        .map(|&dp| dp - 2.0 * std::f32::consts::PI * (dp / (2.0 * std::f32::consts::PI)).round())
-        .collect()
-}
-
-/// Advances phase accumulation for phase vocoding.
-fn advance_phase(delta_phase_unwrapped: &[f32], hop: usize, rate: f32) -> Array2<f32> {
-    ArrayView1::from(delta_phase_unwrapped)
-        .mapv(|x| x / hop as f32 * (hop as f32 * rate))
-        .insert_axis(Axis(1))
+/// Validate the frequency grid separately from amplitudes and time-varying f0.
+fn validate_harmonic_grid(freqs: &[f32], harmonics: &[f32]) -> Result<(), HarmonicsError> {
+    validate_inputs(&[(freqs, "frequencies")], None, None, true, true, false)?;
+    if harmonics.iter().any(|h| !h.is_finite()) {
+        return Err(HarmonicsError::NonFiniteInput(
+            "Harmonics must be finite".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Performs phase vocoding for time-scale modification of a complex spectrogram.
@@ -441,9 +440,9 @@ pub fn phase_vocoder(
     hop_length: Option<usize>,
     n_fft: Option<usize>,
 ) -> Result<Array2<Complex<f32>>, HarmonicsError> {
-    if rate <= 0.0 {
+    if !rate.is_finite() || rate <= 0.0 {
         return Err(HarmonicsError::InvalidInput(
-            "Rate must be positive".to_string(),
+            "Rate must be finite and positive".to_string(),
         ));
     }
     let n_bins = d.shape()[0];
@@ -451,43 +450,53 @@ pub fn phase_vocoder(
     validate_inputs(&[], None, Some(d), false, true, false)?;
 
     let n_fft = n_fft.unwrap_or((n_bins - 1) * N_FFT_FACTOR);
-    if n_fft == 0 {
+    if n_fft == 0 || n_bins > n_fft / 2 + 1 {
         return Err(HarmonicsError::InvalidInput(
-            "FFT size must be positive".to_string(),
+            "FFT size must be positive and accommodate the frequency bins".to_string(),
         ));
     }
-    let hop = hop_length.unwrap_or(n_fft / HOP_DIVISOR);
+    let hop = hop_length.unwrap_or_else(|| (n_fft / HOP_DIVISOR).max(1));
     if hop == 0 {
         return Err(HarmonicsError::InvalidInput(
             "Hop length must be positive".to_string(),
         ));
     }
 
-    let new_frames = ((orig_frames as f32 * hop as f32) / rate / hop as f32).ceil() as usize;
+    let frame_count = (orig_frames as f64 / f64::from(rate)).ceil();
+    let max_elements = isize::MAX as usize / std::mem::size_of::<Complex<f32>>();
+    if frame_count > (max_elements / n_bins) as f64 {
+        return Err(HarmonicsError::InvalidInput(
+            "Output dimensions overflow".into(),
+        ));
+    }
+    let new_frames = frame_count as usize;
     let mut output = Array2::zeros((n_bins, new_frames));
-    let mut phase_acc = Array2::zeros((n_bins, 1));
-
-    let omega = compute_omega(n_bins, n_fft);
+    let mut phase_acc = d.column(0).mapv(|z| f64::from(z.arg()));
+    let tau = std::f64::consts::TAU;
 
     for t in 0..new_frames {
-        let orig_t = (t as f32 * rate * hop as f32 / hop as f32) as usize;
-        let orig_t_next = ((t + 1) as f32 * rate * hop as f32 / hop as f32) as usize;
+        let position = t as f64 * f64::from(rate);
+        let left = (position.floor() as usize).min(orig_frames - 1);
+        let alpha = (position - left as f64) as f32;
+        for bin in 0..n_bins {
+            let current = d[[bin, left]];
+            // Zero-pad one frame for interpolation at the trailing boundary.
+            let next = if left + 1 < orig_frames {
+                d[[bin, left + 1]]
+            } else {
+                Complex::new(0.0, 0.0)
+            };
+            let magnitude = (1.0 - alpha) * current.norm() + alpha * next.norm();
+            output[[bin, t]] = Complex::from_polar(magnitude, phase_acc[bin] as f32);
 
-        if orig_t >= orig_frames || orig_t_next >= orig_frames {
-            continue;
-        }
-
-        let mag = d.column(orig_t).mapv(num_complex::Complex::norm);
-        let phase = d.column(orig_t).mapv(num_complex::Complex::arg);
-        let phase_next = d.column(orig_t_next).mapv(num_complex::Complex::arg);
-        let delta_phase = phase_next - phase - &ArrayView1::from(&omega) * hop as f32;
-
-        let delta_phase_unwrapped = unwrap_phase(delta_phase.view());
-        let phase_advance = advance_phase(&delta_phase_unwrapped, hop, rate);
-        phase_acc = phase_acc + phase_advance;
-
-        for (i, &m) in mag.iter().enumerate() {
-            output[[i, t]] = Complex::from_polar(m, phase_acc[[i, 0]]);
+            // Estimate frequency from adjacent source frames, then advance by one
+            // output hop. Scaling this increment by rate would shift the pitch.
+            let expected = tau * bin as f64 * hop as f64 / n_fft as f64;
+            let residual = f64::from(next.arg()) - f64::from(current.arg()) - expected;
+            let residual = residual - tau * (residual / tau).round();
+            // Keep the accumulator bounded and use f64 for subtraction of large
+            // expected phase advances, avoiding drift across long spectrograms.
+            phase_acc[bin] = (phase_acc[bin] + expected + residual).rem_euclid(tau);
         }
     }
 

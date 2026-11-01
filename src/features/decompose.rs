@@ -46,7 +46,7 @@ impl DecomposeBuilder<'_> {
     ///
     /// # Errors
     /// Returns an error if the input is empty or `n_components` exceeds the
-    /// smaller dimension of `S`.
+    /// smaller dimension of `S`, or if any spectrogram value is negative or non-finite.
     pub fn compute(self) -> Result<(Array2<f32>, Array2<f32>), DecomposeError> {
         decompose_impl(self.s, self.n_components, self.n_iter, self.random_seed)
     }
@@ -89,8 +89,6 @@ fn decompose_impl(
     n_iter: usize,
     seed: u64,
 ) -> Result<(Array2<f32>, Array2<f32>), DecomposeError> {
-    const EPS: f32 = 1e-10;
-
     let n_bins = s.shape()[0];
     let n_frames = s.shape()[1];
 
@@ -109,28 +107,48 @@ fn decompose_impl(
         )));
     }
 
-    let mut w = nmf_init(n_bins, n_components, seed);
-    let mut h = nmf_init(n_components, n_frames, seed.wrapping_add(1));
+    if s.iter().any(|v| !v.is_finite() || *v < 0.0) {
+        return Err(DecomposeError::InvalidInput(
+            "Spectrogram must contain finite non-negative values".into(),
+        ));
+    }
+
+    // Double precision keeps the update ratios meaningful for both very quiet
+    // and very large finite f32 inputs. An absolute epsilon would bias quiet data.
+    let s = s.mapv(f64::from);
+    let mut w = nmf_init(n_bins, n_components, seed).mapv(f64::from);
+    let mut h = nmf_init(n_components, n_frames, seed.wrapping_add(1)).mapv(f64::from);
 
     for _ in 0..n_iter {
         // ── Update H ─────────────────────────────────────────────────────────
-        // H ← H ⊙ (Wᵀ S) / (Wᵀ W H + ε)
+        // H ← H ⊙ (Wᵀ S) / (Wᵀ W H)
         let wt = w.t().to_owned();
-        let num_h = wt.dot(s);
-        let den_h = wt.dot(&w).dot(&h).mapv(|x| x + EPS);
+        let num_h = wt.dot(&s);
+        let den_h = wt.dot(&w).dot(&h).mapv(|x| x.max(f64::MIN_POSITIVE));
         h *= &num_h;
         h /= &den_h;
 
         // ── Update W ─────────────────────────────────────────────────────────
-        // W ← W ⊙ (S Hᵀ) / (W H Hᵀ + ε)
+        // W ← W ⊙ (S Hᵀ) / (W H Hᵀ)
         let ht = h.t().to_owned();
         let num_w = s.dot(&ht);
-        let den_w = w.dot(&h).dot(&ht).mapv(|x| x + EPS);
+        let den_w = w.dot(&h).dot(&ht).mapv(|x| x.max(f64::MIN_POSITIVE));
         w *= &num_w;
         w /= &den_w;
     }
 
-    Ok((w, h))
+    // Balance each component before converting back to f32: the factorization
+    // is unchanged, but arbitrary scale cannot overflow one of the factors.
+    for k in 0..n_components {
+        let w_max = w.column(k).iter().copied().fold(0.0_f64, f64::max);
+        let h_max = h.row(k).iter().copied().fold(0.0_f64, f64::max);
+        if w_max > 0.0 && h_max > 0.0 {
+            let scale = (h_max / w_max).sqrt();
+            w.column_mut(k).mapv_inplace(|v| v * scale);
+            h.row_mut(k).mapv_inplace(|v| v / scale);
+        }
+    }
+    Ok((w.mapv(|v| v as f32), h.mapv(|v| v as f32)))
 }
 
 /// Deterministic pseudo-random initialization in `(0, 1)`.

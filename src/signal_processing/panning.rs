@@ -20,6 +20,18 @@ pub enum PanningError {
     UnsupportedChannels(u16),
 }
 
+fn validate_signal(signal: &AudioData) -> Result<(), PanningError> {
+    signal
+        .validate()
+        .map_err(|e| PanningError::InvalidParameter(e.to_string()))?;
+    if signal.samples.iter().any(|v| !v.is_finite()) {
+        return Err(PanningError::InvalidParameter(
+            "Samples must be finite".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Pans a mono signal across a stereo field.
 ///
 /// This function distributes a mono signal between left and right channels based on a
@@ -55,6 +67,7 @@ pub enum PanningError {
 /// Returns an error if the input is invalid (e.g., empty signal or
 /// out-of-range parameters) or if the computation cannot be completed.
 pub fn stereo_pan(signal: &AudioData, pan: f32) -> Result<AudioData, PanningError> {
+    validate_signal(signal)?;
     if signal.channels != 1 {
         return Err(PanningError::NotMono(signal.channels));
     }
@@ -115,6 +128,12 @@ pub fn multi_channel_pan(
     azimuth: f32,
     channels: u16,
 ) -> Result<AudioData, PanningError> {
+    validate_signal(signal)?;
+    if !azimuth.is_finite() {
+        return Err(PanningError::InvalidParameter(
+            "Azimuth must be finite".into(),
+        ));
+    }
     if signal.channels != 1 {
         return Err(PanningError::NotMono(signal.channels));
     }

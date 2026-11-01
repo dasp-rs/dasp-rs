@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Block streaming for large files ──────────────────────────────────────
     // stream(path, block_length, frame_length, hop_length) → Vec<Vec<f32>>
     let blocks = io::stream(path, 1024, 2048, Some(512))?;
-    let total_samples: usize = blocks.iter().map(|b| b.len()).sum();
+    let total_samples: usize = blocks.iter().map(Vec::len).sum();
     println!(
         "Streamed {} block(s), {} total samples",
         blocks.len(),

@@ -53,6 +53,11 @@ fn format_indices(indices: &[usize]) -> String {
 
 /// Validates that two audio signals have compatible metadata (sample rate and channels).
 fn validate_metadata(signal1: &AudioData, signal2: &AudioData) -> Result<(), SignalOpError> {
+    for signal in [signal1, signal2] {
+        signal
+            .validate()
+            .map_err(|e| SignalOpError::InvalidInput(e.to_string()))?;
+    }
     if signal1.sample_rate != signal2.sample_rate || signal1.channels != signal2.channels {
         return Err(SignalOpError::InvalidInput(format!(
             "Metadata mismatch: expected {} Hz, {} channels; got {} Hz, {} channels",
@@ -101,6 +106,14 @@ pub fn mix_signals(signals: &[AudioData]) -> Result<AudioData, SignalOpError> {
             "Signal array is empty".to_string(),
         ));
     }
+    for signal in signals {
+        signal
+            .validate()
+            .map_err(|e| SignalOpError::InvalidInput(e.to_string()))?;
+        if signal.samples.iter().any(|v| !v.is_finite()) {
+            return Err(SignalOpError::InvalidInput("Samples must be finite".into()));
+        }
+    }
 
     let length = signals[0].samples.len();
     let sample_rate = signals[0].sample_rate;
@@ -134,8 +147,8 @@ pub fn mix_signals(signals: &[AudioData]) -> Result<AudioData, SignalOpError> {
     let mixed_samples: Vec<f32> = (0..length)
         .into_par_iter()
         .map(|i| {
-            let sum: f32 = signals.par_iter().map(|s| s.samples[i]).sum();
-            sum / signals.len() as f32
+            let sum: f64 = signals.iter().map(|s| f64::from(s.samples[i])).sum();
+            (sum / signals.len() as f64) as f32
         })
         .collect();
 
@@ -418,6 +431,9 @@ pub fn scalar_operation(
     scalar: f32,
     op: ScalarOp,
 ) -> Result<AudioData, SignalOpError> {
+    signal
+        .validate()
+        .map_err(|e| SignalOpError::InvalidInput(e.to_string()))?;
     if signal.samples.is_empty() {
         return Err(SignalOpError::InvalidInput(
             "Signal samples are empty".to_string(),

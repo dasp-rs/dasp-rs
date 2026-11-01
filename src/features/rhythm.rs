@@ -19,7 +19,7 @@ impl TempoBuilder<'_> {
         self
     }
 
-    /// Set the window length (default: 2048).
+    /// Set the analysis FFT/window length in samples (default: 2048).
     #[must_use]
     pub fn win_length(mut self, win_length: usize) -> Self {
         self.win_length = win_length;
@@ -31,11 +31,25 @@ impl TempoBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<f32, RhythmError> {
-        tempo_impl(Some(self.y), Some(self.sr), None, Some(self.hop_length))
+        let spectrum = stft(self.y)
+            .n_fft(self.win_length)
+            .hop_length(self.hop_length)
+            .compute()
+            .map_err(|e| RhythmError::ComputationFailed(e.to_string()))?;
+        let envelope = spectrum.map_axis(Axis(0), |column| {
+            column
+                .iter()
+                .map(|z| f64::from(z.re).hypot(f64::from(z.im)))
+                .sum::<f64>() as f32
+        });
+        tempo_impl(None, Some(self.sr), Some(&envelope), Some(self.hop_length))
     }
 }
 
-/// Computes tempo from audio signal.
+/// Computes tempo from the summed STFT-magnitude envelope.
+///
+/// Returns zero for silence; otherwise averages local autocorrelation peak BPM
+/// over the 30–300 BPM search range. This is not librosa's onset/prior pipeline.
 ///
 /// # Arguments
 /// * `y` - Input signal as a slice of `f32`
@@ -116,6 +130,11 @@ pub(crate) fn tempo_impl(
 
     let sr = sr.unwrap_or(44100);
     let hop = hop_length.unwrap_or(512);
+    if sr == 0 || hop == 0 {
+        return Err(RhythmError::InvalidInput(
+            "Sample rate and hop must be positive".into(),
+        ));
+    }
     let onset_owned = if let Some(envelope) = onset_envelope {
         envelope.to_owned()
     } else {
@@ -127,11 +146,25 @@ pub(crate) fn tempo_impl(
         let s = stft(y)
             .hop_length(hop)
             .compute()
-            .map_err(|e| RhythmError::ComputationFailed(format!("STFT computation failed: {e}")))?
-            .mapv(num_complex::Complex::norm);
-        s.map_axis(Axis(0), |row| row.iter().map(|&x| x.max(0.0)).sum::<f32>())
+            .map_err(|e| RhythmError::ComputationFailed(format!("STFT computation failed: {e}")))?;
+        s.map_axis(Axis(0), |row| {
+            row.iter()
+                .map(|z| f64::from(z.re).hypot(f64::from(z.im)))
+                .sum::<f64>() as f32
+        })
     };
-    let onset = &onset_owned;
+    if onset_owned.is_empty() || onset_owned.iter().any(|v| !v.is_finite() || *v < 0.0) {
+        return Err(RhythmError::InvalidInput(
+            "Onset envelope must be nonempty, finite and nonnegative".into(),
+        ));
+    }
+    let peak = onset_owned.iter().copied().fold(0.0_f32, f32::max);
+    if peak == 0.0 {
+        return Ok(0.0);
+    }
+    // Tempo depends on relative autocorrelation peaks, not envelope amplitude.
+    let normalized = onset_owned.mapv(|v| v / peak);
+    let onset = &normalized;
     let tempogram = tempogram(None, Some(sr), Some(onset), hop_length, None)?;
     let freqs = crate::utils::frequency::tempo_frequencies_impl(tempogram.shape()[0], hop, sr);
 
@@ -159,6 +192,9 @@ pub(crate) fn tempo_impl(
 }
 
 /// Computes a tempogram (local autocorrelation of onset strength).
+///
+/// Uses a centered, zero-padded symmetric Hann window and unnormalized
+/// autocorrelation at lags `0..=win_length/2`; a singleton window is unity.
 ///
 /// # Arguments
 /// * `y` - Optional audio time series
@@ -188,9 +224,14 @@ pub fn tempogram(
     hop_length: Option<usize>,
     win_length: Option<usize>,
 ) -> Result<Array2<f32>, RhythmError> {
-    let _sr = sr.unwrap_or(44100);
+    let sr = sr.unwrap_or(44100);
     let hop = hop_length.unwrap_or(512);
     let win = win_length.unwrap_or(384);
+    if sr == 0 || hop == 0 || win == 0 {
+        return Err(RhythmError::InvalidInput(
+            "Sample rate, hop and window must be positive".into(),
+        ));
+    }
     let onset_owned = if let Some(envelope) = onset_envelope {
         envelope.to_owned()
     } else {
@@ -202,14 +243,26 @@ pub fn tempogram(
         let s = stft(y)
             .hop_length(hop)
             .compute()
-            .map_err(|e| RhythmError::ComputationFailed(format!("STFT computation failed: {e}")))?
-            .mapv(num_complex::Complex::norm);
-        s.map_axis(Axis(0), |row| row.iter().map(|&x| x.max(0.0)).sum::<f32>())
+            .map_err(|e| RhythmError::ComputationFailed(format!("STFT computation failed: {e}")))?;
+        s.map_axis(Axis(0), |row| {
+            row.iter()
+                .map(|z| f64::from(z.re).hypot(f64::from(z.im)))
+                .sum::<f64>() as f32
+        })
     };
+    if onset_owned.is_empty() || onset_owned.iter().any(|v| !v.is_finite() || *v < 0.0) {
+        return Err(RhythmError::InvalidInput(
+            "Onset envelope must be nonempty, finite and nonnegative".into(),
+        ));
+    }
     let onset = &onset_owned;
     let n_frames = onset.len();
     let half = win / 2;
-    let window = crate::signal_processing::time_frequency::hann_window(win);
+    let window = if win == 1 {
+        vec![1.0]
+    } else {
+        crate::signal_processing::time_frequency::hann_window(win)
+    };
     let mut tempogram = Array2::zeros((half + 1, n_frames));
 
     let sample = |i: isize| -> f32 {
@@ -232,8 +285,16 @@ pub fn tempogram(
             .map(|(n, &w)| sample(t as isize - half as isize + n as isize) * w)
             .collect();
         for lag in 0..=half {
-            let sum: f32 = (lag..win).map(|n| windowed[n] * windowed[n - lag]).sum();
-            tempogram[[lag, t]] = sum;
+            let sum: f64 = (lag..win)
+                .map(|n| f64::from(windowed[n]) * f64::from(windowed[n - lag]))
+                .sum();
+            let value = sum as f32;
+            if !value.is_finite() {
+                return Err(RhythmError::ComputationFailed(
+                    "Tempogram exceeds finite f32 range".into(),
+                ));
+            }
+            tempogram[[lag, t]] = value;
         }
     }
     Ok(tempogram)
@@ -324,6 +385,9 @@ impl OnsetStrengthBuilder<'_> {
 
 /// Computes the onset strength envelope (positive spectral flux in log space).
 ///
+/// Sums positive adjacent differences of `log10(max(power, 1e-10))` on the
+/// centered STFT frame grid, with frame zero set to zero. The absolute power
+/// floor means sufficiently quiet signals have no detectable onsets.
 /// Each value in the returned array represents the amount of spectral change
 /// at that frame. High values indicate likely onset positions.
 ///
@@ -358,12 +422,16 @@ fn onset_strength_impl(
 
     let n_frames = spec.shape()[1];
     // Log-power spectrogram
-    let log_s = spec.mapv(|x| x.norm().powi(2).max(1e-10_f32).log10());
+    let log_s = spec.mapv(|x| {
+        (f64::from(x.re).powi(2) + f64::from(x.im).powi(2))
+            .max(f64::from(1e-10_f32))
+            .log10()
+    });
 
     let mut odf = Array1::zeros(n_frames);
     for t in 1..n_frames {
         let diff = &log_s.slice(s![.., t]) - &log_s.slice(s![.., t - 1]);
-        odf[t] = diff.iter().map(|&v| v.max(0.0)).sum::<f32>();
+        odf[t] = diff.iter().map(|&v| v.max(0.0)).sum::<f64>() as f32;
     }
     Ok(odf)
 }
@@ -415,6 +483,11 @@ impl OnsetDetectBuilder<'_> {
     /// # Errors
     /// Returns an error if the signal is empty or STFT computation fails.
     pub fn compute(self) -> Result<Vec<usize>, RhythmError> {
+        if self.sr == 0 || !self.delta.is_finite() || self.delta < 0.0 {
+            return Err(RhythmError::InvalidInput(
+                "Sample rate must be positive and delta finite/nonnegative".into(),
+            ));
+        }
         let odf = onset_strength_impl(self.y, self.hop_length, self.n_fft)?;
         Ok(onset_detect_impl(
             odf.as_slice().unwrap_or(&[]),
@@ -442,6 +515,8 @@ impl OnsetDetectBuilder<'_> {
 ///
 /// Uses the onset strength envelope with local peak-picking above a mean-based
 /// threshold. Convert frames to seconds: `frame * hop_length / sr`.
+/// These are centered analysis-frame times: window overlap can place an onset
+/// before an impulse's sample time. Silence yields no detections even at delta zero.
 ///
 /// # Examples
 /// ```no_run
@@ -488,7 +563,7 @@ fn onset_detect_impl(odf: &[f32], delta: f32, wait: usize) -> Vec<usize> {
         let avg_right = (t + POST_AVG + 1).min(n);
         let window = &odf[avg_left..avg_right];
         let mean = window.iter().sum::<f32>() / window.len() as f32;
-        if odf[t] >= mean + delta {
+        if odf[t] > 0.0 && odf[t] >= mean + delta {
             peaks.push(t);
         }
     }
@@ -558,7 +633,10 @@ impl BeatTrackBuilder<'_> {
 
 /// Tracks beats in an audio signal via dynamic programming on the onset envelope.
 ///
-/// Returns `(tempo_bpm, beat_frame_indices)`. Convert frames to seconds with
+/// Returns `(tempo_bpm, beat_frame_indices)`, or `(0, [])` without onset evidence.
+/// The path ends at the earliest frame attaining the best cumulative score;
+/// equally scoring silent continuations do not create trailing beats.
+/// Convert frames to seconds with
 /// `frame * hop_length / sr`.
 ///
 /// # Examples
@@ -586,7 +664,19 @@ fn beat_track_impl(
     start_bpm: f32,
     tightness: f32,
 ) -> Result<(f32, Vec<usize>), RhythmError> {
+    if sr == 0
+        || hop_length == 0
+        || !start_bpm.is_finite()
+        || start_bpm <= 0.0
+        || !tightness.is_finite()
+        || tightness < 0.0
+    {
+        return Err(RhythmError::InvalidInput("Beat parameters must be finite with positive sample rate, hop and BPM, and nonnegative tightness".into()));
+    }
     let odf = onset_strength_impl(y, hop_length, 2048)?;
+    if odf.iter().all(|&v| v == 0.0) {
+        return Ok((0.0, Vec::new()));
+    }
     let estimated_bpm = tempo_impl(Some(y), Some(sr), None, Some(hop_length))
         .unwrap_or(start_bpm)
         .max(1.0);
@@ -650,7 +740,9 @@ fn dp_beat_track(odf: &[f32], period: f32, tightness: f32) -> Vec<usize> {
     let last = score
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        // Earliest maximum: a zero-evidence continuation can tie the last
+        // supported beat but must not extend the path merely because it is later.
+        .reduce(|best, current| if current.1 > best.1 { current } else { best })
         .map_or_else(|| n.saturating_sub(1), |(i, _)| i);
 
     let mut beats: Vec<usize> = Vec::new();
@@ -883,9 +975,10 @@ impl PlpBuilder<'_> {
 
 /// Computes the Predominant Local Pulse (PLP) from an audio signal.
 ///
-/// Synthesizes a sinusoidal pulse at the locally-dominant tempo for each frame
-/// and accumulates these pulses into a single beat-probability curve.  Unlike
-/// [`beat_track`], PLP adapts frame-by-frame and is more robust to tempo changes.
+/// Accumulates positive cosine lobes weighted by the dominant local
+/// autocorrelation lag, then normalizes the curve. This is a local rhythmic
+/// activity curve; it does not estimate Fourier phase as librosa PLP does.
+/// Broad or nearly constant curves can produce no detected beat peaks.
 ///
 /// Returns `(pulse_curve, beat_frame_indices)`.
 ///
@@ -916,6 +1009,19 @@ fn plp_impl(
     min_tempo: f32,
     max_tempo: f32,
 ) -> Result<(Array1<f32>, Vec<usize>), RhythmError> {
+    if sr == 0
+        || hop_length == 0
+        || win_length == 0
+        || !min_tempo.is_finite()
+        || !max_tempo.is_finite()
+        || min_tempo <= 0.0
+        || max_tempo < min_tempo
+    {
+        return Err(RhythmError::InvalidInput(
+            "Require positive sample rate, hop, window and finite ordered positive tempo limits"
+                .into(),
+        ));
+    }
     let odf = onset_strength_impl(y, hop_length, 2048)?;
     let n_frames = odf.len();
     if n_frames < 2 {
@@ -1112,7 +1218,9 @@ impl OnsetStrengthMultiBuilder<'_> {
 ///
 /// Divides the STFT power spectrogram into `n_bands` linearly spaced frequency
 /// bands and computes positive log-spectral flux for each, returning a matrix
-/// of shape `(n_bands, n_frames)`.
+/// of shape `(n_bands, n_frames)`, including a zero first column on the same
+/// frame grid as [`onset_strength`]. Each band averages positive dB differences;
+/// single-band [`onset_strength`] instead sums log10-power differences.
 ///
 /// Useful for rhythm analysis that distinguishes low-frequency (kick/bass) from
 /// high-frequency (hi-hat/snare) transients.
@@ -1161,13 +1269,13 @@ fn onset_strength_multi_impl(
     }
 
     // Log power spectrogram
-    let log_power: Array2<f32> = spec.mapv(|c| {
-        let p = c.norm_sqr();
-        if p > 1e-10 { p.log10() * 10.0 } else { -100.0 }
+    let log_power = spec.mapv(|c| {
+        let power = f64::from(c.re).powi(2) + f64::from(c.im).powi(2);
+        power.max(f64::from(1e-10_f32)).log10() * 10.0
     });
 
     let band_size = n_freqs.max(n_bands) / n_bands;
-    let mut out = Array2::zeros((n_bands, n_frames.saturating_sub(1)));
+    let mut out = Array2::zeros((n_bands, n_frames));
 
     for band in 0..n_bands {
         let f_lo = band * band_size;
@@ -1182,12 +1290,12 @@ fn onset_strength_multi_impl(
             continue;
         }
         for t in 1..n_frames {
-            let mut flux = 0.0_f32;
+            let mut flux = 0.0_f64;
             for f in f_lo..f_hi {
                 let diff = log_power[[f, t]] - log_power[[f, t - 1]];
                 flux += diff.max(0.0);
             }
-            out[[band, t - 1]] = flux / (f_hi - f_lo) as f32;
+            out[[band, t]] = (flux / (f_hi - f_lo) as f64) as f32;
         }
     }
 
@@ -1274,7 +1382,7 @@ mod tests {
         // Even for silence the function should succeed (all-zero odf still gives a tempogram)
         if let Ok((curve, _)) = result {
             assert!(!curve.is_empty());
-            assert!(curve.iter().all(|&v| v >= 0.0 && v <= 1.0 + 1e-6));
+            assert!(curve.iter().all(|&v| (0.0..=1.0 + 1e-6).contains(&v)));
         }
     }
 }
