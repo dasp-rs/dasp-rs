@@ -121,6 +121,16 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
 ### Pitch & tuning — `pitch`
 - `yin(&y, fmin, fmax)`, `pyin(&y, fmin, fmax)` — fundamental-frequency estimation
   (builders: `.sample_rate()`, `.frame_length()`, `.hop_length()`, `.compute()`).
+- YIN selects the first acceptable trough with parabolic interpolation;
+  `.trough_threshold()` controls its acceptance threshold (default 0.1).
+- pYIN combines probabilistic threshold candidates with voiced/unvoiced Viterbi
+  decoding on a 10-cent pitch grid. `.compute_with_voicing()` returns `PyinResult`
+  (`f0`, `voiced_flag`, and frame-local `voiced_prob`). `.compute()` still returns
+  only frequencies, using zero for unvoiced frames. Transition rate and voicing
+  switch probability are configurable.
+- Both trackers use complete, uncentered frames and require enough samples per
+  frame to cover two periods at `fmin` plus an interpolation neighbour. Nonfinite
+  samples, invalid frequency ranges, and zero hop lengths are rejected.
 - `piptrack` — spectral peak pitch tracking.
 - `estimate_tuning(&y)` (builder), `pitch_tuning` — tuning-deviation estimation.
 

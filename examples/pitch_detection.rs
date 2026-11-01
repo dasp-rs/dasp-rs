@@ -26,17 +26,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // ── pYIN (probabilistic) ──────────────────────────────────────────────────
-    // More robust than YIN; also returns per-frame voiced probability.
-    let f0_pyin = pitch::pyin(&y, fmin, fmax)
+    // Probabilistic candidates and sequence decoding, with voicing information.
+    let tracked = pitch::pyin(&y, fmin, fmax)
         .sample_rate(sr)
         .frame_length(2048)
         .hop_length(512)
-        .compute()?;
-    let mean_pyin = voiced_mean(&f0_pyin);
+        .compute_with_voicing()?;
+    let mean_pyin = voiced_mean(&tracked.f0);
     println!(
         "pYIN mean F0:      {mean_pyin:.1} Hz over {} frames",
-        f0_pyin.len()
+        tracked.f0.len()
     );
+    println!(
+        "pYIN voiced:      {} frames",
+        tracked.voiced_flag.iter().filter(|&&v| v).count()
+    );
+    println!("First voiced probability: {:.3}", tracked.voiced_prob[0]);
 
     // ── Piptrack ─────────────────────────────────────────────────────────────
     // Spectral peak-picking pitch tracker. Returns (pitches, magnitudes).

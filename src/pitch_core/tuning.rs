@@ -1,3 +1,4 @@
+use super::tracking::{self, Config, PyinResult};
 use ndarray::Array2;
 use thiserror::Error;
 
@@ -40,6 +41,8 @@ impl From<TuningError> for AudioError {
 /// Builder for the pYIN pitch tracker (probabilistic YIN).
 #[derive(Debug, Clone)]
 pub struct PyinBuilder<'a> {
+    max_transition_rate: f32,
+    switch_probability: f32,
     signal: &'a [f32],
     fmin: f32,
     fmax: f32,
@@ -49,6 +52,40 @@ pub struct PyinBuilder<'a> {
 }
 
 impl PyinBuilder<'_> {
+    /// Maximum pitch movement in octaves per second (default: 35.92).
+    #[must_use]
+    pub fn max_transition_rate(mut self, rate: f32) -> Self {
+        self.max_transition_rate = rate;
+        self
+    }
+
+    /// Probability of switching voiced/unvoiced state per frame (default: 0.01).
+    #[must_use]
+    pub fn switch_probability(mut self, probability: f32) -> Self {
+        self.switch_probability = probability;
+        self
+    }
+
+    /// Compute pitch, Viterbi voicing decisions, and frame-local voiced probabilities.
+    ///
+    /// # Errors
+    /// Rejects invalid frequencies, nonfinite audio, zero hop lengths, frames too
+    /// short for the requested minimum frequency, or invalid HMM settings.
+    pub fn compute_with_voicing(self) -> Result<PyinResult, TuningError> {
+        tracking::pyin(
+            self.signal,
+            &Config {
+                sr: self.sample_rate,
+                fmin: self.fmin,
+                fmax: self.fmax,
+                frame_length: self.frame_length,
+                hop_length: self.hop_length,
+            },
+            self.max_transition_rate,
+            self.switch_probability,
+        )
+    }
+
     /// Set the sample rate in Hz (default: 44100).
     #[must_use]
     pub fn sample_rate(mut self, sr: u32) -> Self {
@@ -75,14 +112,7 @@ impl PyinBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Vec<f32>, TuningError> {
-        pyin_impl(
-            self.signal,
-            self.fmin,
-            self.fmax,
-            self.sample_rate,
-            self.frame_length,
-            self.hop_length,
-        )
+        Ok(self.compute_with_voicing()?.f0)
     }
 }
 
@@ -90,6 +120,22 @@ impl PyinBuilder<'_> {
 ///
 /// Returns a builder. `fmin`/`fmax` (Hz) are required; sample rate, frame
 /// length, and hop length have defaults (44100, 2048, `frame_length / 4`).
+///
+/// Implements the two-stage model of [Mauch & Dixon (2014)](https://doi.org/10.1109/ICASSP.2014.6853678):
+/// 100 thresholds from 0.01 to 1.0 with a Beta(2, 18) prior assign probability
+/// to the first acceptable YIN trough (1% fallback mass to the lowest trough).
+/// A voiced/unvoiced HMM with triangular pitch transitions is Viterbi-decoded
+/// on a 10-cent grid. `compute()` returns zero for unvoiced frames;
+/// [`PyinBuilder::compute_with_voicing`] also returns flags and frame-local probabilities.
+///
+/// Analysis uses complete, uncentered frames: output `t` starts at sample
+/// `t * hop_length`; trailing incomplete frames are omitted. The first half of
+/// each frame is the fixed comparison window. Frames must fit two periods at
+/// `fmin` plus an interpolation neighbour. This is offline sequence processing;
+/// traceback memory grows with frame count and pitch range.
+///
+/// These conventions differ from librosa's full-frame difference function and
+/// Boltzmann trough prior; outputs are not intended to be numerically identical.
 ///
 /// # Example
 /// ```no_run
@@ -100,6 +146,8 @@ impl PyinBuilder<'_> {
 /// ```
 pub fn pyin(signal: &[f32], fmin: f32, fmax: f32) -> PyinBuilder<'_> {
     PyinBuilder {
+        max_transition_rate: 35.92,
+        switch_probability: 0.01,
         signal,
         fmin,
         fmax,
@@ -109,35 +157,10 @@ pub fn pyin(signal: &[f32], fmin: f32, fmax: f32) -> PyinBuilder<'_> {
     }
 }
 
-fn pyin_impl(
-    signal: &[f32],
-    fmin: f32,
-    fmax: f32,
-    sr: u32,
-    frame_len: usize,
-    hop_length: Option<usize>,
-) -> Result<Vec<f32>, TuningError> {
-    validate_inputs(fmin, fmax, sr, frame_len, signal.len())?;
-
-    let hop_length = hop_length.unwrap_or(frame_len / 4).max(1);
-    let n_frames = calculate_n_frames(signal.len(), frame_len, hop_length);
-    let lag_min = (sr as f32 / fmax).round() as usize;
-    let lag_max = (sr as f32 / fmin).round() as usize;
-
-    let mut pitches = Vec::with_capacity(n_frames);
-    for i in 0..n_frames {
-        let start = i * hop_length;
-        let frame = &signal[start..(start + frame_len).min(signal.len())];
-        let pitch = compute_pyin_frame(frame, lag_min, lag_max, sr, fmin, fmax);
-        pitches.push(pitch);
-    }
-
-    Ok(pitches)
-}
-
 /// Builder for the YIN pitch tracker.
 #[derive(Debug, Clone)]
 pub struct YinBuilder<'a> {
+    trough_threshold: f32,
     signal: &'a [f32],
     fmin: f32,
     fmax: f32,
@@ -147,6 +170,14 @@ pub struct YinBuilder<'a> {
 }
 
 impl YinBuilder<'_> {
+    /// Maximum normalized difference at an accepted trough (default: 0.1).
+    /// Must be finite and strictly between zero and one.
+    #[must_use]
+    pub fn trough_threshold(mut self, threshold: f32) -> Self {
+        self.trough_threshold = threshold;
+        self
+    }
+
     /// Set the sample rate in Hz (default: 44100).
     #[must_use]
     pub fn sample_rate(mut self, sr: u32) -> Self {
@@ -173,13 +204,16 @@ impl YinBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Vec<f32>, TuningError> {
-        yin_impl(
+        tracking::yin(
             self.signal,
-            self.fmin,
-            self.fmax,
-            self.sample_rate,
-            self.frame_length,
-            self.hop_length,
+            &Config {
+                sr: self.sample_rate,
+                fmin: self.fmin,
+                fmax: self.fmax,
+                frame_length: self.frame_length,
+                hop_length: self.hop_length,
+            },
+            self.trough_threshold,
         )
     }
 }
@@ -188,6 +222,17 @@ impl YinBuilder<'_> {
 ///
 /// Returns a builder. `fmin`/`fmax` (Hz) are required; sample rate, frame
 /// length, and hop length have defaults (44100, 2048, `frame_length / 4`).
+///
+/// Uses a fixed half-frame difference window, cumulative mean normalization,
+/// the first local minimum below the configured threshold (default 0.1), and
+/// parabolic period interpolation. The voicing policy returns zero when no
+/// trough passes the threshold, including silence/DC; it does not force a
+/// global-minimum pitch. This is framewise YIN without time-neighbourhood smoothing.
+///
+/// Only complete, uncentered frames are analyzed. Frame `t` starts at sample
+/// `t * hop_length`. Frames must fit two periods at `fmin` plus an interpolation
+/// neighbour; invalid configurations return errors rather than zero estimates.
+/// See [de Cheveigné & Kawahara (2002)](https://doi.org/10.1121/1.1458024).
 ///
 /// # Example
 /// ```no_run
@@ -198,6 +243,7 @@ impl YinBuilder<'_> {
 /// ```
 pub fn yin(signal: &[f32], fmin: f32, fmax: f32) -> YinBuilder<'_> {
     YinBuilder {
+        trough_threshold: 0.1,
         signal,
         fmin,
         fmax,
@@ -205,32 +251,6 @@ pub fn yin(signal: &[f32], fmin: f32, fmax: f32) -> YinBuilder<'_> {
         frame_length: 2048,
         hop_length: None,
     }
-}
-
-fn yin_impl(
-    signal: &[f32],
-    fmin: f32,
-    fmax: f32,
-    sr: u32,
-    frame_len: usize,
-    hop_length: Option<usize>,
-) -> Result<Vec<f32>, TuningError> {
-    validate_inputs(fmin, fmax, sr, frame_len, signal.len())?;
-
-    let hop_length = hop_length.unwrap_or(frame_len / 4).max(1);
-    let n_frames = calculate_n_frames(signal.len(), frame_len, hop_length);
-    let lag_min = (sr as f32 / fmax).round() as usize;
-    let lag_max = (sr as f32 / fmin).round() as usize;
-
-    let mut pitches = Vec::with_capacity(n_frames);
-    for i in 0..n_frames {
-        let start = i * hop_length;
-        let frame = &signal[start..(start + frame_len).min(signal.len())];
-        let pitch = compute_yin_frame(frame, lag_min, lag_max, sr, fmin, fmax);
-        pitches.push(pitch);
-    }
-
-    Ok(pitches)
 }
 
 /// Estimates tuning deviation in cents from a reference pitch.
@@ -579,127 +599,6 @@ fn piptrack_impl(
     Ok((pitches, mags))
 }
 
-// Helper functions to reduce code duplication and improve maintainability.
-
-fn validate_inputs(
-    fmin: f32,
-    fmax: f32,
-    sample_rate: u32,
-    frame_length: usize,
-    signal_len: usize,
-) -> Result<(), TuningError> {
-    if fmin >= fmax || fmin < 0.0 || fmax > sample_rate as f32 / 2.0 {
-        return Err(TuningError::InvalidFrequencyRange(
-            "fmin must be less than fmax and within Nyquist bounds".to_string(),
-        ));
-    }
-    if signal_len < frame_length {
-        return Err(TuningError::InsufficientData(
-            "Signal length is less than frame length".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn calculate_n_frames(signal_len: usize, frame_length: usize, hop_length: usize) -> usize {
-    if signal_len < frame_length {
-        1
-    } else {
-        (signal_len - frame_length) / hop_length + 1
-    }
-}
-
-fn compute_diff_function(frame: &[f32], lag_max: usize) -> Vec<f32> {
-    let mut diff = vec![0.0; lag_max];
-    for tau in 0..lag_max {
-        let sum: f32 = (0..frame.len().saturating_sub(tau))
-            .map(|j| {
-                let d = frame[j] - frame[j + tau];
-                d * d
-            })
-            .sum();
-        diff[tau] = sum;
-    }
-    diff
-}
-
-fn compute_cmnd(diff: &[f32], lag_max: usize) -> Vec<f32> {
-    let mut cmnd = vec![1.0; lag_max];
-    let mut running_sum = 0.0;
-    for tau in 1..lag_max {
-        running_sum += diff[tau];
-        cmnd[tau] = if running_sum > 1e-6 {
-            diff[tau] * tau as f32 / running_sum
-        } else {
-            1.0
-        };
-    }
-    cmnd
-}
-
-fn find_min_cmnd(cmnd: &[f32], lag_min: usize, lag_max: usize) -> (usize, f32) {
-    cmnd[lag_min..lag_max]
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| (lag_min + i, v))
-        .min_by(|(_, a), (_, b)| a.total_cmp(b))
-        .unwrap_or((lag_min, cmnd[lag_min]))
-}
-
-fn compute_pyin_frame(
-    frame: &[f32],
-    lag_min: usize,
-    lag_max: usize,
-    sample_rate: u32,
-    fmin: f32,
-    fmax: f32,
-) -> f32 {
-    let diff = compute_diff_function(frame, lag_max);
-    let cmnd = compute_cmnd(&diff, lag_max);
-    let (min_idx, min_val) = find_min_cmnd(&cmnd, lag_min, lag_max);
-
-    let pitch = if min_val < 0.1 && min_idx > 1 && min_idx < lag_max - 1 {
-        let a = cmnd[min_idx - 1];
-        let b = cmnd[min_idx];
-        let c = cmnd[min_idx + 1];
-        let delta = (a - c) / (2.0 * (a - 2.0 * b + c) + 1e-6);
-        sample_rate as f32 / (min_idx as f32 + delta)
-    } else {
-        0.0
-    };
-
-    if pitch >= fmin && pitch <= fmax {
-        pitch
-    } else {
-        0.0
-    }
-}
-
-fn compute_yin_frame(
-    frame: &[f32],
-    lag_min: usize,
-    lag_max: usize,
-    sample_rate: u32,
-    fmin: f32,
-    fmax: f32,
-) -> f32 {
-    let diff = compute_diff_function(frame, lag_max);
-    let cmnd = compute_cmnd(&diff, lag_max);
-    let (min_idx, min_val) = find_min_cmnd(&cmnd, lag_min, lag_max);
-
-    let pitch = if min_val < 0.5 && min_idx > 0 {
-        sample_rate as f32 / min_idx as f32
-    } else {
-        0.0
-    };
-
-    if pitch >= fmin && pitch <= fmax {
-        pitch
-    } else {
-        0.0
-    }
-}
-
 fn compute_spectrogram(
     signal: Option<&[f32]>,
     spectrogram: Option<&Array2<f32>>,
@@ -752,8 +651,10 @@ mod tests {
     #[test]
     fn test_yin_short_signal() {
         let signal = vec![0.1, 0.2, 0.3, 0.4];
-        let pitches = yin(&signal, 50.0, 500.0).frame_length(4).compute().unwrap();
-        assert_eq!(pitches, vec![0.0]);
+        assert!(matches!(
+            yin(&signal, 50.0, 500.0).frame_length(4).compute(),
+            Err(TuningError::InsufficientData(_))
+        ));
     }
 
     #[test]

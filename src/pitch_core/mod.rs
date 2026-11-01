@@ -3,3 +3,6 @@
 /// Pitch detection and tuning estimation algorithms.
 pub mod tuning;
 pub use tuning::*;
+
+mod tracking;
+pub use tracking::PyinResult;

@@ -16,6 +16,14 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- YIN now selects the first acceptable normalized-difference trough and refines
+  its period by parabolic interpolation. Fixed comparison windows and `f64`
+  accumulation remove lag-length bias and amplitude-dependent failures on quiet audio.
+- pYIN now implements probabilistic threshold candidates and voiced/unvoiced
+  Viterbi sequence decoding instead of independent thresholded frame estimates.
+  Pitch and voicing outputs therefore change. Both trackers reject invalid lag
+  ranges, nonfinite samples, zero hops, and frames too short for the requested
+  minimum frequency instead of panicking or returning misleading estimates.
 - Float WAV export preserves sample values outside `[-1, 1]` instead of silently
   clipping. Apply explicit limiting before export if the old behavior is needed.
 - Batch and streaming readers share a fallible packet decoder. Packet-read
@@ -47,6 +55,12 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- `PyinBuilder::compute_with_voicing()` and `PyinResult` expose decoded frequencies,
+  voicing flags, and frame-local voiced probabilities while preserving the
+  existing frequency-only `compute()` API. Added transition-rate/voicing-switch
+  settings for pYIN and a trough-threshold setting for YIN.
+- Pitch regression tests, an exhaustive small-model Viterbi check, and a
+  reproducible librosa 0.11.0 reference fixture (Python is not required for Rust tests).
 - `IstftBuilder::n_fft` specifies the original FFT size for odd-length transforms.
 - I/O regressions for float headroom, packet failures, incremental block framing,
   block limits, bounded delivery, and receiver cancellation.
