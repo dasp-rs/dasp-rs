@@ -13,6 +13,9 @@ pub enum PhaseRecoveryError {
 /// Reconstructs a time-domain signal from an STFT magnitude spectrogram using the Griffin-Lim algorithm.
 ///
 /// Iteratively refines a signal estimate by enforcing consistency with the given magnitude spectrogram.
+/// Uses a centered, periodic Hann STFT with an inferred even FFT size. Output
+/// length is `hop_length * (n_frames - 1)`; the original trailing partial hop
+/// cannot be inferred from magnitudes alone. A single frame yields empty output.
 ///
 /// # Arguments
 /// * `s` - Magnitude spectrogram (shape: `[n_freqs, n_frames]`)
@@ -78,16 +81,25 @@ fn griffinlim_impl(
     n_iter: usize,
     hop_length: Option<usize>,
 ) -> Result<Vec<f32>, PhaseRecoveryError> {
-    if s.shape()[0] == 0 || s.shape()[1] == 0 {
+    if s.shape()[0] < 2 || s.shape()[1] == 0 {
         return Err(PhaseRecoveryError::ComputationFailed(
-            "Empty magnitude spectrogram".into(),
+            "Require at least two frequency bins and one frame".into(),
         ));
     }
     let n_fft = (s.shape()[0] - 1) * 2;
-    let hop = hop_length.unwrap_or(n_fft / 4).max(1);
-    let signal_len = hop * (s.shape()[1] - 1) + n_fft;
-    // Deterministic pseudo-random initialization avoids phase-lock artifacts
-    // (matches the CQT variant's seeding strategy below).
+    let hop = hop_length.unwrap_or_else(|| (n_fft / 4).max(1));
+    if hop == 0 || s.iter().any(|v| !v.is_finite() || *v < 0.0) {
+        return Err(PhaseRecoveryError::ComputationFailed(
+            "Require positive hop length and finite, non-negative magnitudes".into(),
+        ));
+    }
+    // A centered even-length STFT has 1 + signal_len / hop frames.
+    // Adding n_fft here would introduce extra frames on every iteration.
+    let signal_len = hop
+        .checked_mul(s.shape()[1] - 1)
+        .filter(|&n| n <= isize::MAX as usize / std::mem::size_of::<f32>())
+        .ok_or_else(|| PhaseRecoveryError::ComputationFailed("Signal length overflows".into()))?;
+    // Deterministic initialization keeps repeated reconstructions reproducible.
     let mut y: Vec<f32> = (0..signal_len)
         .map(|i| (i as f32 * 0.031_415_93).sin() * 0.01)
         .collect();
@@ -99,27 +111,23 @@ fn griffinlim_impl(
             .map_err(|e| {
                 PhaseRecoveryError::ComputationFailed(format!("STFT computation failed: {e}"))
             })?;
-        let (mut mag, mut phase) =
-            crate::signal_processing::time_frequency::magphase(&stft_y, None);
-        // Griffin-Lim: replace magnitude with target magnitude, keep phase from current estimate
-        for ((i, j), m) in mag.indexed_iter_mut() {
-            *m = s[[i, j]]; // Use given magnitude directly (not sqrt, as s is already magnitude)
-            let p = &mut phase[[i, j]];
-            let norm = p.norm();
-            if m.abs() > 1e-10 {
-                *p = if norm > 1e-10 {
-                    *p / norm
-                } else {
-                    Complex::new(1.0, 0.0)
-                };
-            }
-        }
-        // Create complex spectrogram: magnitude * phase (element-wise)
-        let new_stft = mag.mapv(|x| Complex::new(x, 0.0)) * phase;
+        // Preserve phase where defined. Zero-valued bins have arbitrary phase;
+        // selecting zero radians avoids dividing by zero (including on silence).
+        let new_stft = Array2::from_shape_fn(s.dim(), |index| {
+            let value = stft_y[index];
+            let norm = value.norm();
+            let phase = if norm > 1e-10 {
+                value / norm
+            } else {
+                Complex::new(1.0, 0.0)
+            };
+            phase * s[index]
+        });
         y = crate::signal_processing::time_frequency::istft(&new_stft)
             .hop_length(hop)
             .length(signal_len)
-            .compute();
+            .compute()
+            .map_err(|e| PhaseRecoveryError::ComputationFailed(format!("ISTFT failed: {e}")))?;
     }
     Ok(y)
 }

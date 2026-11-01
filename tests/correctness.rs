@@ -60,7 +60,11 @@ fn stft_peak_bin_for_pure_tone() {
 fn istft_inverts_stft_in_the_interior() {
     let y = sine(11.0, 256, 4096);
     let spec = stft(&y).n_fft(256).hop_length(64).compute().unwrap();
-    let recon = istft(&spec).hop_length(64).length(y.len()).compute();
+    let recon = istft(&spec)
+        .hop_length(64)
+        .length(y.len())
+        .compute()
+        .unwrap();
     assert_eq!(recon.len(), y.len());
     let (mut err, mut cnt) = (0.0_f32, 0usize);
     for i in 256..(y.len() - 256) {

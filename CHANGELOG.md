@@ -6,8 +6,53 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Breaking changes
+
+- `istft(...).compute()` now returns `Result<Vec<f32>, AudioError>` rather than
+  `Vec<f32>`. Add `?` (or handle the error explicitly) at call sites. Empty or
+  degenerate spectra, invalid FFT/window/hop sizes, nonfinite coefficients, and
+  overflowing reconstruction lengths return errors instead of panicking or
+  silently accepting invalid configuration.
+
+### Fixed
+
+- Float WAV export preserves sample values outside `[-1, 1]` instead of silently
+  clipping. Apply explicit limiting before export if the old behavior is needed.
+- Batch and streaming readers share a fallible packet decoder. Packet-read
+  failures other than Symphonia's normal end-of-stream signal are propagated;
+  malformed audio packets are reported rather than silently skipped.
+- For PCM-like streams with exact declared frame counts, premature EOF is
+  reported as truncation by both batch and streaming readers. Bounded prefix
+  reads still stop without inspecting an unrequested tail.
+- `stream` and `stream_lazy` decode incrementally and stop at the requested block
+  count. The lazy reader uses a bounded two-block queue with backpressure and
+  stops on receiver disconnect at its next send. The eager reader still retains
+  all requested output blocks. Overlap, gaps, and final zero-padding are preserved.
+- Audio loading now crops in complete channel frames, so stereo/multichannel
+  offsets and durations refer to the correct time range. Nonfinite ranges are rejected.
+- Decoder resampling now filters each channel independently before interleaving,
+  eliminating cross-channel contamination.
+- Whole-clip resampling now uses Rubato's synchronous FFT resampler, processes
+  fixed-size blocks, flushes the filter tail, and removes startup delay. Output
+  length is `ceil(input_length * target_rate / original_rate)`, including for
+  short clips; zero sample rates are rejected. Numerical output changes from
+  the previous asynchronous sinc implementation.
+- Griffin–Lim now keeps centered STFT frame counts consistent across iterations
+  and handles zero-magnitude bins without generating NaNs. Output length is
+  `hop_length * (n_frames - 1)`; invalid magnitudes and hop lengths return errors.
+- The MFCC builder now forwards FFT size, hop length, mel-band count, and frequency
+  bounds into its mel analysis instead of silently using defaults.
+- The spectral builder's mel and MFCC methods share the same mel configuration,
+  including nonzero lower frequency bounds.
+
 ### Added
 
+- `IstftBuilder::n_fft` specifies the original FFT size for odd-length transforms.
+- I/O regressions for float headroom, packet failures, incremental block framing,
+  block limits, bounded delivery, and receiver cancellation.
+- Numerical regression tests for crop timing, resampling duration, channel
+  isolation, impulse alignment, passband/alias rejection, inverse-transform
+  validation and reconstruction, MFCC configuration, and Griffin–Lim convergence.
 - Zenodo DOI badge in the README and `doi` field in `CITATION.cff`.
 
 ## [0.5.2]

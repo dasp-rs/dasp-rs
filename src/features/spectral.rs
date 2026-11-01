@@ -209,13 +209,18 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn melspectrogram(self) -> Result<Array2<f32>, SpectralError> {
-        melspectrogram_impl(
-            self.y,
-            self.sr,
+        let signal = AudioData::new(self.y.to_vec(), self.sr, 1).map_err(SpectralError::Audio)?;
+        self.mel_from_audio(&signal)
+    }
+
+    fn mel_from_audio(&self, signal: &AudioData) -> Result<Array2<f32>, SpectralError> {
+        melspectrogram(
+            signal,
             None,
             Some(self.n_fft),
             Some(self.hop_length),
             Some(self.n_mels),
+            Some(self.fmin),
             Some(self.fmax),
         )
     }
@@ -225,14 +230,9 @@ impl SpectralBuilder<'_> {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn mfcc(self) -> Result<Array2<f32>, SpectralError> {
-        mfcc_impl(
-            self.y,
-            self.sr,
-            None,
-            None,
-            Some(self.n_fft),
-            Some(self.hop_length),
-        )
+        let signal = AudioData::new(self.y.to_vec(), self.sr, 1).map_err(SpectralError::Audio)?;
+        let mel = self.mel_from_audio(&signal)?;
+        mfcc(&signal, Some(&mel), None, None, None)
     }
 
     /// Compute spectral centroid.
@@ -1128,19 +1128,6 @@ pub fn mfcc(
         // (The scale factor above already includes the orthonormal normalization)
     }
     Ok(mfcc)
-}
-
-/// Internal wrapper for mfcc that takes &[f32] and sample rate.
-fn mfcc_impl(
-    y: &[f32],
-    sr: u32,
-    s: Option<&Array2<f32>>,
-    _norm: Option<f32>,
-    _n_fft: Option<usize>,
-    _hop_length: Option<usize>,
-) -> Result<Array2<f32>, SpectralError> {
-    let signal = AudioData::new(y.to_vec(), sr, 1).map_err(SpectralError::Audio)?;
-    mfcc(&signal, s, None, None, None)
 }
 
 /// Computes root mean square (RMS) energy.

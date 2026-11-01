@@ -1,7 +1,5 @@
 use crate::core::AudioError;
-use rubato::{
-    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
-};
+use rubato::{FftFixedIn, Resampler};
 use thiserror::Error;
 
 /// Custom error type for resampling operations.
@@ -12,7 +10,7 @@ pub enum ResampleError {
     RubatoError(String),
 }
 
-/// Resamples audio data from one sample rate to another using sinc interpolation.
+/// Resamples a mono audio clip from one sample rate to another using FFT-based band-limited interpolation.
 ///
 /// # Arguments
 /// * `samples` - Input audio samples as a slice of `f32`
@@ -24,12 +22,16 @@ pub enum ResampleError {
 /// or an `AudioError` if resampling fails.
 ///
 /// # Errors
+/// * `AudioError::InvalidInput` - If either sample rate is zero or output length overflows.
 /// * `AudioError::ResampleError(ResampleError::RubatoError)` - If resampler initialization or processing fails.
 ///
 /// # Notes
+/// - Sample rates must be positive, including for empty input.
+/// - Output length is `ceil(samples.len() * target_sr / orig_sr)`.
+/// - The filter is flushed with zeros and its startup delay is removed.
 /// - If `orig_sr` equals `target_sr`, returns a clone of the input samples.
 /// - If `samples` is empty, returns an empty vector.
-/// - Uses sinc interpolation with fixed input length, Blackman-Harris window, and linear interpolation.
+/// - Uses a synchronous FFT resampler with fixed-size input blocks.
 ///
 /// # Examples
 /// ```
@@ -39,6 +41,11 @@ pub enum ResampleError {
 /// let resampled = resample(&samples, 44100, 22050).unwrap();
 /// ```
 pub fn resample(samples: &[f32], orig_sr: u32, target_sr: u32) -> Result<Vec<f32>, AudioError> {
+    if orig_sr == 0 || target_sr == 0 {
+        return Err(AudioError::InvalidInput(
+            "Sample rates must be positive".into(),
+        ));
+    }
     if orig_sr == target_sr {
         return Ok(samples.to_vec());
     }
@@ -47,30 +54,40 @@ pub fn resample(samples: &[f32], orig_sr: u32, target_sr: u32) -> Result<Vec<f32
         return Ok(vec![]);
     }
 
-    let ratio = f64::from(target_sr) / f64::from(orig_sr);
+    // Rates are fixed for the whole clip, so use the synchronous resampler.
+    // Fixed-size blocks keep temporary storage independent of clip length.
+    let chunk_size = 1024;
+    let mut resampler =
+        FftFixedIn::<f32>::new(orig_sr as usize, target_sr as usize, chunk_size, 2, 1).map_err(
+            |e: rubato::ResamplerConstructionError| {
+                ResampleError::RubatoError(format!("Resampler initialization failed: {e}"))
+            },
+        )?;
 
-    let sinc_len = 256;
-    let f_cutoff = 0.95;
-    let oversampling_factor = 256;
-    let interpolation_params = SincInterpolationParameters {
-        sinc_len,
-        f_cutoff,
-        oversampling_factor,
-        interpolation: SincInterpolationType::Linear,
-        window: WindowFunction::BlackmanHarris,
-    };
-
-    let mut resampler = SincFixedIn::<f32>::new(ratio, 1.0, interpolation_params, samples.len(), 1)
-        .map_err(|e: rubato::ResamplerConstructionError| {
-            ResampleError::RubatoError(format!("Resampler initialization failed: {e}"))
-        })?;
-
-    let input = vec![samples.to_vec()];
-
-    let output = resampler
-        .process(&input, None)
-        .map_err(|e| ResampleError::RubatoError(format!("Resampling failed: {e}")))?;
-    Ok(output[0].clone())
+    let output_len = usize::try_from(
+        (samples.len() as u128 * u128::from(target_sr)).div_ceil(u128::from(orig_sr)),
+    )
+    .map_err(|_| AudioError::InvalidInput("Resampled length overflows usize".into()))?;
+    let delay = resampler.output_delay();
+    let required = output_len
+        .checked_add(delay)
+        .ok_or_else(|| AudioError::InvalidInput("Resampled length overflows usize".into()))?;
+    let mut output = Vec::new();
+    for chunk in samples.chunks(chunk_size) {
+        let block = resampler
+            .process_partial(Some(&[chunk]), None)
+            .map_err(|e| ResampleError::RubatoError(format!("Resampling failed: {e}")))?;
+        output.extend_from_slice(&block[0]);
+    }
+    // Even an exact input block leaves a filter tail to drain. The final partial
+    // block is already zero-padded by rubato; continue until the full clip is available.
+    while output.len() < required {
+        let block = resampler
+            .process_partial::<&[f32]>(None, None)
+            .map_err(|e| ResampleError::RubatoError(format!("Resampler flush failed: {e}")))?;
+        output.extend_from_slice(&block[0]);
+    }
+    Ok(output[delay..required].to_vec())
 }
 
 #[cfg(test)]

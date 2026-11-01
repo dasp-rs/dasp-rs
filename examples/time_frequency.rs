@@ -16,8 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         spec.ncols()
     );
 
-    // istft returns Vec<f32> directly (no Result)
-    let y_rec = proc::istft(&spec).hop_length(512).compute();
+    let y_rec = proc::istft(&spec).hop_length(512).compute()?;
     println!("ISTFT:         {} samples reconstructed", y_rec.len());
 
     // ── Magnitude and phase ───────────────────────────────────────────────────

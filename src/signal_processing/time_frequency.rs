@@ -217,6 +217,7 @@ fn stft_impl(
 /// iSTFT builder.
 #[derive(Debug, Clone)]
 pub struct IstftBuilder<'a> {
+    n_fft: Option<usize>,
     stft_matrix: &'a Array2<Complex<f32>>,
     hop_length: Option<usize>,
     win_length: Option<usize>,
@@ -226,6 +227,14 @@ pub struct IstftBuilder<'a> {
 }
 
 impl IstftBuilder<'_> {
+    /// Set the original FFT size. Required for odd-length FFTs; otherwise inferred
+    /// as `2 * (n_bins - 1)`.
+    #[must_use]
+    pub fn n_fft(mut self, n_fft: usize) -> Self {
+        self.n_fft = Some(n_fft);
+        self
+    }
+
     /// Set the hop length (default: `win_length / 4`).
     #[must_use]
     pub fn hop_length(mut self, hop_length: usize) -> Self {
@@ -262,9 +271,14 @@ impl IstftBuilder<'_> {
     }
 
     /// Reconstruct the time-domain signal.
-    pub fn compute(self) -> Vec<f32> {
+    ///
+    /// # Errors
+    /// Rejects empty or incompatible spectra, nonfinite coefficients, invalid
+    /// FFT/window/hop sizes, and overflowing reconstruction lengths.
+    pub fn compute(self) -> Result<Vec<f32>, AudioError> {
         istft_impl(
             self.stft_matrix,
+            self.n_fft,
             self.hop_length,
             self.win_length,
             self.window,
@@ -278,19 +292,22 @@ impl IstftBuilder<'_> {
 ///
 /// Returns a builder. Defaults mirror [`stft`]: a periodic Hann window,
 /// `win_length = n_fft`, `hop_length = win_length / 4`, and `center = true`.
+/// Set [`IstftBuilder::n_fft`] explicitly for odd FFT sizes. Without a target
+/// length, both centering pads are removed from the overlap-add output.
 ///
 /// # Examples
 /// ```
 /// use dasp_rs::proc::stft;
 /// let y = vec![0.0_f32; 4096];
 /// let spec = stft(&y).n_fft(1024).hop_length(256).compute()?;
-/// let recon = dasp_rs::proc::istft(&spec).hop_length(256).length(y.len()).compute();
+/// let recon = dasp_rs::proc::istft(&spec).hop_length(256).length(y.len()).compute()?;
 /// assert_eq!(recon.len(), y.len());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn istft(stft_matrix: &Array2<Complex<f32>>) -> IstftBuilder<'_> {
     IstftBuilder {
         stft_matrix,
+        n_fft: None,
         hop_length: None,
         win_length: None,
         window: Window::Hann,
@@ -302,28 +319,55 @@ pub fn istft(stft_matrix: &Array2<Complex<f32>>) -> IstftBuilder<'_> {
 /// Internal iSTFT implementation (overlap-add with window-squared normalization).
 fn istft_impl(
     stft_matrix: &Array2<Complex<f32>>,
+    n_fft: Option<usize>,
     hop_length: Option<usize>,
     win_length: Option<usize>,
     window: Window,
     center: bool,
     length: Option<usize>,
-) -> Vec<f32> {
+) -> Result<Vec<f32>, AudioError> {
     let n_bins = stft_matrix.shape()[0];
     let n_frames = stft_matrix.shape()[1];
-    let n_fft = (n_bins - 1) * 2;
+    if n_bins < 2 || n_frames == 0 {
+        return Err(AudioError::InvalidInput(
+            "ISTFT requires at least two frequency bins and one frame".into(),
+        ));
+    }
+    let n_fft = n_fft.unwrap_or((n_bins - 1) * 2);
     let win_length = win_length.unwrap_or(n_fft);
-    let hop = hop_length.unwrap_or(win_length / 4).max(1);
+    let hop = hop_length.unwrap_or_else(|| (win_length / 4).max(1));
+    if n_fft < 2 || n_fft / 2 + 1 != n_bins {
+        return Err(AudioError::InvalidInput(
+            "FFT size does not match spectrum".into(),
+        ));
+    }
+    if win_length == 0 || win_length > n_fft || hop == 0 {
+        return Err(AudioError::InvalidInput(
+            "Require 0 < win_length <= n_fft and hop_length > 0".into(),
+        ));
+    }
+    if stft_matrix
+        .iter()
+        .any(|z| !z.re.is_finite() || !z.im.is_finite())
+    {
+        return Err(AudioError::InvalidInput("Spectrum must be finite".into()));
+    }
+    let full_len = hop
+        .checked_mul(n_frames - 1)
+        .and_then(|n| n.checked_add(n_fft))
+        .filter(|&n| n <= isize::MAX as usize / std::mem::size_of::<f32>())
+        .ok_or_else(|| AudioError::InvalidInput("Reconstruction length overflows".into()))?;
+    let start_off = if center { n_fft / 2 } else { 0 };
+    let target = length.unwrap_or_else(|| full_len.saturating_sub(2 * start_off));
+    if target > isize::MAX as usize / std::mem::size_of::<f32>() {
+        return Err(AudioError::InvalidInput("Output length overflows".into()));
+    }
     let win = fft_window(window, win_length, n_fft);
 
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_inverse(n_fft);
     let inv_n = 1.0 / n_fft as f32;
 
-    let full_len = if n_frames == 0 {
-        0
-    } else {
-        hop * (n_frames - 1) + n_fft
-    };
     let mut signal = vec![0.0f32; full_len];
     let mut window_sum = vec![0.0f32; full_len];
 
@@ -351,22 +395,14 @@ fn istft_impl(
         }
     }
 
-    let start_off = if center { n_fft / 2 } else { 0 };
-    let target = length.unwrap_or_else(|| {
-        if center {
-            full_len.saturating_sub(n_fft)
-        } else {
-            full_len
-        }
-    });
     let mut out = vec![0.0f32; target];
     for (i, o) in out.iter_mut().enumerate() {
-        let idx = start_off + i;
+        let idx = start_off.saturating_add(i);
         if idx < signal.len() {
             *o = signal[idx];
         }
     }
-    out
+    Ok(out)
 }
 
 /// Separates magnitude and phase from a complex spectrogram.
@@ -1711,7 +1747,11 @@ mod tests {
             .map(|n| (2.0 * PI * 7.0 * n as f32 / 256.0).sin())
             .collect();
         let spec = stft(&y).n_fft(256).hop_length(64).compute().expect("stft");
-        let recon = istft(&spec).hop_length(64).length(y.len()).compute();
+        let recon = istft(&spec)
+            .hop_length(64)
+            .length(y.len())
+            .compute()
+            .unwrap();
         assert_eq!(recon.len(), y.len());
 
         let (mut err, mut cnt) = (0.0_f32, 0usize);
