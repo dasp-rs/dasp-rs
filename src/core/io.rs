@@ -1,13 +1,14 @@
 use crate::signal_processing::{resample, to_mono};
 use hound::{SampleFormat, WavSpec, WavWriter};
 use ndarray::ShapeError;
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::codecs::{CODEC_TYPE_NULL, Decoder as CodecDecoder, DecoderOptions};
+use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
@@ -308,62 +309,230 @@ impl AudioData {
 ///
 /// Returns `(samples, sample_rate, channels)`.
 fn decode_audio<P: AsRef<Path>>(path: P) -> Result<(Vec<f32>, u32, u16), AudioError> {
-    let path = path.as_ref();
-    let file = File::open(path)?;
-    let mss = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
-
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
+    let mut packets = AudioPackets::open(path)?;
+    let mut samples = Vec::new();
+    for chunk in &mut packets {
+        samples.extend(chunk?);
     }
+    Ok((samples, packets.sample_rate, packets.channels))
+}
 
-    let probed = symphonia::default::get_probe()
-        .format(
-            &hint,
-            mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )
-        .map_err(|e| AudioError::OpenError(e.to_string()))?;
+// Both batch and streaming entry points consume the same fallible packet decoder.
+struct AudioPackets {
+    format: Box<dyn FormatReader>,
+    decoder: Box<dyn CodecDecoder>,
+    track_id: u32,
+    sample_rate: u32,
+    channels: u16,
+    expected_frames: Option<u64>,
+    decoded_frames: u64,
+    finished: bool,
+}
 
-    let mut format = probed.format;
+impl AudioPackets {
+    fn open<P: AsRef<Path>>(path: P) -> Result<Self, AudioError> {
+        let path = path.as_ref();
+        let file = File::open(path)?;
+        let mss = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
 
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or(AudioError::UnsupportedFormat)?;
-
-    let track_id = track.id;
-    let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-    let channels = track.codec_params.channels.map_or(1, |c| c.count() as u16);
-
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .map_err(|e| AudioError::OpenError(e.to_string()))?;
-
-    let mut samples: Vec<f32> = Vec::new();
-
-    while let Ok(packet) = format.next_packet() {
-        if packet.track_id() != track_id {
-            continue;
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
         }
-        let decoded = match decoder.decode(&packet) {
-            Ok(d) => d,
-            // A single malformed packet is recoverable; skip it and keep decoding.
-            Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
-            // Anything else (I/O failure, reset required, etc.) means the stream
-            // is no longer trustworthy — surface it instead of silently returning
-            // a shorter-than-expected `AudioData`.
-            Err(e) => return Err(AudioError::OpenError(format!("Decode failed: {e}"))),
-        };
-        let spec = *decoded.spec();
-        let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-        buf.copy_interleaved_ref(decoded);
-        samples.extend_from_slice(buf.samples());
-    }
 
-    Ok((samples, sample_rate, channels))
+        let probed = symphonia::default::get_probe()
+            .format(
+                &hint,
+                mss,
+                &FormatOptions::default(),
+                &MetadataOptions::default(),
+            )
+            .map_err(|e| AudioError::OpenError(e.to_string()))?;
+
+        let format = probed.format;
+
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or(AudioError::UnsupportedFormat)?;
+
+        let track_id = track.id;
+        let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
+        let channels = track.codec_params.channels.map_or(1, |c| c.count() as u16);
+        // PCM-like streams (one frame per coded block) can declare an exact
+        // sample-frame length. Do not compare against estimated compressed-stream
+        // durations or timebases whose ticks are not sample frames.
+        let expected_frames = if track.codec_params.frames_per_block == Some(1)
+            && track
+                .codec_params
+                .time_base
+                .is_some_and(|base| base.numer == 1 && base.denom == sample_rate)
+        {
+            track.codec_params.n_frames
+        } else {
+            None
+        };
+
+        let decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .map_err(|e| AudioError::OpenError(e.to_string()))?;
+
+        Ok(Self {
+            format,
+            decoder,
+            track_id,
+            sample_rate,
+            channels,
+            expected_frames,
+            decoded_frames: 0,
+            finished: false,
+        })
+    }
+}
+
+// Symphonia signals normal end-of-stream with UnexpectedEof. Other packet
+// errors must not be mistaken for successful completion of a shorter file.
+fn packet_or_eof<T>(
+    packet: Result<T, symphonia::core::errors::Error>,
+) -> Result<Option<T>, AudioError> {
+    match packet {
+        Ok(packet) => Ok(Some(packet)),
+        Err(symphonia::core::errors::Error::IoError(e))
+            if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(AudioError::OpenError(format!("Packet read failed: {e}"))),
+    }
+}
+
+impl Iterator for AudioPackets {
+    type Item = Result<Vec<f32>, AudioError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.finished {
+            return None;
+        }
+        loop {
+            let packet = match packet_or_eof(self.format.next_packet()) {
+                Ok(Some(packet)) => packet,
+                Ok(None) => {
+                    self.finished = true;
+                    if let Some(expected) = self.expected_frames {
+                        if self.decoded_frames < expected {
+                            return Some(Err(AudioError::IoError(std::io::Error::new(
+                                std::io::ErrorKind::UnexpectedEof,
+                                format!(
+                                    "Truncated audio: decoded {} of {expected} declared frames",
+                                    self.decoded_frames
+                                ),
+                            ))));
+                        }
+                    }
+                    return None;
+                }
+                Err(e) => {
+                    self.finished = true;
+                    return Some(Err(e));
+                }
+            };
+            if packet.track_id() != self.track_id {
+                continue;
+            }
+            let decoded = match self.decoder.decode(&packet) {
+                Ok(decoded) => decoded,
+                Err(e) => {
+                    self.finished = true;
+                    return Some(Err(AudioError::OpenError(format!("Decode failed: {e}"))));
+                }
+            };
+            self.decoded_frames = self.decoded_frames.saturating_add(decoded.frames() as u64);
+            let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
+            buffer.copy_interleaved_ref(decoded);
+            return Some(Ok(buffer.samples().to_vec()));
+        }
+    }
+}
+
+// Retain only the current analysis window plus at most one decoded packet.
+// `skip` is applied before filling the next window, including when hop > frame.
+struct SampleBlocks<I> {
+    packets: I,
+    buffer: VecDeque<f32>,
+    frame_length: usize,
+    hop: usize,
+    remaining: usize,
+    skip: usize,
+    finished: bool,
+}
+
+impl<I> SampleBlocks<I> {
+    fn new(packets: I, limit: usize, frame_length: usize, hop: usize) -> Self {
+        Self {
+            packets,
+            buffer: VecDeque::new(),
+            frame_length,
+            hop,
+            remaining: limit,
+            skip: 0,
+            finished: false,
+        }
+    }
+}
+
+impl<I: Iterator<Item = Result<Vec<f32>, AudioError>>> Iterator for SampleBlocks<I> {
+    type Item = Result<Vec<f32>, AudioError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.finished || self.remaining == 0 {
+            return None;
+        }
+        let discard = self.skip.min(self.buffer.len());
+        self.buffer.drain(..discard);
+        self.skip -= discard;
+        while self.buffer.len() < self.frame_length {
+            match self.packets.next() {
+                Some(Ok(packet)) => {
+                    let discard = self.skip.min(packet.len());
+                    self.skip -= discard;
+                    self.buffer.extend(packet.into_iter().skip(discard));
+                }
+                Some(Err(e)) => {
+                    self.finished = true;
+                    return Some(Err(e));
+                }
+                None => {
+                    self.finished = true;
+                    break;
+                }
+            }
+        }
+        if self.buffer.is_empty() {
+            return None;
+        }
+        let mut block: Vec<f32> = self
+            .buffer
+            .iter()
+            .take(self.frame_length)
+            .copied()
+            .collect();
+        block.resize(self.frame_length, 0.0);
+        self.skip = self.hop;
+        self.remaining -= 1;
+        Some(Ok(block))
+    }
+}
+
+fn send_blocks(
+    blocks: impl Iterator<Item = Result<Vec<f32>, AudioError>>,
+    tx: &SyncSender<Result<Vec<f32>, AudioError>>,
+) {
+    for block in blocks {
+        if tx.send(block).is_err() {
+            break;
+        }
+    }
 }
 
 /// Loads an audio file into `AudioData` with optional DSP transformations.
@@ -417,13 +586,17 @@ pub fn load<P: AsRef<Path>>(
     }
 
     if let Some(off) = offset {
-        if off < 0.0 {
-            return Err(AudioError::InvalidInput("Offset cannot be negative".into()));
+        if !off.is_finite() || off < 0.0 {
+            return Err(AudioError::InvalidInput(
+                "Offset must be finite and non-negative".into(),
+            ));
         }
     }
     if let Some(dur) = duration {
-        if dur <= 0.0 {
-            return Err(AudioError::InvalidInput("Duration must be positive".into()));
+        if !dur.is_finite() || dur <= 0.0 {
+            return Err(AudioError::InvalidInput(
+                "Duration must be finite and positive".into(),
+            ));
         }
     }
     if let Some(rate) = sr {
@@ -436,13 +609,16 @@ pub fn load<P: AsRef<Path>>(
 
     let (raw_samples, sample_rate, channels) = decode_audio(path)?;
 
-    let start = (offset.unwrap_or(0.0) * sample_rate as f32) as usize;
-    let len = duration.map(|d| (d * sample_rate as f32) as usize);
-
-    let end = len.map_or(raw_samples.len(), |l| (start + l).min(raw_samples.len()));
-    let start = start.min(raw_samples.len());
-
-    let mut samples = raw_samples[start..end].to_vec();
+    let channel_count = usize::from(channels);
+    let total_frames = raw_samples.len() / channel_count;
+    let start_frame =
+        ((f64::from(offset.unwrap_or(0.0)) * f64::from(sample_rate)) as usize).min(total_frames);
+    let end_frame = duration.map_or(total_frames, |d| {
+        start_frame
+            .saturating_add((f64::from(d) * f64::from(sample_rate)) as usize)
+            .min(total_frames)
+    });
+    let mut samples = raw_samples[start_frame * channel_count..end_frame * channel_count].to_vec();
 
     // `duration` is validated to be strictly positive above, so a `len` that
     // rounds down to 0 samples (a tiny duration at a low sample rate) is still
@@ -458,8 +634,28 @@ pub fn load<P: AsRef<Path>>(
     let final_samples = if let Some(target_sr) = sr {
         if target_sr == sample_rate {
             samples
-        } else {
+        } else if channels == 1 || mono.unwrap_or(false) {
             resample(&samples, sample_rate, target_sr)?
+        } else {
+            // A filter must never treat adjacent channels as adjacent times.
+            let resampled: Vec<Vec<f32>> = (0..channel_count)
+                .map(|channel| {
+                    let input: Vec<f32> = samples
+                        .iter()
+                        .skip(channel)
+                        .step_by(channel_count)
+                        .copied()
+                        .collect();
+                    resample(&input, sample_rate, target_sr)
+                })
+                .collect::<Result<_, _>>()?;
+            let mut interleaved = Vec::with_capacity(resampled[0].len() * channel_count);
+            for frame in 0..resampled[0].len() {
+                for channel in &resampled {
+                    interleaved.push(channel[frame]);
+                }
+            }
+            interleaved
         }
     } else {
         samples
@@ -567,7 +763,8 @@ impl Decoder {
 /// Exports `AudioData` to a WAV file.
 ///
 /// Writes 32-bit float WAV data via an in-memory buffer, committing to disk in a single
-/// operation. Automatically clamps samples to `[-1.0, 1.0]`.
+/// operation. Float samples are preserved without clipping, including values
+/// outside `[-1.0, 1.0]`. Apply explicit limiting before export if desired.
 ///
 /// # Parameters
 /// - `path`: Output WAV file path (`AsRef<Path>`).
@@ -612,7 +809,7 @@ pub fn export<P: AsRef<Path>>(path: P, audio_data: &AudioData) -> Result<(), Aud
     let mut buffer = Vec::new();
     let mut writer = WavWriter::new(Cursor::new(&mut buffer), spec)?;
     for &sample in &audio_data.samples {
-        writer.write_sample(sample.clamp(-1.0, 1.0))?;
+        writer.write_sample(sample)?;
     }
     writer.finalize()?;
     std::fs::write(path, buffer)?;
@@ -622,7 +819,10 @@ pub fn export<P: AsRef<Path>>(path: P, audio_data: &AudioData) -> Result<(), Aud
 /// Collects fixed-size blocks of decoded audio samples from a file.
 ///
 /// Decodes any Symphonia-supported format and splits the samples into
-/// fixed-size blocks with configurable overlap.
+/// fixed-size blocks with configurable overlap. Decoding stops after the requested
+/// blocks; the returned collection still uses memory proportional to their size.
+/// Block and hop lengths count interleaved scalar samples; use multiples of the
+/// channel count when blocks must align with complete channel frames.
 ///
 /// # Parameters
 /// - `path`: Audio file path (`AsRef<Path>`).
@@ -673,33 +873,12 @@ pub fn stream<P: AsRef<Path>>(
         ));
     }
 
-    let (samples, _, _) = decode_audio(path)?;
-
-    if samples.is_empty() {
-        return Err(AudioError::InsufficientData("No blocks generated".into()));
-    }
-
-    let mut blocks = Vec::new();
-    let mut pos = 0usize;
-
-    while blocks.len() < block_length {
-        if pos + frame_length <= samples.len() {
-            blocks.push(samples[pos..pos + frame_length].to_vec());
-        } else if pos < samples.len() {
-            let mut block = samples[pos..].to_vec();
-            block.resize(frame_length, 0.0);
-            blocks.push(block);
-            break;
-        } else {
-            break;
-        }
-        pos += hop;
-    }
-
+    let packets = AudioPackets::open(path)?;
+    let blocks = SampleBlocks::new(packets, block_length, frame_length, hop)
+        .collect::<Result<Vec<_>, _>>()?;
     if blocks.is_empty() {
         return Err(AudioError::InsufficientData("No blocks generated".into()));
     }
-
     Ok(blocks)
 }
 
@@ -707,6 +886,10 @@ pub fn stream<P: AsRef<Path>>(
 ///
 /// Decodes the file in a background thread, emitting blocks through an `mpsc` channel.
 /// Each received item is `Ok(block)` or `Err(AudioError)` on mid-stream failure.
+/// A bounded two-block queue applies backpressure. Memory depends on block and
+/// codec packet sizes, not file duration. Dropping the receiver stops the worker
+/// at its next send; an in-progress packet read/decode is not interrupted.
+/// Block and hop lengths count interleaved scalar samples, as in [`stream`].
 ///
 /// # Parameters
 /// - `path`: Audio file path (`AsRef<Path>`).
@@ -761,37 +944,23 @@ pub fn stream_lazy<P: AsRef<Path>>(
     File::open(path)?;
 
     let path_buf = path.to_path_buf();
-    let (tx, rx) = channel();
+    let (tx, rx) = sync_channel(2);
 
     std::thread::spawn(move || {
-        let (samples, _, _) = match decode_audio(&path_buf) {
-            Ok(data) => data,
+        if block_length == 0 {
+            return;
+        }
+        let packets = match AudioPackets::open(&path_buf) {
+            Ok(packets) => packets,
             Err(e) => {
                 let _ = tx.send(Err(e));
                 return;
             }
         };
-
-        let mut block_count = 0usize;
-        let mut pos = 0usize;
-
-        while block_count < block_length {
-            let block = if pos + frame_length <= samples.len() {
-                samples[pos..pos + frame_length].to_vec()
-            } else if pos < samples.len() {
-                let mut b = samples[pos..].to_vec();
-                b.resize(frame_length, 0.0);
-                let _ = tx.send(Ok(b));
-                return;
-            } else {
-                break;
-            };
-            if tx.send(Ok(block)).is_err() {
-                return;
-            }
-            block_count += 1;
-            pos += hop;
-        }
+        send_blocks(
+            SampleBlocks::new(packets, block_length, frame_length, hop),
+            &tx,
+        );
     });
 
     Ok(rx)
@@ -802,6 +971,116 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn incremental_blocks_match_reference_across_packet_boundaries() {
+        for len in [0, 1, 3, 4, 7, 15] {
+            let samples: Vec<f32> = (0..len).map(|i| i as f32).collect();
+            for frame in [1, 2, 4, 5] {
+                for hop in [1, 2, 4, 7, usize::MAX] {
+                    for limit in [0, 1, 10] {
+                        let packets = samples.chunks(3).map(|chunk| Ok(chunk.to_vec()));
+                        let actual = SampleBlocks::new(packets, limit, frame, hop)
+                            .collect::<Result<Vec<_>, _>>()
+                            .unwrap();
+                        let mut expected = Vec::new();
+                        let mut pos = 0usize;
+                        while pos < samples.len() && expected.len() < limit {
+                            let end = (pos + frame).min(samples.len());
+                            let mut block = samples[pos..end].to_vec();
+                            block.resize(frame, 0.0);
+                            expected.push(block);
+                            if end - pos < frame {
+                                break;
+                            }
+                            pos = pos.saturating_add(hop);
+                        }
+                        assert_eq!(
+                            actual, expected,
+                            "len={len}, frame={frame}, hop={hop}, limit={limit}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn block_limit_stops_packet_consumption() {
+        let mut reads = 0;
+        let packets = std::iter::from_fn(|| {
+            reads += 1;
+            assert_eq!(reads, 1, "read past requested block limit");
+            Some(Ok(vec![1.0, 2.0, 3.0]))
+        });
+        let blocks = SampleBlocks::new(packets, 1, 2, 2)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(blocks, [vec![1.0, 2.0]]);
+        assert_eq!(reads, 1);
+    }
+
+    #[test]
+    fn packet_errors_are_not_successful_eof() {
+        use symphonia::core::errors::Error;
+        assert_eq!(packet_or_eof(Ok(42)).unwrap(), Some(42));
+        assert!(
+            packet_or_eof::<()>(Err(Error::IoError(std::io::Error::from(
+                std::io::ErrorKind::UnexpectedEof
+            ))))
+            .unwrap()
+            .is_none()
+        );
+        for error in [
+            Error::IoError(std::io::Error::other("read failure")),
+            Error::DecodeError("bad packet"),
+            Error::ResetRequired,
+        ] {
+            assert!(packet_or_eof::<()>(Err(error)).is_err());
+        }
+    }
+
+    #[test]
+    fn late_packet_error_reaches_receiver_and_stops_iteration() {
+        let packets = [
+            Ok(vec![1.0, 2.0, 3.0]),
+            Err(AudioError::StreamError),
+            Ok(vec![4.0, 5.0]),
+        ];
+        let blocks = SampleBlocks::new(packets.into_iter(), 10, 2, 2);
+        let (tx, rx) = sync_channel(2);
+        send_blocks(blocks, &tx);
+        drop(tx);
+        assert_eq!(rx.recv().unwrap().unwrap(), [1.0, 2.0]);
+        assert!(matches!(rx.recv().unwrap(), Err(AudioError::StreamError)));
+        assert!(rx.recv().is_err());
+    }
+
+    #[test]
+    fn bounded_sender_applies_backpressure_and_stops_on_receiver_drop() {
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let (tx, rx) = sync_channel(2);
+        let (progress_tx, progress_rx) = channel();
+        let worker = std::thread::spawn(move || {
+            let blocks = (0..100).map(|i| {
+                progress_tx.send(i).unwrap();
+                Ok(vec![i as f32])
+            });
+            send_blocks(blocks, &tx);
+        });
+        // Two queued blocks and one pending send; a fourth block cannot be produced.
+        for expected in 0..3 {
+            assert_eq!(
+                progress_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+                expected
+            );
+        }
+        assert!(progress_rx.try_recv().is_err());
+        drop(rx);
+        worker.join().unwrap();
+        assert!(progress_rx.try_recv().is_err());
+    }
 
     fn create_test_wav() -> AudioData {
         AudioData::new(vec![0.0, 0.1, 0.2, 0.3, 0.4, 0.5], 44100, 1).unwrap()

@@ -72,10 +72,11 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
   `channels`) with `to_mono`, `split_channels`, `duration`, `frame_count`, `to_raw`.
 - `Decoder` — builder for loading: `.sample_rate()`, `.mono()`, `.offset()`,
   `.duration()`, `.load()`.
-- `load` — load a WAV (with optional resample, mono, offset, duration).
+- `load` — decode audio through Symphonia (with optional resample, mono, offset, duration).
 - `export` — write a 32-bit float WAV.
-- `stream` / `stream_lazy` — block/streaming readers for large files
-  (`stream_lazy` delivers `Result` items so mid-stream decode errors surface).
+- `stream` — incrementally decode and collect a requested number of blocks.
+- `stream_lazy` — incrementally decode through a bounded two-block queue, delivering
+  `Result` items so mid-stream decode errors surface. Drop the receiver to stop delivery.
 - Reads 8/16/24/32-bit PCM and 32-bit float WAV.
 
 ### Sample-wise operations — `ops`
@@ -86,7 +87,7 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
 - **Channels / amplitude**: `to_mono`, `amplify`, `attenuate`, `normalize`.
 - **Mixing**: `stereo_mix`, `multi_channel_mix`, `dry_wet_mix`.
 - **Panning**: `stereo_pan`, `multi_channel_pan`.
-- **Resampling**: `resample` (sinc-based, via `rubato`).
+- **Resampling**: `resample` (FFT-based band-limited conversion, via `rubato`).
 - **Time domain**: `delay`, `time_reversal`, `time_crop`, `zero_padding`,
   `autocorrelate`, `lpc`, `zero_crossings`, `mu_compress`, `mu_expand`, `log_energy`.
 - **Time–frequency**: `stft` / `istft`, `cqt` / `icqt`, `vqt`, `pseudo_cqt`,
@@ -120,6 +121,16 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
 ### Pitch & tuning — `pitch`
 - `yin(&y, fmin, fmax)`, `pyin(&y, fmin, fmax)` — fundamental-frequency estimation
   (builders: `.sample_rate()`, `.frame_length()`, `.hop_length()`, `.compute()`).
+- YIN selects the first acceptable trough with parabolic interpolation;
+  `.trough_threshold()` controls its acceptance threshold (default 0.1).
+- pYIN combines probabilistic threshold candidates with voiced/unvoiced Viterbi
+  decoding on a 10-cent pitch grid. `.compute_with_voicing()` returns `PyinResult`
+  (`f0`, `voiced_flag`, and frame-local `voiced_prob`). `.compute()` still returns
+  only frequencies, using zero for unvoiced frames. Transition rate and voicing
+  switch probability are configurable.
+- Both trackers use complete, uncentered frames and require enough samples per
+  frame to cover two periods at `fmin` plus an interpolation neighbour. Nonfinite
+  samples, invalid frequency ranges, and zero hop lengths are rejected.
 - `piptrack` — spectral peak pitch tracking.
 - `estimate_tuning(&y)` (builder), `pitch_tuning` — tuning-deviation estimation.
 
@@ -158,7 +169,9 @@ Full item-level documentation, with signatures and examples, is on
 
 ## Audio format support
 
-`dasp-rs` reads and writes WAV via [`hound`]. Internally all audio is `f32`.
+`dasp-rs` reads audio via [`symphonia`] and writes WAV via [`hound`]. Internally
+all audio is `f32`. Enabled decoders include WAV, MP3, FLAC, Ogg/Vorbis, and AAC/M4A.
+The following table describes supported WAV sample encodings:
 
 | Format | Read | Write |
 |--------|:----:|:-----:|
@@ -168,12 +181,15 @@ Full item-level documentation, with signatures and examples, is on
 | 32-bit PCM | ✅ | – |
 | 32-bit float | ✅ | ✅ |
 
-`export` writes 32-bit float WAV (lossless for the internal representation).
+`export` writes 32-bit float WAV without clipping, preserving samples outside
+`[-1.0, 1.0]`. Apply limiting explicitly if you need it.
 
 ## Performance
 
 - `rayon`-based parallelism for large workloads.
-- Streaming readers (`stream`, `stream_lazy`) keep memory bounded for large files.
+- `stream_lazy` retains only a bounded queue, the current block, and codec packet
+  buffers; storage does not grow with file duration. `stream` additionally retains
+  the requested output blocks in its returned collection.
 - FFTs via [`rustfft`]; resampling via [`rubato`]; linear algebra via pure-Rust
   [`nalgebra`].
 
@@ -193,6 +209,7 @@ failure and 24-bit decoding issues, and for the diagnosis in
 [#4](https://github.com/dasp-rs/dasp-rs/pull/4).
 
 [`hound`]: https://crates.io/crates/hound
+[`symphonia`]: https://crates.io/crates/symphonia
 [`rustfft`]: https://crates.io/crates/rustfft
 [`rubato`]: https://crates.io/crates/rubato
 [`nalgebra`]: https://crates.io/crates/nalgebra

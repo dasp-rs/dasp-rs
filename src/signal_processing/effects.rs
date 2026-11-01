@@ -99,7 +99,11 @@ fn time_stretch_impl(
         .map_err(|e| EffectsError::Dsp(e.to_string()))?;
     let stretched = phase_vocoder(&spec, rate, Some(hop_length), Some(n_fft))
         .map_err(|e| EffectsError::Dsp(e.to_string()))?;
-    Ok(istft(&stretched).hop_length(hop_length).compute())
+    istft(&stretched)
+        .n_fft(n_fft)
+        .hop_length(hop_length)
+        .compute()
+        .map_err(|e| EffectsError::Dsp(e.to_string()))
 }
 
 // ─── Pitch shift ──────────────────────────────────────────────────────────────
