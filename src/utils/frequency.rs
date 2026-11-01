@@ -272,9 +272,10 @@ pub fn midi_to_note(midi: &[f32], octave: Option<bool>) -> Vec<String> {
     ];
     midi.iter()
         .map(|&m| {
-            let note_idx = (m.round() as usize) % 12;
+            let midi = m.round() as i64;
+            let note_idx = midi.rem_euclid(12) as usize;
             let oct = if octave.unwrap_or(true) {
-                format!("{}", (m.round() as i32 - 12) / 12)
+                format!("{}", midi.div_euclid(12) - 1)
             } else {
                 String::new()
             };
@@ -530,7 +531,7 @@ pub fn note_to_midi(note: &[&str], round_midi: Option<bool>) -> Vec<f32> {
                 .find(|&&(name, _)| name == note_part)
                 .map_or(0, |&(_, val)| val) as f32;
             let octave = octave_part.parse::<i32>().unwrap_or(4);
-            let midi = note_val + (octave + 1) as f32 * 12.0;
+            let midi = note_val + (f64::from(octave) + 1.0) as f32 * 12.0;
             if round_midi.unwrap_or(true) {
                 midi.round()
             } else {
@@ -607,7 +608,7 @@ pub fn hz_to_mel(frequencies: &[f32], htk: Option<bool>) -> Vec<f32> {
     if htk.unwrap_or(false) {
         frequencies
             .iter()
-            .map(|&f| 2595.0 * (1.0 + f / 700.0).log10())
+            .map(|&f| (2595.0 / std::f32::consts::LN_10) * (f / 700.0).ln_1p())
             .collect()
     } else {
         // Slaney-style mel scale: linear below 1 kHz, logarithmic above.
@@ -672,7 +673,7 @@ pub fn hz_to_octs(frequencies: &[f32], tuning: Option<f32>) -> Vec<f32> {
 pub fn mel_to_hz(mels: &[f32], htk: Option<bool>) -> Vec<f32> {
     if htk.unwrap_or(false) {
         mels.iter()
-            .map(|&m| 700.0 * (10.0f32.powf(m / 2595.0) - 1.0))
+            .map(|&m| 700.0 * (m * (std::f32::consts::LN_10 / 2595.0)).exp_m1())
             .collect()
     } else {
         // Inverse of the Slaney-style mel scale used in `hz_to_mel`.
@@ -808,7 +809,12 @@ impl FftFrequenciesBuilder {
 }
 
 pub(crate) fn fft_frequencies_impl(sr: u32, n_fft: usize) -> Vec<f32> {
-    Array1::linspace(0.0, sr as f32 / 2.0, n_fft / 2 + 1).to_vec()
+    if n_fft == 0 {
+        return Vec::new();
+    }
+    (0..=n_fft / 2)
+        .map(|k| (k as f64 * f64::from(sr) / n_fft as f64) as f32)
+        .collect()
 }
 
 /// Generates Constant-Q Transform (CQT) frequency bins.

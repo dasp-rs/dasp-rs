@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // softmask(x, x_ref) computes x^p / (x^p + x_ref^p + ε).
     // Commonly used to apply HPSS separation in the magnitude domain.
     let spec = proc::stft(&y).n_fft(2048).hop_length(512).compute()?;
-    let mag = spec.mapv(|c| c.norm());
+    let mag = spec.mapv(num_complex::Complex::norm);
 
     // power=2.0 gives a smooth mask; power=∞ gives a binary (hard) mask
     let h_mask = feat::softmask(&h_spec, &p_spec).power(2.0).compute();

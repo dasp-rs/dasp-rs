@@ -1,8 +1,8 @@
 use crate::{core::AudioError, utils::frequency::fft_frequencies_impl};
-use ndarray::{Array1, Array2, s};
+use ndarray::Array2;
 use num_complex::Complex;
 use rustfft::FftPlanner;
-use std::f32::consts::{PI, SQRT_2};
+use std::f32::consts::PI;
 
 /// Analysis window function.
 ///
@@ -52,23 +52,23 @@ fn fft_window(window: Window, win_length: usize, n_fft: usize) -> Vec<f32> {
 
 /// Reflect-pads a signal by `pad` samples on each side (`NumPy` `mode="reflect"`).
 ///
-/// Falls back to zero padding when the signal is shorter than `pad`.
+/// Repeats the reflection for short signals; a singleton extends its sole value.
 fn reflect_pad(y: &[f32], pad: usize) -> Vec<f32> {
-    let mut out = Vec::with_capacity(y.len() + 2 * pad);
-    if y.len() > pad {
-        for i in (1..=pad).rev() {
-            out.push(y[i]);
-        }
-        out.extend_from_slice(y);
-        for i in 1..=pad {
-            out.push(y[y.len() - 1 - i]);
-        }
-    } else {
-        out.extend(std::iter::repeat_n(0.0, pad));
-        out.extend_from_slice(y);
-        out.extend(std::iter::repeat_n(0.0, pad));
+    if y.len() == 1 {
+        return vec![y[0]; 1 + 2 * pad];
     }
-    out
+    let period = 2 * (y.len() - 1);
+    let offset = (period - pad % period) % period;
+    (0..y.len() + 2 * pad)
+        .map(|i| {
+            let position = (i + offset) % period;
+            y[if position < y.len() {
+                position
+            } else {
+                period - position
+            }]
+        })
+        .collect()
 }
 
 /// STFT builder.
@@ -127,7 +127,7 @@ impl StftBuilder<'_> {
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<Array2<Complex<f32>>, AudioError> {
         let win_length = self.win_length.unwrap_or(self.n_fft);
-        let hop_length = self.hop_length.unwrap_or(win_length / 4).max(1);
+        let hop_length = self.hop_length.unwrap_or_else(|| (win_length / 4).max(1));
         stft_impl(
             self.y,
             self.n_fft,
@@ -172,10 +172,34 @@ fn stft_impl(
     window: Window,
     center: bool,
 ) -> Result<Array2<Complex<f32>>, AudioError> {
-    if n_fft == 0 {
-        return Err(AudioError::InvalidInput("n_fft must be positive".into()));
+    if n_fft == 0 || win_length == 0 || win_length > n_fft || hop_length == 0 {
+        return Err(AudioError::InvalidInput(
+            "Require n_fft > 0, 0 < win_length <= n_fft, and hop_length > 0".into(),
+        ));
     }
-    let hop = hop_length.max(1);
+    if y.is_empty() || y.iter().any(|v| !v.is_finite()) {
+        return Err(AudioError::InvalidInput(
+            "Signal must be nonempty and finite".into(),
+        ));
+    }
+    let max_elements = isize::MAX as usize / std::mem::size_of::<Complex<f32>>();
+    let padded_len = y
+        .len()
+        .checked_add(if center { 2 * (n_fft / 2) } else { 0 })
+        .filter(|&len| len <= max_elements);
+    if n_fft > max_elements || padded_len.is_none() {
+        return Err(AudioError::InvalidInput("STFT dimensions overflow".into()));
+    }
+    if let Some(len) = padded_len {
+        let frames = 1 + len.saturating_sub(n_fft) / hop_length;
+        if (n_fft / 2 + 1)
+            .checked_mul(frames)
+            .is_none_or(|n| n > max_elements)
+        {
+            return Err(AudioError::InvalidInput("STFT dimensions overflow".into()));
+        }
+    }
+    let hop = hop_length;
     let win = fft_window(window, win_length, n_fft);
 
     let padded = if center {
@@ -206,6 +230,11 @@ fn stft_impl(
         }
         fft.process(&mut buffer);
         for b in 0..n_bins {
+            if !buffer[b].re.is_finite() || !buffer[b].im.is_finite() {
+                return Err(AudioError::ComputationFailed(
+                    "STFT exceeds finite f32 range".into(),
+                ));
+            }
             out[[b, t]] = buffer[b];
         }
         buffer.fill(Complex::new(0.0, 0.0));
@@ -355,30 +384,36 @@ fn istft_impl(
     let full_len = hop
         .checked_mul(n_frames - 1)
         .and_then(|n| n.checked_add(n_fft))
-        .filter(|&n| n <= isize::MAX as usize / std::mem::size_of::<f32>())
+        .filter(|&n| n <= isize::MAX as usize / std::mem::size_of::<f64>())
         .ok_or_else(|| AudioError::InvalidInput("Reconstruction length overflows".into()))?;
     let start_off = if center { n_fft / 2 } else { 0 };
     let target = length.unwrap_or_else(|| full_len.saturating_sub(2 * start_off));
     if target > isize::MAX as usize / std::mem::size_of::<f32>() {
         return Err(AudioError::InvalidInput("Output length overflows".into()));
     }
-    let win = fft_window(window, win_length, n_fft);
+    let win: Vec<f64> = fft_window(window, win_length, n_fft)
+        .into_iter()
+        .map(f64::from)
+        .collect();
 
-    let mut planner = FftPlanner::new();
+    // The unnormalized inverse and overlapping frames can exceed f32 even when
+    // the normalized result is representable. Keep intermediates in f64.
+    let mut planner = FftPlanner::<f64>::new();
     let fft = planner.plan_fft_inverse(n_fft);
-    let inv_n = 1.0 / n_fft as f32;
+    let inv_n = 1.0 / n_fft as f64;
 
-    let mut signal = vec![0.0f32; full_len];
-    let mut window_sum = vec![0.0f32; full_len];
+    let mut signal = vec![0.0_f64; full_len];
+    let mut window_sum = vec![0.0_f64; full_len];
 
     let mut buffer = vec![Complex::new(0.0, 0.0); n_fft];
     for (frame_idx, frame) in stft_matrix.axis_iter(ndarray::Axis(1)).enumerate() {
         // Rebuild the conjugate-symmetric full spectrum.
         for b in 0..n_bins {
-            buffer[b] = frame[b];
+            buffer[b] = Complex::new(f64::from(frame[b].re), f64::from(frame[b].im));
         }
         for b in n_bins..n_fft {
-            buffer[b] = frame[n_fft - b].conj();
+            let value = frame[n_fft - b];
+            buffer[b] = Complex::new(f64::from(value.re), -f64::from(value.im));
         }
         fft.process(&mut buffer);
         let start = frame_idx * hop;
@@ -390,7 +425,9 @@ fn istft_impl(
     }
 
     for (s, &w) in signal.iter_mut().zip(window_sum.iter()) {
-        if w > 1e-8 {
+        // Small positive weights are valid near Hann endpoints. An absolute
+        // epsilon discards recoverable samples instead of normalizing them.
+        if w > f64::MIN_POSITIVE {
             *s /= w;
         }
     }
@@ -399,7 +436,12 @@ fn istft_impl(
     for (i, o) in out.iter_mut().enumerate() {
         let idx = start_off.saturating_add(i);
         if idx < signal.len() {
-            *o = signal[idx];
+            *o = signal[idx] as f32;
+            if !o.is_finite() {
+                return Err(AudioError::ComputationFailed(
+                    "ISTFT exceeds finite f32 range".into(),
+                ));
+            }
         }
     }
     Ok(out)
@@ -432,11 +474,33 @@ pub fn magphase(
 ) -> (Array2<f32>, Array2<Complex<f32>>) {
     let power_val = power.unwrap_or(1.0);
     let magnitude = d.mapv(|x| x.norm().powf(power_val));
-    let phase = d.mapv(|x| x / x.norm());
+    // The phase of zero is arbitrary; use zero radians so silence remains
+    // finite and magnitude * phase reconstructs every input coefficient.
+    let phase = d.mapv(|x| {
+        let magnitude = x.norm();
+        if magnitude == 0.0 {
+            Complex::new(1.0, 0.0)
+        } else {
+            x / magnitude
+        }
+    });
     (magnitude, phase)
 }
 
 /// Computes a reassigned spectrogram for improved time-frequency resolution.
+///
+/// Returns a magnitude raster, not frequency/time coordinate arrays. Periodic
+/// Hann analysis and its analytic derivative use reflect-centered frames with
+/// hop `max(n_fft / 4, 1)`. Every nonzero coefficient contributes its magnitude
+/// to the nearest frequency bin and time frame; estimates outside the grid are
+/// clamped. Half-grid ties round upward, treating a `64 * f64::EPSILON` relative
+/// neighborhood as an exact tie to stabilize transform roundoff.
+///
+/// Unlike earlier upward-frequency rasterization, nearest-grid assignment has
+/// no systematic upward bias. Quiet coefficients are retained. Intermediate
+/// transforms and accumulation use `f64`; unrepresentable `f32` output is an
+/// error. Reassignment assumes one localized component per coefficient, so
+/// overlapping components and reflected boundaries can produce mixed estimates.
 ///
 /// # Arguments
 /// * `y` - Input signal as a slice of `f32`
@@ -490,7 +554,12 @@ fn reassigned_spectrogram_impl(
     sr: u32,
     n_fft: usize,
 ) -> Result<Array2<f32>, AudioError> {
-    let hop_length = n_fft / 4;
+    if sr == 0 || n_fft < 2 {
+        return Err(AudioError::InvalidInput(
+            "Require positive sample rate and n_fft >= 2".into(),
+        ));
+    }
+    let hop_length = (n_fft / 4).max(1);
 
     if y.len() < n_fft {
         return Err(AudioError::InsufficientData(format!(
@@ -500,55 +569,82 @@ fn reassigned_spectrogram_impl(
         )));
     }
 
-    let s = stft(y)
-        .n_fft(n_fft)
-        .hop_length(hop_length)
-        .compute()
-        .map_err(|e| AudioError::ComputationFailed(format!("STFT failed: {e}")))?;
-    let s_time = stft_with_derivative(y, Some(n_fft), Some(hop_length), true)?;
-    let s_freq = stft_with_derivative(y, Some(n_fft), Some(hop_length), false)?;
-
-    let mut reassigned = Array2::zeros(s.dim());
-    let freqs = fft_frequencies_impl(sr, n_fft);
-    // Precompute constants for efficiency
-    let sr_f = sr as f32;
-    let hop_f = hop_length as f32;
-    let n_fft_f = n_fft as f32;
-    let time_scale = sr_f / hop_f;
-    let freq_scale = sr_f / n_fft_f;
+    if y.iter().any(|v| !v.is_finite()) {
+        return Err(AudioError::InvalidInput("Signal must be finite".into()));
+    }
+    let padded_len = y
+        .len()
+        .checked_add(2 * (n_fft / 2))
+        .ok_or_else(|| AudioError::InvalidInput("Reassignment padding length overflows".into()))?;
+    let frames = 1 + (padded_len - n_fft) / hop_length;
+    if (n_fft / 2 + 1)
+        .checked_mul(frames)
+        .is_none_or(|n| n > isize::MAX as usize / std::mem::size_of::<Complex<f64>>())
+    {
+        return Err(AudioError::InvalidInput(
+            "Reassignment dimensions overflow".into(),
+        ));
+    }
+    let s = stft_with_derivative(y, n_fft, hop_length, ReassignmentWindow::Analysis);
+    let s_time = stft_with_derivative(y, n_fft, hop_length, ReassignmentWindow::TimeWeighted);
+    let s_freq = stft_with_derivative(y, n_fft, hop_length, ReassignmentWindow::Derivative);
+    let mut reassigned = Array2::<f64>::zeros(s.dim());
 
     for t in 0..s.shape()[1] {
         for f in 0..s.shape()[0] {
             let mag = s[[f, t]].norm();
-            if mag > 1e-6 {
-                // Frame `t`'s center time under `stft`'s hop-based, centered
-                // framing is `t * hop / sr` — this must match what `time_scale`
-                // (sr/hop) assumes below when converting back to a frame index,
-                // not a duration evenly divided across all frames.
-                let frame_time = t as f32 * hop_f / sr_f;
-                let dphi_dt = s_time[[f, t]].im / mag;
-                let t_reassigned = frame_time - dphi_dt * hop_f / sr_f;
-                let dphi_df = s_freq[[f, t]].im / mag;
-                let f_reassigned = freqs[f] + dphi_df * freq_scale;
-
-                let t_idx = ((t_reassigned * time_scale).round() as usize).min(s.shape()[1] - 1);
-                // Use binary search for frequency lookup (more efficient for sorted array)
-                let f_idx = freqs
-                    .binary_search_by(|&x| {
-                        x.partial_cmp(&f_reassigned)
-                            .unwrap_or(std::cmp::Ordering::Less)
-                    })
-                    .unwrap_or_else(|i| i)
-                    .min(s.shape()[0] - 1);
+            if mag > 0.0 {
+                // Work directly in grid coordinates: sample rate cancels from
+                // both ratios, avoiding additional frequency/time rounding.
+                let time_offset = (s_time[[f, t]] / s[[f, t]]).re;
+                let t_reassigned = t as f64 + time_offset / hop_length as f64;
+                let frequency_offset = (s_freq[[f, t]] / s[[f, t]]).im;
+                let f_reassigned =
+                    f as f64 - frequency_offset * n_fft as f64 / std::f64::consts::TAU;
+                if !t_reassigned.is_finite() || !f_reassigned.is_finite() {
+                    return Err(AudioError::ComputationFailed(
+                        "Nonfinite reassignment coordinate".into(),
+                    ));
+                }
+                let t_idx = nearest_reassignment_bin(t_reassigned, s.ncols());
+                let f_idx = nearest_reassignment_bin(f_reassigned, s.nrows());
                 reassigned[[f_idx, t_idx]] += mag;
             }
         }
     }
 
-    Ok(reassigned)
+    let output = reassigned.mapv(|v| v as f32);
+    if output.iter().any(|v| !v.is_finite()) {
+        return Err(AudioError::ComputationFailed(
+            "Reassigned magnitude exceeds finite f32 range".into(),
+        ));
+    }
+    Ok(output)
+}
+
+/// Nearest grid coordinate, with stable upward half-grid ties.
+fn nearest_reassignment_bin(coordinate: f64, size: usize) -> usize {
+    let value = coordinate.clamp(0.0, (size - 1) as f64);
+    let half_grid = (2.0 * value).round() / 2.0;
+    let value = if (value - half_grid).abs() <= 64.0 * f64::EPSILON * value.abs().max(1.0) {
+        half_grid
+    } else {
+        value
+    };
+    (value.round() as usize).min(size - 1)
 }
 
 /// Computes the Constant-Q Transform (CQT) of a signal.
+///
+/// Uses 12 bins per octave and centered periodic-Hann wavelets, with relative
+/// bandwidth `(2^(2/12)-1)/(2^(2/12)+1)`, L1 normalization, and square-root
+/// filter-length scaling. Frames are centered at `t * hop_length`, with zero
+/// padding and shape `(n_bins, 1 + y.len() / hop_length)`.
+///
+/// This direct filterbank follows `librosa.filters.wavelet` conventions; it does
+/// not reproduce the resampling and sparsification of `librosa.cqt`. Compared to
+/// versions using one-period kernels, bandwidth, gain, phase, and edge padding
+/// are corrected. All filter cutoff estimates must lie below Nyquist.
 ///
 /// # Arguments
 /// * `y` - Input signal as a slice of `f32`
@@ -578,7 +674,7 @@ pub fn cqt(y: &[f32], sr: u32) -> CqtBuilder<'_> {
     }
 }
 
-/// CQT builder for method chaining (internal use only).
+/// Builder for [`cqt`].
 #[derive(Debug, Clone)]
 pub struct CqtBuilder<'a> {
     y: &'a [f32],
@@ -619,6 +715,209 @@ impl CqtBuilder<'_> {
     }
 }
 
+/// Compute the common CQT analysis size without saturating casts or overflow.
+fn cqt_fft_size(sr: u32, hop: usize, fmin: f32) -> Result<usize, AudioError> {
+    if sr == 0 || hop == 0 || !fmin.is_finite() || fmin <= 0.0 || fmin > sr as f32 / 2.0 {
+        return Err(AudioError::InvalidInput(
+            "Require positive sample rate/hop and finite 0 < fmin <= sr/2".into(),
+        ));
+    }
+    let size = 2.0 * f64::from(sr) / f64::from(fmin);
+    if size > f64::from(u32::MAX) {
+        return Err(AudioError::InvalidInput("CQT FFT size overflows".into()));
+    }
+    (size.ceil() as u32)
+        .checked_next_power_of_two()
+        .map(|n| n as usize)
+        .ok_or_else(|| AudioError::InvalidInput("CQT FFT size overflows".into()))
+}
+
+// Geometric relative bandwidth used by librosa.filters.wavelet_lengths (12 bins/octave).
+fn wavelet_alpha() -> f64 {
+    let ratio = 2.0_f64.powf(2.0 / 12.0);
+    (ratio - 1.0) / (ratio + 1.0)
+}
+
+struct Wavelet {
+    values: Vec<Complex<f64>>,
+    // Offset within an even, center-padded frame. Odd filters have their extra
+    // sample on the left, matching librosa.util.pad_center.
+    left: usize,
+}
+
+fn wavelet_bank(
+    sr: u32,
+    hop: usize,
+    fmin: f32,
+    bins: usize,
+    gamma: f64,
+    samples: usize,
+    frames: usize,
+) -> Result<Vec<Wavelet>, AudioError> {
+    if sr == 0 || hop == 0 || bins == 0 || !fmin.is_finite() || fmin <= 0.0 {
+        return Err(AudioError::InvalidInput(
+            "Require positive sample rate, hop, bins, and finite positive fmin".into(),
+        ));
+    }
+    let last_center = frames
+        .checked_sub(1)
+        .and_then(|last| last.checked_mul(hop))
+        .filter(|&last| samples > 0 && last <= samples)
+        .ok_or_else(|| {
+            AudioError::InvalidInput("Wavelet frame geometry overflows or is empty".into())
+        })?;
+    let alpha = wavelet_alpha();
+    let highest = f64::from(fmin) * 2.0_f64.powf((bins - 1) as f64 / 12.0);
+    // Hann equivalent noise bandwidth is 1.5 bins. Use half that bandwidth
+    // as the cutoff margin, following librosa.filters.wavelet_lengths.
+    if !highest.is_finite() || highest * (1.0 + 0.75 * alpha) + gamma / 2.0 > f64::from(sr) / 2.0 {
+        return Err(AudioError::InvalidInput(
+            "Wavelet passband exceeds Nyquist".into(),
+        ));
+    }
+    let longest = f64::from(sr) / (alpha * f64::from(fmin) + gamma);
+    if !longest.is_finite() || longest > f64::from(u32::MAX) {
+        return Err(AudioError::InvalidInput("Wavelet length overflows".into()));
+    }
+    let mut bank = Vec::with_capacity(bins);
+    for k in 0..bins {
+        let frequency = f64::from(fmin) * 2.0_f64.powf(k as f64 / 12.0);
+        let length = f64::from(sr) / (alpha * frequency + gamma);
+        // np.arange(-length // 2, length // 2) uses floor division, including
+        // its negative start. Preserve this phase convention for odd lengths.
+        let first = (-length / 2.0).floor();
+        let size = ((length / 2.0).floor() - first) as usize;
+        let left = size.div_ceil(2);
+        // Across all frames, only this union of full-kernel taps can overlap
+        // actual samples. Preserve their original indices for phase/windowing.
+        // In particular, a tiny input must not allocate an entire low-frequency
+        // wavelet that may span hundreds of millions of zero-padded samples.
+        let start = left.saturating_sub(last_center);
+        let end = left
+            .checked_add(samples)
+            .ok_or_else(|| AudioError::InvalidInput("Wavelet support geometry overflows".into()))?
+            .min(size);
+        let stored_len = end
+            .checked_sub(start)
+            .filter(|&len| len <= isize::MAX as usize / std::mem::size_of::<Complex<f64>>())
+            .ok_or_else(|| AudioError::InvalidInput("Wavelet storage geometry overflows".into()))?;
+        let mut values = Vec::with_capacity(stored_len);
+        // The full periodic Hann L1 norm is N/2 (unity for N=1). Normalizing
+        // by the retained taps would incorrectly amplify short/edge frames.
+        let normalizer = if size == 1 { 1.0 } else { size as f64 / 2.0 };
+        let scale = length.sqrt() / normalizer;
+        for i in start..end {
+            // A singleton periodic Hann window is unity (SciPy/librosa),
+            // not the zero obtained by substituting i=0 in the general formula.
+            let window = if size == 1 {
+                1.0
+            } else {
+                0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / size as f64).cos()
+            };
+            let phase = 2.0 * std::f64::consts::PI * frequency * (first + i as f64) / f64::from(sr);
+            values.push(Complex::from_polar(window, phase) * scale);
+        }
+        bank.push(Wavelet {
+            values,
+            left: left - start,
+        });
+    }
+    Ok(bank)
+}
+
+fn wavelet_analysis(
+    y: &[f64],
+    bank: &[Wavelet],
+    hop: usize,
+    frames: usize,
+) -> Array2<Complex<f64>> {
+    let mut out = Array2::zeros((bank.len(), frames));
+    for (k, wavelet) in bank.iter().enumerate() {
+        for t in 0..frames {
+            let center = t * hop;
+            let begin = wavelet.left.saturating_sub(center);
+            let end = wavelet
+                .values
+                .len()
+                .min(y.len().saturating_add(wavelet.left).saturating_sub(center));
+            let mut value = Complex::new(0.0, 0.0);
+            for i in begin..end {
+                value += wavelet.values[i].conj() * y[center + i - wavelet.left];
+            }
+            out[[k, t]] = value;
+        }
+    }
+    out
+}
+
+// Real adjoint of the complex analysis operator, with the same zero padding
+// and sample origins. This is also used by the least-squares inverse below.
+fn wavelet_adjoint(
+    c: &Array2<Complex<f64>>,
+    bank: &[Wavelet],
+    hop: usize,
+    samples: usize,
+) -> Vec<f64> {
+    let mut out = vec![0.0; samples];
+    for (k, wavelet) in bank.iter().enumerate() {
+        for t in 0..c.ncols() {
+            let center = t * hop;
+            let begin = wavelet.left.saturating_sub(center);
+            let end = wavelet
+                .values
+                .len()
+                .min(samples.saturating_add(wavelet.left).saturating_sub(center));
+            for i in begin..end {
+                out[center + i - wavelet.left] += (wavelet.values[i] * c[[k, t]]).re;
+            }
+        }
+    }
+    out
+}
+
+fn wavelet_transform(
+    y: &[f32],
+    sr: u32,
+    hop: usize,
+    fmin: f32,
+    bins: usize,
+    gamma: f64,
+) -> Result<Array2<Complex<f32>>, AudioError> {
+    if y.is_empty() || y.iter().any(|v| !v.is_finite()) {
+        return Err(AudioError::InvalidInput(
+            "Signal must be nonempty and finite".into(),
+        ));
+    }
+    let frames = y
+        .len()
+        .checked_div(hop)
+        .and_then(|count| count.checked_add(1))
+        .ok_or_else(|| {
+            AudioError::InvalidInput("Require positive hop and nonoverflowing frame count".into())
+        })?;
+    if bins
+        .checked_mul(frames)
+        .is_none_or(|n| n > isize::MAX as usize / std::mem::size_of::<Complex<f64>>())
+    {
+        return Err(AudioError::InvalidInput(
+            "Wavelet output dimensions overflow".into(),
+        ));
+    }
+    let bank = wavelet_bank(sr, hop, fmin, bins, gamma, y.len(), frames)?;
+    let input: Vec<f64> = y.iter().copied().map(f64::from).collect();
+    let output = wavelet_analysis(&input, &bank, hop, frames)
+        .mapv(|z| Complex::new(z.re as f32, z.im as f32));
+    if output
+        .iter()
+        .any(|z| !z.re.is_finite() || !z.im.is_finite())
+    {
+        return Err(AudioError::ComputationFailed(
+            "Wavelet transform exceeds finite f32 range".into(),
+        ));
+    }
+    Ok(output)
+}
+
 /// Internal CQT implementation.
 fn cqt_impl(
     y: &[f32],
@@ -627,71 +926,33 @@ fn cqt_impl(
     fmin: f32,
     n_bins: usize,
 ) -> Result<Array2<Complex<f32>>, AudioError> {
-    // Parameters are already provided directly
-    let bins_per_octave = 12;
-
-    if y.len() < hop_length {
-        return Err(AudioError::InsufficientData(format!(
-            "Signal too short: {} < {}",
-            y.len(),
-            hop_length
-        )));
-    }
-    if fmin <= 0.0 {
-        return Err(AudioError::InvalidInput(
-            "fmin must be positive".to_string(),
-        ));
-    }
-
-    let n_fft = ((sr as f32 / fmin * 2.0) as u32).next_power_of_two() as usize;
-    let s_stft = stft(y)
-        .n_fft(n_fft)
-        .hop_length(hop_length)
-        .compute()
-        .map_err(|e| AudioError::ComputationFailed(format!("STFT failed: {e}")))?;
-    let n_frames = s_stft.shape()[1];
-    let mut s_cqt = Array2::zeros((n_bins, n_frames));
-
-    let mut planner = FftPlanner::new();
-    let fft = planner.plan_fft_forward(n_fft);
-    for k in 0..n_bins {
-        let fk = fmin * 2.0f32.powf(k as f32 / bins_per_octave as f32);
-        let n = (sr as f32 / fk).round() as usize;
-        let mut kernel = Array1::zeros(n_fft);
-        let window = hann_window(n);
-        for i in 0..n {
-            let phase = 2.0 * PI * fk * i as f32 / sr as f32;
-            kernel[i] = Complex::new(window[i] * phase.cos(), window[i] * phase.sin()) / n as f32;
-        }
-        fft.process(kernel.as_slice_mut().expect("kernel is contiguous"));
-
-        for t in 0..n_frames {
-            let stft_frame = s_stft.slice(s![.., t]);
-            s_cqt[[k, t]] = stft_frame
-                .iter()
-                .zip(kernel.iter())
-                .map(|(&s, &k)| s * k.conj())
-                .sum();
-        }
-    }
-
-    Ok(s_cqt)
+    wavelet_transform(y, sr, hop_length, fmin, n_bins, 0.0)
 }
 
-/// Computes the inverse Constant-Q Transform (iCQT) to reconstruct a signal.
+/// Approximately inverts the centered wavelet CQT by real least squares.
+///
+/// Runs up to 32 conjugate-gradient iterations from zero using the exact analysis
+/// operator and its adjoint. Returns `n_frames * hop_length` samples, preserving
+/// the historical output length. The original length cannot be inferred from a
+/// CQT matrix; trim the result when known. Frequencies outside the analyzed bands
+/// and information lost to the hop cannot be recovered. This is not an exact
+/// inverse and does not implement librosa's recursive iCQT. Cost grows with the
+/// total wavelet support, frame count, and iteration count. Each candidate is
+/// checked after f32 conversion; the solver retains improving finite candidates.
+/// Ill-conditioned or inconsistent spectra can still amplify waveform magnitude
+/// while reducing coefficient residual: this guard is not regularization.
 ///
 /// # Arguments
-/// * `C` - CQT spectrogram as an `Array2<Complex<f32>>`
-/// * `sr` - Optional sample rate in Hz (defaults to 44100)
-/// * `hop_length` - Optional hop length in samples (defaults to 512)
-/// * `fmin` - Optional minimum frequency in Hz (defaults to 32.70, C1)
+/// * `c` - CQT spectrogram as an `Array2<Complex<f32>>`.
+///
+/// Configure sample rate, hop length, and minimum frequency on the returned builder.
 ///
 /// # Returns
-/// Returns a `Result` containing a `Vec<f32>` of the reconstructed signal,
-/// or an `AudioError` if computation fails.
+/// Returns a builder whose `compute()` method produces the reconstructed signal.
 ///
 /// # Errors
-/// * `AudioError::InvalidInput` - If `fmin` is not positive.
+/// The builder rejects empty/nonfinite spectra, invalid analysis parameters,
+/// passbands above Nyquist, overflowing lengths, and nonfinite reconstruction.
 ///
 /// # Examples
 /// ```
@@ -763,83 +1024,102 @@ fn icqt_impl(
     fmin: Option<f32>,
 ) -> Result<Vec<f32>, AudioError> {
     let sr = sr.unwrap_or(44100);
-    let hop_length = hop_length.unwrap_or(512);
+    let hop = hop_length.unwrap_or(512);
     let fmin = fmin.unwrap_or(32.70);
-    let n_bins = c.shape()[0];
-    let n_frames = c.shape()[1];
-    let bins_per_octave = 12;
-
-    if fmin <= 0.0 {
+    if c.is_empty() || c.iter().any(|z| !z.re.is_finite() || !z.im.is_finite()) {
         return Err(AudioError::InvalidInput(
-            "fmin must be positive".to_string(),
+            "CQT spectrum must be nonempty and finite".into(),
         ));
     }
-
-    let n_fft = ((sr as f32 / fmin * 2.0) as u32).next_power_of_two() as usize;
-    let n_samples = n_frames * hop_length;
-    let mut y = vec![0.0; n_samples];
-    let mut planner = FftPlanner::new();
-    let fft = planner.plan_fft_forward(n_fft);
-    let ifft = planner.plan_fft_inverse(n_fft);
-    let inv_n = 1.0 / n_fft as f32;
-
-    for k in 0..n_bins {
-        let fk = fmin * 2.0f32.powf(k as f32 / bins_per_octave as f32);
-        let n = (sr as f32 / fk).round() as usize;
-        let window = hann_window(n);
-        let mut kernel = Array1::zeros(n_fft);
-        for i in 0..n {
-            let phase = 2.0 * PI * fk * i as f32 / sr as f32;
-            kernel[i] = Complex::new(window[i] * phase.cos(), window[i] * phase.sin()) / n as f32;
+    let samples = c
+        .ncols()
+        .checked_mul(hop)
+        .filter(|&n| n <= isize::MAX as usize / std::mem::size_of::<f64>())
+        .ok_or_else(|| AudioError::InvalidInput("CQT output length overflows".into()))?;
+    let bank = wavelet_bank(sr, hop, fmin, c.nrows(), 0.0, samples, c.ncols())?;
+    let target = c.mapv(|z| Complex::new(f64::from(z.re), f64::from(z.im)));
+    let mut coefficient_residual = target;
+    let mut gradient = wavelet_adjoint(&coefficient_residual, &bank, hop, samples);
+    let mut direction = gradient.clone();
+    let mut iterate = vec![0.0; samples];
+    let mut best = vec![0.0_f32; samples];
+    let zero_cost: f64 = coefficient_residual.iter().map(Complex::norm_sqr).sum();
+    let mut best_cost = zero_cost;
+    let mut squared: f64 = gradient.iter().map(|v| v * v).sum();
+    let initial = squared;
+    // CGLS solves the real least-squares problem without forming A* A. Computing
+    // curvature as ||A p||² avoids cancellation in p dot (A* A p). The complex
+    // coefficient residual is updated directly, then mapped back by the adjoint.
+    for _ in 0..32 {
+        if squared <= initial * 1e-20 || squared == 0.0 {
+            break;
         }
-        fft.process(kernel.as_slice_mut().expect("kernel is contiguous"));
-
-        for t in 0..n_frames {
-            // Approximate synthesis: the analysis kernel projected S onto C[k,t] via
-            // C = sum(S * conj(kernel_freq)), so the per-bin contribution to S is
-            // reconstructed as C[k,t] * kernel_freq, then transformed back to time domain.
-            let coeff = c[[k, t]];
-            let mut frame: Vec<Complex<f32>> = kernel.iter().map(|&kf| coeff * kf).collect();
-            ifft.process(&mut frame);
-            let start = t * hop_length;
-            for i in 0..n.min(n_samples - start) {
-                y[start + i] += frame[i].re * inv_n * window[i];
+        let projected = wavelet_analysis(&direction, &bank, hop, c.ncols());
+        let curvature: f64 = projected.iter().map(Complex::norm_sqr).sum();
+        if curvature <= 0.0 || !curvature.is_finite() {
+            break;
+        }
+        let step = squared / curvature;
+        for i in 0..samples {
+            iterate[i] += step * direction[i];
+        }
+        let candidate: Vec<f32> = iterate.iter().map(|&v| v as f32).collect();
+        if candidate.iter().any(|v| !v.is_finite()) {
+            if best_cost < zero_cost {
+                break;
             }
+            return Err(AudioError::ComputationFailed(
+                "Inverse CQT exceeds finite f32 range".into(),
+            ));
         }
-    }
-
-    let mut overlap = vec![0.0; n_samples];
-    for t in 0..n_frames {
-        let start = t * hop_length;
-        for i in 0..n_fft.min(n_samples - start) {
-            overlap[start + i] += hann_window(n_fft)[i].powi(2);
+        // Near-null directions can have huge coefficients that cancel in f64
+        // but not after conversion to the public f32 waveform. Verify the actual
+        // representable candidate, retaining zero as the initial fallback.
+        let represented: Vec<f64> = candidate.iter().copied().map(f64::from).collect();
+        let rebuilt = wavelet_analysis(&represented, &bank, hop, c.ncols());
+        let cost: f64 = rebuilt
+            .iter()
+            .zip(c)
+            .map(|(actual, target)| {
+                (*actual - Complex::new(f64::from(target.re), f64::from(target.im))).norm_sqr()
+            })
+            .sum();
+        if !cost.is_finite() || cost >= best_cost {
+            break;
         }
-    }
-    for i in 0..n_samples {
-        if overlap[i] > 1e-6 {
-            y[i] /= overlap[i];
+        best = candidate;
+        best_cost = cost;
+        for (residual, projected) in coefficient_residual.iter_mut().zip(&projected) {
+            *residual -= step * projected;
         }
+        gradient = wavelet_adjoint(&coefficient_residual, &bank, hop, samples);
+        let next: f64 = gradient.iter().map(|v| v * v).sum();
+        let beta = next / squared;
+        for i in 0..samples {
+            direction[i] = gradient[i] + beta * direction[i];
+        }
+        squared = next;
     }
-
-    Ok(y)
+    Ok(best)
 }
 
-/// Computes a hybrid Constant-Q Transform (CQT) combining STFT and CQT properties.
+/// Computes the same direct filterbank as [`cqt`] with 84 bins.
+///
+/// Retained as a compatibility entry point; no recursive/hybrid acceleration is
+/// performed, and this is not librosa's magnitude-only hybrid CQT.
 ///
 /// # Arguments
 /// * `y` - Input signal as a slice of `f32`
-/// * `sr` - Optional sample rate in Hz (defaults to 44100)
-/// * `hop_length` - Optional hop length in samples (defaults to 512)
-/// * `fmin` - Optional minimum frequency in Hz (defaults to 32.70, C1)
+/// * `sr` - Sample rate in Hz.
+///
+/// Configure hop length and minimum frequency on the returned builder.
 ///
 /// # Returns
-/// Returns a `Result` containing an `Array2<Complex<f32>>` representing the hybrid CQT,
-/// or an `AudioError` if computation fails.
+/// Returns a builder whose `compute()` method produces the CQT matrix.
 ///
 /// # Errors
-/// * `AudioError::InsufficientData` - If signal length is less than `n_fft`.
-/// * `AudioError::InvalidInput` - If `fmin` is not positive.
-/// * `AudioError::ComputationFailed` - If STFT computation fails.
+/// The builder rejects empty/nonfinite signals, invalid analysis parameters,
+/// passbands above Nyquist, and outputs outside finite `f32` range.
 ///
 /// # Examples
 /// ```no_run
@@ -901,59 +1181,21 @@ fn hybrid_cqt_impl(
     hop_length: Option<usize>,
     fmin: Option<f32>,
 ) -> Result<Array2<Complex<f32>>, AudioError> {
-    let sr = sr.unwrap_or(44100);
-    let hop_length = hop_length.unwrap_or(512);
-    let fmin = fmin.unwrap_or(32.70);
-    let n_fft = ((sr as f32 / fmin * 2.0) as u32).next_power_of_two() as usize;
-    let n_bins = 84;
-
-    if y.len() < n_fft {
-        return Err(AudioError::InsufficientData(format!(
-            "Signal too short: {} < {}",
-            y.len(),
-            n_fft
-        )));
-    }
-    if fmin <= 0.0 {
-        return Err(AudioError::InvalidInput(
-            "fmin must be positive".to_string(),
-        ));
-    }
-
-    let s_stft = stft(y)
-        .n_fft(n_fft)
-        .hop_length(hop_length)
-        .compute()
-        .map_err(|e| AudioError::ComputationFailed(format!("STFT failed: {e}")))?;
-    let mut s_hybrid = Array2::zeros((n_bins, s_stft.shape()[1]));
-    let mut planner = FftPlanner::new();
-    let fft = planner.plan_fft_forward(n_fft);
-
-    for k in 0..n_bins {
-        let fk = fmin * 2.0f32.powf(k as f32 / 12.0);
-        let n = (sr as f32 / fk).round() as usize;
-        let mut kernel = Array1::zeros(n_fft);
-        let window = hann_window(n);
-        for i in 0..n {
-            let phase = 2.0 * PI * fk * i as f32 / sr as f32;
-            kernel[i] = Complex::new(window[i] * phase.cos(), window[i] * phase.sin()) / n as f32;
-        }
-        fft.process(kernel.as_slice_mut().expect("kernel is contiguous"));
-
-        for t in 0..s_stft.shape()[1] {
-            s_hybrid[[k, t]] = s_stft
-                .slice(s![.., t])
-                .iter()
-                .zip(kernel.iter())
-                .map(|(&s, &k)| s * k.conj())
-                .sum();
-        }
-    }
-
-    Ok(s_hybrid)
+    cqt_impl(
+        y,
+        sr.unwrap_or(44100),
+        hop_length.unwrap_or(512),
+        fmin.unwrap_or(32.70),
+        84,
+    )
 }
 
-/// Computes a pseudo Constant-Q Transform (CQT) using STFT bin mapping.
+/// Samples a complex STFT at 84 logarithmically spaced frequencies.
+///
+/// Each channel takes the first FFT bin at or above its requested frequency.
+/// This compatibility approximation has STFT bandwidth and normalization; it is
+/// not the wavelet magnitude projection implemented by `librosa.pseudo_cqt`.
+/// Requested channel centers must not exceed Nyquist.
 ///
 /// # Arguments
 /// * `y` - Input signal as a slice of `f32`
@@ -1033,8 +1275,13 @@ fn pseudo_cqt_impl(
     let sr = sr.unwrap_or(44100);
     let hop_length = hop_length.unwrap_or(512);
     let fmin = fmin.unwrap_or(32.70);
-    let n_fft = ((sr as f32 / fmin * 2.0) as u32).next_power_of_two() as usize;
+    let n_fft = cqt_fft_size(sr, hop_length, fmin)?;
     let n_bins = 84;
+    if f64::from(fmin) * 2.0_f64.powf((n_bins - 1) as f64 / 12.0) > f64::from(sr) / 2.0 {
+        return Err(AudioError::InvalidInput(
+            "Pseudo-CQT frequencies exceed Nyquist".into(),
+        ));
+    }
 
     if y.len() < n_fft {
         return Err(AudioError::InsufficientData(format!(
@@ -1068,23 +1315,25 @@ fn pseudo_cqt_impl(
     Ok(s_pseudo)
 }
 
-/// Computes the Variable-Q Transform (VQT) of a signal.
+/// Computes a centered Variable-Q Transform (VQT) of a signal.
+///
+/// Uses the same filter, phase, normalization, and padding conventions as [`cqt`],
+/// with bandwidth `alpha * frequency + 24 Hz`. The fixed 24 Hz offset differs
+/// from librosa's default ERB-derived offset; compare with `librosa.vqt(gamma=24)`.
+/// Direct full-rate analysis omits recursive resampling and sparsification.
 ///
 /// # Arguments
 /// * `y` - Input signal as a slice of `f32`
-/// * `sr` - Optional sample rate in Hz (defaults to 44100)
-/// * `hop_length` - Optional hop length in samples (defaults to 512)
-/// * `fmin` - Optional minimum frequency in Hz (defaults to 32.70, C1)
-/// * `n_bins` - Optional number of frequency bins (defaults to 84)
+/// * `sr` - Sample rate in Hz.
+///
+/// Configure hop length, minimum frequency, and bin count on the returned builder.
 ///
 /// # Returns
-/// Returns a `Result` containing an `Array2<Complex<f32>>` representing the VQT,
-/// or an `AudioError` if computation fails.
+/// Returns a builder whose `compute()` method produces the VQT matrix.
 ///
 /// # Errors
-/// * `AudioError::InsufficientData` - If signal length is less than `hop_length`.
-/// * `AudioError::InvalidInput` - If `fmin` is not positive.
-/// * `AudioError::ComputationFailed` - If STFT computation fails.
+/// The builder rejects empty/nonfinite signals, invalid analysis parameters,
+/// passbands above Nyquist, and outputs outside finite `f32` range.
 ///
 /// # Examples
 /// ```no_run
@@ -1157,58 +1406,14 @@ fn vqt_impl(
     fmin: Option<f32>,
     n_bins: Option<usize>,
 ) -> Result<Array2<Complex<f32>>, AudioError> {
-    let sr = sr.unwrap_or(44100);
-    let hop_length = hop_length.unwrap_or(512);
-    let fmin = fmin.unwrap_or(32.70);
-    let n_bins = n_bins.unwrap_or(84);
-    let gamma = 24.0;
-
-    if y.len() < hop_length {
-        return Err(AudioError::InsufficientData(format!(
-            "Signal too short: {} < {}",
-            y.len(),
-            hop_length
-        )));
-    }
-    if fmin <= 0.0 {
-        return Err(AudioError::InvalidInput(
-            "fmin must be positive".to_string(),
-        ));
-    }
-
-    let n_fft = ((sr as f32 / fmin * 2.0) as u32).next_power_of_two() as usize;
-    let s_stft = stft(y)
-        .n_fft(n_fft)
-        .hop_length(hop_length)
-        .compute()
-        .map_err(|e| AudioError::ComputationFailed(format!("STFT failed: {e}")))?;
-    let mut s_vqt = Array2::zeros((n_bins, s_stft.shape()[1]));
-    let mut planner = FftPlanner::new();
-    let fft = planner.plan_fft_forward(n_fft);
-
-    for k in 0..n_bins {
-        let fk = fmin * 2.0f32.powf(k as f32 / 12.0);
-        let q = gamma / (2.0f32.powf(1.0 / 12.0) - 1.0);
-        let n = (sr as f32 * q / fk).round() as usize;
-        let mut kernel = Array1::zeros(n_fft);
-        let window = hann_window(n);
-        for i in 0..n {
-            let phase = 2.0 * PI * fk * i as f32 / sr as f32;
-            kernel[i] = Complex::new(window[i] * phase.cos(), window[i] * phase.sin()) / n as f32;
-        }
-        fft.process(kernel.as_slice_mut().expect("kernel is contiguous"));
-
-        for t in 0..s_stft.shape()[1] {
-            s_vqt[[k, t]] = s_stft
-                .slice(s![.., t])
-                .iter()
-                .zip(kernel.iter())
-                .map(|(&s, &k)| s * k.conj())
-                .sum();
-        }
-    }
-
-    Ok(s_vqt)
+    wavelet_transform(
+        y,
+        sr.unwrap_or(44100),
+        hop_length.unwrap_or(512),
+        fmin.unwrap_or(32.70),
+        n_bins.unwrap_or(84),
+        24.0,
+    )
 }
 
 /// Computes the Fourier Modulation Transform (FMT) of a signal.
@@ -1364,210 +1569,168 @@ pub(crate) fn hann_window(n: usize) -> Vec<f32> {
         .collect()
 }
 
-/// Computes STFT with time or frequency derivative for reassignment.
-///
-/// # Arguments
-/// * `y` - Input signal as a slice of `f32`
-/// * `n_fft` - Optional FFT window size (defaults to 2048)
-/// * `hop_length` - Optional hop length in samples (defaults to `n_fft/4`)
-/// * `time_derivative` - If true, computes time derivative; if false, frequency derivative
-///
-/// # Returns
-/// Returns a `Result` containing an `Array2<Complex<f32>>` with derivative information,
-/// or an `AudioError` if computation fails.
+#[derive(Clone, Copy)]
+enum ReassignmentWindow {
+    Analysis,
+    TimeWeighted,
+    Derivative,
+}
+
+/// Consistent periodic-Hann transforms for validated reassignment inputs.
+/// Double arithmetic avoids overflow/underflow of the complex ratios for finite
+/// f32 signals. The time origin is sample `n_fft/2`, including odd FFT lengths.
 fn stft_with_derivative(
     y: &[f32],
-    n_fft: Option<usize>,
-    hop_length: Option<usize>,
-    time_derivative: bool,
-) -> Result<Array2<Complex<f32>>, AudioError> {
-    let n_fft = n_fft.unwrap_or(2048);
-    let hop_length = hop_length.unwrap_or(n_fft / 4);
-    if y.len() < n_fft {
-        return Err(AudioError::InsufficientData(format!(
-            "Signal length {} is shorter than n_fft {n_fft}",
-            y.len()
-        )));
-    }
-    let n_frames = (y.len() - n_fft) / hop_length + 1;
+    n_fft: usize,
+    hop_length: usize,
+    kind: ReassignmentWindow,
+) -> Array2<Complex<f64>> {
+    let padded = reflect_pad(y, n_fft / 2);
+    let n_frames = (padded.len() - n_fft) / hop_length + 1;
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(n_fft);
     let mut s = Array2::zeros((n_fft / 2 + 1, n_frames));
-    let window = hann_window(n_fft);
-    let deriv_window = if time_derivative {
-        (0..n_fft).map(|i| i as f32 * window[i]).collect::<Vec<_>>()
-    } else {
-        (0..n_fft)
-            .map(|i| window[i] * (2.0 * PI * i as f32 / n_fft as f32).sin())
-            .collect::<Vec<_>>()
-    };
+    let window: Vec<f64> = (0..n_fft)
+        .map(|i| {
+            let phase = std::f64::consts::TAU * i as f64 / n_fft as f64;
+            let hann = 0.5 - 0.5 * phase.cos();
+            match kind {
+                ReassignmentWindow::Analysis => hann,
+                ReassignmentWindow::TimeWeighted => (i as f64 - (n_fft / 2) as f64) * hann,
+                ReassignmentWindow::Derivative => std::f64::consts::PI / n_fft as f64 * phase.sin(),
+            }
+        })
+        .collect();
+    let mut buffer = vec![Complex::new(0.0, 0.0); n_fft];
 
     for t in 0..n_frames {
         let start = t * hop_length;
-        let frame = &y[start..(start + n_fft).min(y.len())];
-        let mut buffer = frame
-            .iter()
-            .zip(deriv_window.iter())
-            .map(|(&x, &w)| Complex::new(x * w, 0.0))
-            .collect::<Vec<_>>();
-        buffer.resize(n_fft, Complex::new(0.0, 0.0));
+        let frame = &padded[start..start + n_fft];
+        for ((slot, &sample), &weight) in buffer.iter_mut().zip(frame).zip(&window) {
+            *slot = Complex::new(f64::from(sample) * weight, 0.0);
+        }
         fft.process(&mut buffer);
         for f in 0..=(n_fft / 2) {
             s[[f, t]] = buffer[f];
         }
     }
-    Ok(s)
+    s
 }
 
-/// Designs a Butterworth bandpass filter.
-///
-/// # Arguments
-/// * `lowcut` - Lower cutoff frequency in Hz
-/// * `highcut` - Upper cutoff frequency in Hz
-/// * `fs` - Sampling frequency in Hz
-/// * `order` - Optional filter order (defaults to 2)
-///
-/// # Returns
-/// Returns a `Result` containing a tuple `(b, a)` of numerator and denominator coefficients,
-/// or an `AudioError` if frequencies are invalid.
-///
-/// # Errors
-/// * `AudioError::InvalidInput` - If `lowcut` <= 0, `highcut` <= `lowcut`, or `highcut` >= `fs/2`.
+/// Designs a Butterworth bandpass as real second-order sections in f64.
+/// `order` is the lowpass prototype order; the bandpass order is twice that.
 fn butterworth_bandpass(
-    lowcut: f32,
-    highcut: f32,
-    fs: f32,
+    lowcut: f64,
+    highcut: f64,
+    fs: f64,
     order: Option<usize>,
-) -> Result<(Vec<f32>, Vec<f32>), AudioError> {
-    if lowcut <= 0.0 || highcut <= lowcut || highcut >= fs / 2.0 {
-        return Err(AudioError::InvalidInput(format!(
-            "Invalid frequencies: lowcut={} must be > 0, highcut={} must be > lowcut and < fs/2={}",
-            lowcut,
-            highcut,
-            fs / 2.0
-        )));
-    }
-
+) -> Result<Vec<[f64; 6]>, AudioError> {
     let order = order.unwrap_or(2);
-    let n = order as i32;
-
-    // Bilinear transform pre-warping: Ï‰_analog = 2*fs * tan(Ï€ * f / fs)
-    let w_low = 2.0 * fs * (PI * lowcut / fs).tan();
-    let w_high = 2.0 * fs * (PI * highcut / fs).tan();
-    let w0 = (w_high * w_low).sqrt(); // Geometric mean (center frequency)
-    let bw = w_high - w_low; // Bandwidth
-
-    // Calculate poles for bandpass Butterworth filter in s-domain
-    // Standard Butterworth pole angles: Î¸_k = Ï€(2k+1)/(2n) for k = 0..n-1
-    let mut poles = Vec::new();
-    for k in 0..n {
-        // Corrected: removed erroneous +n term from original formula
-        let theta = PI * (2.0 * k as f32 + 1.0) / (2.0 * n as f32);
-        // Bandpass poles: real part from bandwidth, imaginary from center frequency
-        let real = -bw / 2.0 * theta.sin();
-        let imag = w0 * theta.cos();
-        poles.push(Complex::new(real, imag));
-        poles.push(Complex::new(real, -imag));
+    if !lowcut.is_finite()
+        || !highcut.is_finite()
+        || !fs.is_finite()
+        || fs <= 0.0
+        || lowcut <= 0.0
+        || highcut <= lowcut
+        || highcut >= fs / 2.0
+        || order == 0
+        || order > isize::MAX as usize / std::mem::size_of::<[f64; 6]>()
+    {
+        return Err(AudioError::InvalidInput(
+            "Require finite 0 < lowcut < highcut < fs/2 and positive filter order".into(),
+        ));
     }
-
-    let mut z_poles = Vec::new();
+    let pi = std::f64::consts::PI;
     let fs2 = 2.0 * fs;
-    for p in poles {
-        let pz = (fs2 + p) / (fs2 - p);
-        z_poles.push(pz);
-    }
-
-    // Poles were pushed as conjugate pairs (re, +im) then (re, -im); build a real
-    // quadratic section z^2 - 2*Re(p)*z + |p|^2 per pair so the denominator stays
-    // real-valued (using only `p.re` here would discard the pair's imaginary part
-    // and produce the wrong filter).
-    let mut a = vec![1.0];
-    for pair in z_poles.chunks(2) {
-        let p = pair[0];
-        let re2 = 2.0 * p.re;
-        let mag2 = p.re * p.re + p.im * p.im;
-        a = convolve(&a, &[1.0, -re2, mag2]);
-    }
-
-    // The bilinear transform of the analog bandpass numerator s^n maps the n-fold
-    // zero at s=0 to an n-fold zero at z=1 (DC), and the implicit n-fold zero at
-    // s=infinity to an n-fold zero at z=-1 (Nyquist): b(z) = (z^2 - 1)^n.
-    let mut b = vec![1.0];
-    for _ in 0..n {
-        b = convolve(&b, &[1.0, 0.0, -1.0]);
-    }
-
-    let w_center = 2.0 * PI * (lowcut + highcut) / 2.0 / fs;
-    let gain = evaluate_filter(&b, &a, w_center).norm();
-    for b_k in &mut b {
-        *b_k /= gain;
-    }
-
-    Ok((b, a))
-}
-
-/// Convolves two vectors.
-///
-/// # Arguments
-/// * `a` - First input vector
-/// * `b` - Second input vector
-///
-/// # Returns
-/// Returns a `Vec<f32>` containing the convolution result.
-fn convolve(a: &[f32], b: &[f32]) -> Vec<f32> {
-    let mut result = vec![0.0; a.len() + b.len() - 1];
-    for i in 0..a.len() {
-        for j in 0..b.len() {
-            result[i + j] += a[i] * b[j];
+    let low = fs2 * (pi * lowcut / fs).tan();
+    let high = fs2 * (pi * highcut / fs).tan();
+    let center = (low * high).sqrt();
+    let bandwidth = high - low;
+    let center_radians = 2.0 * (center / fs2).atan();
+    let mut sections = Vec::with_capacity(order);
+    for k in 0..order {
+        // Unit Butterworth poles lie in the left half-plane. The lowpass to
+        // bandpass substitution solves s² - bandwidth*p*s + center² = 0;
+        // independently scaling real/imaginary parts does not implement it.
+        let angle = pi * (2.0 * k as f64 + 1.0 + order as f64) / (2.0 * order as f64);
+        let half = Complex::from_polar(bandwidth / 2.0, angle);
+        let root = (half * half - Complex::new(center * center, 0.0)).sqrt();
+        for analog in [half + root, half - root] {
+            if analog.im <= 0.0 {
+                continue;
+            }
+            let pole = (fs2 + analog) / (fs2 - analog);
+            if !pole.re.is_finite() || !pole.im.is_finite() || pole.norm_sqr() >= 1.0 {
+                return Err(AudioError::ComputationFailed(
+                    "Butterworth poles are not representable inside the unit circle".into(),
+                ));
+            }
+            // Each section gets one zero at DC and one at Nyquist. Distribute
+            // the overall gain so each section has unit gain at warped center.
+            let mut section = [1.0, 0.0, -1.0, 1.0, -2.0 * pole.re, pole.norm_sqr()];
+            let gain = evaluate_filter(&[section], center_radians).norm();
+            if !gain.is_finite() || gain <= 0.0 {
+                return Err(AudioError::ComputationFailed(
+                    "Butterworth section gain is not finite and positive".into(),
+                ));
+            }
+            section[0] /= gain;
+            section[2] /= gain;
+            sections.push(section);
         }
     }
-    result
+    if sections.len() != order {
+        return Err(AudioError::ComputationFailed(
+            "Butterworth pole pairing failed".into(),
+        ));
+    }
+    // Smaller pole radii first reduces intermediate resonant amplification.
+    sections.sort_by(|a, b| a[5].total_cmp(&b[5]));
+    Ok(sections)
 }
 
-/// Evaluates a digital filter's frequency response at a given frequency.
-///
-/// # Arguments
-/// * `b` - Numerator coefficients
-/// * `a` - Denominator coefficients
-/// * `w` - Frequency in radians/sample
-///
-/// # Returns
-/// Returns a `Complex<f32>` representing the filter's response.
-fn evaluate_filter(b: &[f32], a: &[f32], w: f32) -> Complex<f32> {
-    let mut num = Complex::new(0.0, 0.0);
-    let mut den = Complex::new(0.0, 0.0);
-    for (k, &bk) in b.iter().enumerate() {
-        let phase = -w * k as f32;
-        num += Complex::new(bk * phase.cos(), bk * phase.sin());
-    }
-    for (k, &ak) in a.iter().enumerate() {
-        let phase = -w * k as f32;
-        den += Complex::new(ak * phase.cos(), ak * phase.sin());
-    }
-    num / den
+/// Evaluates the complete SOS transfer function without expanding polynomials.
+fn evaluate_filter(sections: &[[f64; 6]], radians: f64) -> Complex<f64> {
+    let z = Complex::from_polar(1.0, -radians);
+    let z2 = z * z;
+    sections.iter().fold(Complex::new(1.0, 0.0), |response, s| {
+        response * (s[0] + s[1] * z + s[2] * z2) / (s[3] + s[4] * z + s[5] * z2)
+    })
 }
 
-/// Computes the Instantaneous Impulse Response Transform (IIRT) using bandpass filtering.
+/// Computes a causal twelve-band semitone IIR filterbank and frame RMS.
+///
+/// Band `b` has center `32.7 * 2^(b/12)` Hz for `b = 0..11` (C1 through B1).
+/// Half-semitone cutoff frequencies define fourth-order Butterworth prototypes,
+/// producing eighth-order bandpasses represented by four f64 second-order
+/// sections. All twelve passbands must fit strictly below Nyquist.
+///
+/// Filters process the complete input continuously from zero initial state.
+/// Frame `t` starts at `t * hop_length`; no centering or padding is applied.
+/// Each output is `sqrt(mean(filtered_frame²))`, with shape
+/// `(12, 1 + (y.len() - win_length) / hop_length)`. Narrow low-frequency filters
+/// can take seconds to settle: early frames retain the causal startup transient.
+///
+/// This corrects older octave-spaced bands, unstable f32 polynomial filtering,
+/// state resets at every frame, and an extra square-root-window gain penalty.
+/// It is not librosa's multirate, zero-phase, mean-square-power IIRT.
 ///
 /// # Arguments
-/// * `y` - Input signal as a slice of `f32`
-/// * `sr` - Optional sample rate in Hz (defaults to 44100)
-/// * `win_length` - Optional window length in samples (defaults to 2048)
-/// * `hop_length` - Optional hop length in samples (defaults to `win_length/4`)
+/// * `y` - Nonempty finite input signal.
+/// * `sr` - Sample rate in Hz.
 ///
-/// # Returns
-/// Returns a `Result` containing an `Array2<f32>` representing the IIRT spectrogram,
-/// or an `AudioError` if computation fails.
+/// Configure window and hop lengths on the returned builder.
 ///
 /// # Errors
-/// * `AudioError::InsufficientData` - If signal length is less than `win_length`.
-/// * `AudioError::InvalidInput` - If bandpass filter frequencies are invalid.
+/// The builder rejects zero sample rate/window/hop, nonfinite input, passbands
+/// above Nyquist, overflowing dimensions, and inputs shorter than one window.
 ///
 /// # Examples
-/// ```no_run
+/// ```
 /// use dasp_rs::proc::iirt;
 /// let signal = vec![0.0_f32; 8192];
-/// let iirt_result = iirt(&signal, 44100).compute()?;
+/// let bands = iirt(&signal, 44100).compute()?;
+/// assert_eq!(bands.nrows(), 12);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn iirt(y: &[f32], sr: u32) -> IirtBuilder<'_> {
@@ -1596,7 +1759,7 @@ impl IirtBuilder<'_> {
         self
     }
 
-    /// Set the hop length (default: `win_length / 4`).
+    /// Set the hop length (default: `max(1, win_length / 4)`).
     #[must_use]
     pub fn hop_length(mut self, hop_length: usize) -> Self {
         self.hop_length = Some(hop_length);
@@ -1623,11 +1786,15 @@ fn iirt_impl(
     win_length: Option<usize>,
     hop_length: Option<usize>,
 ) -> Result<Array2<f32>, AudioError> {
+    const BANDS: usize = 12;
     let sr = sr.unwrap_or(44100);
     let win_length = win_length.unwrap_or(2048);
-    let hop_length = hop_length.unwrap_or(win_length / 4);
-    let n_bands = 12;
-
+    let hop = hop_length.unwrap_or_else(|| (win_length / 4).max(1));
+    if sr == 0 || win_length == 0 || hop == 0 || y.is_empty() || y.iter().any(|v| !v.is_finite()) {
+        return Err(AudioError::InvalidInput(
+            "Require positive sample rate/window/hop and nonempty finite input".into(),
+        ));
+    }
     if y.len() < win_length {
         return Err(AudioError::InsufficientData(format!(
             "Signal too short: {} < {}",
@@ -1635,54 +1802,63 @@ fn iirt_impl(
             win_length
         )));
     }
-
-    let n_frames = (y.len() - win_length) / hop_length + 1;
-    let mut s = Array2::zeros((n_bands, n_frames));
-    let fmin = 32.70;
-
-    for b in 0..n_bands {
-        let fc = fmin * 2.0f32.powf(b as f32);
-        let bw = fc / SQRT_2;
-        let (b_coeffs, a_coeffs) =
-            butterworth_bandpass(fc - bw / 2.0, fc + bw / 2.0, sr as f32, Some(4))?;
-
-        for t in 0..n_frames {
-            let start = t * hop_length;
-            let frame = &y[start..(start + win_length).min(y.len())];
-            let filtered = filter(frame, &b_coeffs, &a_coeffs);
-            s[[b, t]] = filtered.iter().map(|&x| x.powi(2)).sum::<f32>().sqrt() / win_length as f32;
+    let frames = 1 + (y.len() - win_length) / hop;
+    if BANDS
+        .checked_mul(frames)
+        .is_none_or(|n| n > isize::MAX as usize / std::mem::size_of::<f32>())
+    {
+        return Err(AudioError::InvalidInput(
+            "IIR output dimensions overflow".into(),
+        ));
+    }
+    let edge_ratio = 2.0_f64.powf(1.0 / 24.0);
+    let highest = 32.7 * 2.0_f64.powf((BANDS - 1) as f64 / 12.0) * edge_ratio;
+    if highest >= f64::from(sr) / 2.0 {
+        return Err(AudioError::InvalidInput(
+            "The twelve IIR semitone passbands must lie below Nyquist".into(),
+        ));
+    }
+    let mut result = Array2::zeros((BANDS, frames));
+    for band in 0..BANDS {
+        let center = 32.7 * 2.0_f64.powf(band as f64 / 12.0);
+        let sections = butterworth_bandpass(
+            center / edge_ratio,
+            center * edge_ratio,
+            f64::from(sr),
+            Some(4),
+        )?;
+        let filtered = filter(y, &sections);
+        for t in 0..frames {
+            let start = t * hop;
+            let energy: f64 = filtered[start..start + win_length]
+                .iter()
+                .map(|v| v * v)
+                .sum();
+            let rms = (energy / win_length as f64).sqrt() as f32;
+            if !rms.is_finite() {
+                return Err(AudioError::ComputationFailed(
+                    "IIR frame RMS exceeds finite f32 range".into(),
+                ));
+            }
+            result[[band, t]] = rms;
         }
     }
-
-    Ok(s)
+    Ok(result)
 }
 
-/// Applies an IIR filter to a signal.
-///
-/// # Arguments
-/// * `x` - Input signal as a slice of `f32`
-/// * `b` - Numerator coefficients
-/// * `a` - Denominator coefficients
-///
-/// # Returns
-/// Returns a `Vec<f32>` containing the filtered signal.
-fn filter(x: &[f32], b: &[f32], a: &[f32]) -> Vec<f32> {
-    let mut y = vec![0.0; x.len()];
-    for n in 0..x.len() {
-        let mut acc = 0.0;
-        for (k, &bk) in b.iter().enumerate() {
-            if n >= k {
-                acc += bk * x[n - k];
-            }
+/// Causal direct-form-II-transposed SOS filtering from zero initial state.
+fn filter(input: &[f32], sections: &[[f64; 6]]) -> Vec<f64> {
+    let mut output: Vec<f64> = input.iter().copied().map(f64::from).collect();
+    for s in sections {
+        let (mut delay1, mut delay2) = (0.0, 0.0);
+        for sample in &mut output {
+            let value = s[0] * *sample + delay1;
+            delay1 = s[1] * *sample - s[4] * value + delay2;
+            delay2 = s[2] * *sample - s[5] * value;
+            *sample = value;
         }
-        for (k, &ak) in a.iter().enumerate().skip(1) {
-            if n >= k {
-                acc -= ak * y[n - k];
-            }
-        }
-        y[n] = acc / a[0];
     }
-    y
+    output
 }
 
 // ─── Phasor ───────────────────────────────────────────────────────────────────
@@ -1720,6 +1896,10 @@ pub fn phasor(
         num_complex::Complex::from_polar(m, a)
     })
 }
+
+#[cfg(test)]
+#[path = "../../tests/common/reference.rs"]
+mod iir_reference;
 
 #[cfg(test)]
 mod tests {
@@ -1802,12 +1982,63 @@ mod tests {
     }
 
     #[test]
-    fn filter_and_convolution_helpers_behave() {
-        let conv = super::convolve(&[1.0, 2.0], &[3.0, 4.0]);
-        assert_eq!(conv, vec![3.0, 10.0, 8.0]);
+    fn iir_design_and_impulse_match_independent_scipy_sos() {
+        use super::iir_reference::{check_complex, check_real, load, signal};
+        let data = load(include_str!("../../tests/fixtures/iir_reference.csv"));
+        let indices: Vec<_> = signal(&data, "impulse_indices")
+            .into_iter()
+            .map(|v| v as usize)
+            .collect();
+        let mut impulse = vec![0.0; 8192];
+        impulse[0] = 1.0;
+        for name in ["narrow", "wide", "nyquist", "odd_order"] {
+            let config = &data[&format!("{name}_config")];
+            let sr = config[[0, 0]].re;
+            let sections = butterworth_bandpass(
+                config[[0, 1]].re,
+                config[[0, 2]].re,
+                sr,
+                Some(config[[0, 3]].re as usize),
+            )
+            .unwrap();
+            let responses: Vec<_> = data[&format!("{name}_frequencies")]
+                .iter()
+                .map(|f| {
+                    let z = evaluate_filter(&sections, 2.0 * std::f64::consts::PI * f.re / sr);
+                    Complex::new(z.re as f32, z.im as f32)
+                })
+                .collect();
+            check_complex(
+                &format!("{name}_response"),
+                &Array2::from_shape_vec((1, responses.len()), responses).unwrap(),
+                &data,
+                2e-7,
+                2e-6,
+            );
+            let filtered = filter(&impulse, &sections);
+            assert!(filtered.iter().all(|v| v.is_finite()));
+            let selected: Vec<_> = indices.iter().map(|&i| filtered[i] as f32).collect();
+            check_real(
+                &format!("{name}_impulse"),
+                &Array2::from_shape_vec((1, selected.len()), selected).unwrap(),
+                &data,
+                1e-12,
+                2e-6,
+            );
+        }
+    }
 
-        let filtered = filter(&[1.0, 2.0, 3.0], &[1.0, 0.0, 0.0], &[1.0, -0.5, 0.0]);
-        assert_eq!(filtered.len(), 3);
-        assert!(filtered.iter().all(|v| v.is_finite()));
+    #[test]
+    fn iir_design_rejects_invalid_parameters() {
+        for (low, high, sr, order) in [
+            (0.0, 100.0, 8000.0, 4),
+            (100.0, 100.0, 8000.0, 4),
+            (100.0, 4000.0, 8000.0, 4),
+            (f64::NAN, 100.0, 8000.0, 4),
+            (1.0, 100.0, f64::INFINITY, 4),
+            (1.0, 100.0, 8000.0, 0),
+        ] {
+            assert!(butterworth_bandpass(low, high, sr, Some(order)).is_err());
+        }
     }
 }

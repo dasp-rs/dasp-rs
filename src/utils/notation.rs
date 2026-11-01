@@ -451,9 +451,9 @@ pub fn list_thaat() -> Vec<String> {
 /// ```
 pub fn fifths_to_note(unison: &str, fifths: i32, unicode: Option<bool>) -> String {
     let unicode = unicode.unwrap_or(false);
-    let semitones = (fifths * 7) % 12;
-    let octave_shift = (fifths * 7) / 12;
-    let base = note_to_semitone(&unison.to_lowercase()) as i32;
+    let semitones = (i64::from(fifths) * 7) % 12;
+    let octave_shift = (i64::from(fifths) * 7) / 12;
+    let base = note_to_semitone(&unison.to_lowercase()) as i64;
     let note_idx = (base + semitones + 12) % 12;
     let note = match note_idx {
         1 => {
@@ -562,7 +562,15 @@ pub fn interval_to_fjs(interval: f32, unison: Option<f32>) -> String {
 /// assert!(freqs[0] == 261.63);
 /// assert!(freqs[1] > 391.0 && freqs[1] < 392.0); // ~391.945
 /// ```
+///
+/// # Panics
+/// Panics if `n_bins` is positive and `intervals` is empty. An empty interval
+/// sequence is allowed when requesting zero bins.
 pub fn interval_frequencies(n_bins: usize, fmin: f32, intervals: &[f32]) -> Vec<f32> {
+    assert!(
+        n_bins == 0 || !intervals.is_empty(),
+        "intervals must be non-empty when n_bins is positive"
+    );
     let mut freqs = Vec::with_capacity(n_bins);
     let mut f = fmin;
     for i in 0..n_bins {
@@ -585,7 +593,7 @@ pub fn interval_frequencies(n_bins: usize, fmin: f32, intervals: &[f32]) -> Vec<
 /// use dasp_rs::util::*;
 /// use dasp_rs::types::*;
 /// let intervals = pythagorean_intervals(Some(3));
-/// assert_eq!(intervals, vec![1.0, 1.5, 1.125]); // 1/1, 3/2, 9/8 adjusted
+/// assert_eq!(intervals, vec![1.0, 1.125, 1.5]); // Sorted 1/1, 9/8, 3/2
 /// ```
 // Repeated halving/doubling keeps the exact powers-of-two arithmetic of the
 // classical derivation; a log2-based rewrite would change rounding.
@@ -598,10 +606,10 @@ pub fn pythagorean_intervals(bins_per_octave: Option<usize>) -> Vec<f32> {
     let mut intervals = Vec::with_capacity(bins);
     let fifth = 3.0 / 2.0;
     let mut ratio = 1.0;
-    for i in 0..bins {
+    for _ in 0..bins {
         intervals.push(ratio);
-        ratio *= if i % 2 == 0 { fifth } else { 1.0 / fifth };
-        while ratio > 2.0 {
+        ratio *= fifth;
+        while ratio >= 2.0 {
             ratio /= 2.0;
         }
         while ratio < 1.0 {
@@ -615,10 +623,12 @@ pub fn pythagorean_intervals(bins_per_octave: Option<usize>) -> Vec<f32> {
 /// Generates intervals based on prime number limits.
 ///
 /// # Arguments
-/// * `primes` - Array of prime numbers to generate intervals from
+/// * `primes` - Array of prime numbers to generate intervals from; values below 2 are ignored.
 ///
 /// # Returns
-/// Returns a `Vec<f32>` containing sorted unique interval ratios within an octave (1 to 2).
+/// Returns sorted unique interval ratios in `[1, 2)`. Each supplied prime can
+/// occur once in the numerator or denominator, with powers of two removed
+/// to fold the resulting products into one octave.
 ///
 /// # Examples
 /// ```no_run
@@ -634,26 +644,29 @@ pub fn pythagorean_intervals(bins_per_octave: Option<usize>) -> Vec<f32> {
     reason = "ratio expansion terminates on float bounds by construction"
 )]
 pub fn plimit_intervals(primes: &[usize]) -> Vec<f32> {
-    let mut intervals = vec![1.0];
+    let mut intervals = vec![1.0_f32];
     for &p in primes {
+        // Zero and one cannot generate prime-limit intervals and previously
+        // made the multiplicative expansion loop forever.
+        if p < 2 {
+            continue;
+        }
         let mut new_intervals = Vec::new();
         for &i in &intervals {
-            let mut n = i;
-            while n < 2.0 {
-                new_intervals.push(n);
-                n *= p as f32;
-            }
-            let mut d = i;
-            while d > 0.5 {
-                new_intervals.push(d);
-                d /= p as f32;
+            for mut ratio in [i * p as f32, i / p as f32] {
+                while ratio >= 2.0 {
+                    ratio /= 2.0;
+                }
+                while ratio < 1.0 {
+                    ratio *= 2.0;
+                }
+                new_intervals.push(ratio);
             }
         }
         intervals.extend(new_intervals);
+        intervals.sort_by(f32::total_cmp);
+        intervals.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
     }
-    intervals.sort_by(f32::total_cmp);
-    intervals.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
-    intervals.retain(|&x| (1.0..=2.0).contains(&x));
     intervals
 }
 

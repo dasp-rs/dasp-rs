@@ -5,7 +5,7 @@
 use dasp_rs::{generate::tone, util, util::SyncAggregate};
 use ndarray::{Array1, Array2};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     let sr = 22050_u32;
     let y = tone(440.0, sr).duration(1.0).compute();
 
@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let from: &[(f32, f32)] = &[(0.0, 0.5), (0.5, 1.0), (1.0, 1.5)];
     let to: &[(f32, f32)] = &[(0.0, 0.4), (0.4, 0.9), (0.9, 1.5)];
     let matched = util::match_intervals(from, to);
-    println!("Match intervals: {:?}", matched);
+    println!("Match intervals: {matched:?}");
 
     // ── Expand to ─────────────────────────────────────────────────────────────
     // Broadcast a 1-D array into a 2-D matrix.
@@ -88,6 +88,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let row = util::expand_to(&weights, 1); // (1, 4)
     println!("Expand axis=0: {:?}", col.shape());
     println!("Expand axis=1: {:?}", row.shape());
-
-    Ok(())
 }

@@ -337,7 +337,11 @@ impl<'a> TuningBuilder<'a> {
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn compute(self) -> Result<f32, TuningError> {
         estimate_tuning_impl(
-            Some(self.signal),
+            if self.spectrogram.is_some() {
+                None
+            } else {
+                Some(self.signal)
+            },
             Some(self.sample_rate),
             self.spectrogram,
             Some(self.n_fft),
@@ -355,7 +359,7 @@ fn estimate_tuning_impl(
 ) -> Result<f32, TuningError> {
     let sr = sample_rate.unwrap_or(44_100);
     let n_fft = n_fft.unwrap_or(2048);
-    let hop_length = hop_length.unwrap_or(n_fft / 4).max(1);
+    let hop_length = hop_length.unwrap_or_else(|| (n_fft / 4).max(1));
 
     let s = compute_spectrogram(signal, spectrogram, n_fft, hop_length)?;
     // The spectrogram is already computed; pass it (not the signal) to piptrack.
@@ -368,22 +372,23 @@ fn estimate_tuning_impl(
         for f in 0..pitches.shape()[0] {
             let freq = pitches[[f, t]];
             let mag = mags[[f, t]];
-            if freq > 0.0 && mag > 1e-6 {
-                // Find the nearest lower semitone in equal temperament tuning
-                // n_semitones = 12 * log2(freq / 440.0), then floor to get nearest lower semitone
-                let ref_freq = 440.0 * 2.0f32.powf((12.0 * f32::log2(freq / 440.0)).floor() / 12.0);
-                let deviation = 1200.0 * f32::log2(freq / ref_freq);
-                total_deviation += deviation * mag;
-                total_weight += mag;
+            if freq > 0.0 && mag > 0.0 {
+                total_deviation += cent_deviation(freq) * f64::from(mag);
+                total_weight += f64::from(mag);
             }
         }
     }
 
-    Ok(if total_weight > 1e-6 {
-        total_deviation / total_weight
+    Ok(if total_weight > 0.0 {
+        (total_deviation / total_weight) as f32
     } else {
         0.0
     })
+}
+
+fn cent_deviation(frequency: f32) -> f64 {
+    let cents = 1200.0 * (f64::from(frequency) / 440.0).log2();
+    (cents + 50.0).rem_euclid(100.0) - 50.0
 }
 
 /// Estimates tuning deviation from a list of frequencies.
@@ -393,7 +398,8 @@ fn estimate_tuning_impl(
 ///
 /// # Arguments
 /// * `frequencies` - Slice of pitch frequencies in Hz.
-/// * `resolution` - Tuning resolution in cents (defaults to 1.0 if `None`).
+/// * `resolution` - Quantization step in cents (defaults to 1.0 if `None`).
+///   Each frequency's signed offset from the nearest semitone is rounded to this step.
 ///
 /// # Returns
 /// A `Result` containing the average tuning deviation in cents.
@@ -412,9 +418,14 @@ fn estimate_tuning_impl(
 /// ```
 pub fn pitch_tuning(frequencies: &[f32], resolution: Option<f32>) -> Result<f32, TuningError> {
     let resolution = resolution.unwrap_or(1.0);
-    if resolution <= 0.0 {
+    if !resolution.is_finite() || resolution <= 0.0 {
         return Err(TuningError::InvalidInput(
-            "Resolution must be positive".to_string(),
+            "Resolution must be finite and positive".to_string(),
+        ));
+    }
+    if frequencies.iter().any(|f| !f.is_finite()) {
+        return Err(TuningError::InvalidInput(
+            "Frequencies must be finite".into(),
         ));
     }
 
@@ -425,22 +436,11 @@ pub fn pitch_tuning(frequencies: &[f32], resolution: Option<f32>) -> Result<f32,
 
     let mut total_deviation = 0.0;
     for &freq in &valid_freqs {
-        // Find the nearest lower semitone in equal temperament tuning
-        // n_semitones = 12 * log2(freq / 440.0), then floor to get nearest lower semitone
-        let ref_freq = 440.0 * 2.0f32.powf((12.0 * f32::log2(freq / 440.0)).floor() / 12.0);
-        let cents = 1200.0 * f32::log2(freq / ref_freq);
-        // rem_euclid keeps the remainder non-negative (unlike `%`, which keeps the
-        // sign of the dividend), so this correctly wraps into [-resolution/2, resolution/2)
-        // for both sharp (positive) and flat (negative) deviations.
-        let r = cents.rem_euclid(resolution);
-        total_deviation += if r > resolution / 2.0 {
-            r - resolution
-        } else {
-            r
-        };
+        let step = f64::from(resolution);
+        total_deviation += (cent_deviation(freq) / step).round() * step;
     }
 
-    Ok(total_deviation / valid_freqs.len() as f32)
+    Ok((total_deviation / valid_freqs.len() as f64) as f32)
 }
 
 /// Tracks pitch using peak interpolation in a spectrogram.
@@ -550,15 +550,25 @@ fn piptrack_impl(
 ) -> Result<(Array2<f32>, Array2<f32>), TuningError> {
     let sr = sample_rate.unwrap_or(44_100);
     let n_fft = n_fft.unwrap_or(2048);
-    let hop_length = hop_length.unwrap_or(n_fft / 4);
+    let hop_length = hop_length.unwrap_or_else(|| (n_fft / 4).max(1));
+    if sr == 0 || n_fft < 2 || hop_length == 0 {
+        return Err(TuningError::InvalidInput(
+            "Sample rate and hop must be positive, n_fft at least 2".into(),
+        ));
+    }
 
     let s = compute_spectrogram(signal, spectrogram, n_fft, hop_length)?;
-    let freqs = fft_frequencies_impl(sr, n_fft);
-    if freqs.len() != s.shape()[0] {
+    if s.is_empty() || s.iter().any(|v| !v.is_finite() || *v < 0.0) {
+        return Err(TuningError::InvalidInput(
+            "Magnitude spectrum must be nonempty, finite and non-negative".into(),
+        ));
+    }
+    if n_fft / 2 + 1 != s.shape()[0] {
         return Err(TuningError::ComputationFailed(
             "Frequency bins mismatch with spectrogram".to_string(),
         ));
     }
+    let freqs = fft_frequencies_impl(sr, n_fft);
 
     let mut pitches = Array2::zeros(s.dim());
     let mut mags = Array2::zeros(s.dim());
@@ -578,18 +588,19 @@ fn piptrack_impl(
             .map(|(i, _)| i)
         {
             let peak_mag = frame[max_idx];
-            if peak_mag > 1e-6 {
-                let left = if max_idx > 0 {
-                    frame[max_idx - 1]
+            if peak_mag > 0.0 {
+                let delta = if max_idx > 0 && max_idx + 1 < frame.len() {
+                    let left = f64::from(frame[max_idx - 1]);
+                    let right = f64::from(frame[max_idx + 1]);
+                    let denominator = 2.0 * (left - 2.0 * f64::from(peak_mag) + right);
+                    if denominator == 0.0 {
+                        0.0
+                    } else {
+                        ((left - right) / denominator) as f32
+                    }
                 } else {
-                    peak_mag
+                    0.0
                 };
-                let right = if max_idx < frame.len() - 1 {
-                    frame[max_idx + 1]
-                } else {
-                    peak_mag
-                };
-                let delta = (left - right) / (2.0 * (left - 2.0 * peak_mag + right) + 1e-6);
                 pitches[[max_idx, t]] = freqs[max_idx] + delta * freq_bin_width;
                 mags[[max_idx, t]] = peak_mag;
             }

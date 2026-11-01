@@ -134,16 +134,19 @@ fn recurrence_matrix_impl(
         }
         (_, RecurrenceMode::Affinity) => {
             // Distance → Gaussian affinity
-            let bw = bandwidth.unwrap_or_else(|| {
-                let mut vals: Vec<f32> = r.iter().filter(|&&v| v > 0.0).copied().collect();
-                if vals.is_empty() {
-                    return 1.0;
-                }
-                vals.sort_by(f32::total_cmp);
-                vals[vals.len() / 2]
-            });
-            let bw2 = (bw * bw).max(1e-10);
-            r.mapv_inplace(|d| (-d * d / bw2).exp());
+            let bw = bandwidth.map_or_else(
+                || {
+                    let mut vals: Vec<f64> = r.iter().filter(|&&v| v > 0.0).copied().collect();
+                    if vals.is_empty() {
+                        return 1.0;
+                    }
+                    vals.sort_by(f64::total_cmp);
+                    vals[vals.len() / 2]
+                },
+                f64::from,
+            );
+            let bw = bw.abs().max(f64::MIN_POSITIVE);
+            r.mapv_inplace(|d| (-(d / bw).powi(2)).exp());
         }
         (_, RecurrenceMode::Binary) => {
             let median = array_median(r.as_slice().unwrap_or(&[]));
@@ -156,7 +159,7 @@ fn recurrence_matrix_impl(
         r = (&r + &rt).mapv(|x| x * 0.5);
     }
 
-    r
+    r.mapv(|v| v as f32)
 }
 
 // ─── Cross-similarity ─────────────────────────────────────────────────────────
@@ -194,6 +197,9 @@ impl CrossSimilarityBuilder<'_> {
     }
 
     /// Compute the cross-similarity matrix of shape `(n_frames_data, n_frames_query)`.
+    ///
+    /// # Panics
+    /// Panics if the inputs have different feature dimensions, including empty sequences.
     pub fn compute(self) -> Array2<f32> {
         cross_similarity_impl(
             self.data,
@@ -243,6 +249,11 @@ fn cross_similarity_impl(
     mode: RecurrenceMode,
     bandwidth: Option<f32>,
 ) -> Array2<f32> {
+    assert_eq!(
+        data.nrows(),
+        query.nrows(),
+        "cross_similarity requires matching feature dimensions"
+    );
     let nd = data.shape()[1];
     let nq = query.shape()[1];
     if nd == 0 || nq == 0 {
@@ -268,16 +279,19 @@ fn cross_similarity_impl(
             // Matches `recurrence_matrix`'s default-bandwidth computation: zero
             // distances (e.g. an identical query/reference pair) are excluded so
             // the two functions agree when called on equivalent data.
-            let bw = bandwidth.unwrap_or_else(|| {
-                let mut vals: Vec<f32> = c.iter().filter(|&&v| v > 0.0).copied().collect();
-                if vals.is_empty() {
-                    return 1.0;
-                }
-                vals.sort_by(f32::total_cmp);
-                vals[vals.len() / 2]
-            });
-            let bw2 = (bw * bw).max(1e-10);
-            c.mapv_inplace(|d| (-d * d / bw2).exp());
+            let bw = bandwidth.map_or_else(
+                || {
+                    let mut vals: Vec<f64> = c.iter().filter(|&&v| v > 0.0).copied().collect();
+                    if vals.is_empty() {
+                        return 1.0;
+                    }
+                    vals.sort_by(f64::total_cmp);
+                    vals[vals.len() / 2]
+                },
+                f64::from,
+            );
+            let bw = bw.abs().max(f64::MIN_POSITIVE);
+            c.mapv_inplace(|d| (-(d / bw).powi(2)).exp());
         }
         (_, RecurrenceMode::Binary) => {
             let med = array_median(c.as_slice().unwrap_or(&[]));
@@ -285,38 +299,50 @@ fn cross_similarity_impl(
         }
     }
 
-    c
+    c.mapv(|v| v as f32)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-fn col_measure(a: ArrayView1<f32>, b: ArrayView1<f32>, metric: SimilarityMetric) -> f32 {
+fn col_measure(a: ArrayView1<f32>, b: ArrayView1<f32>, metric: SimilarityMetric) -> f64 {
     match metric {
         SimilarityMetric::Cosine => {
-            let dot: f32 = a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum();
-            let na = a.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-10);
-            let nb = b.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-10);
-            dot / (na * nb)
+            let dot: f64 = a
+                .iter()
+                .zip(b.iter())
+                .map(|(&x, &y)| f64::from(x) * f64::from(y))
+                .sum();
+            let na = a.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>().sqrt();
+            let nb = b.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>().sqrt();
+            if na == 0.0 || nb == 0.0 {
+                0.0
+            } else {
+                (dot / (na * nb)).clamp(-1.0, 1.0)
+            }
         }
         SimilarityMetric::Euclidean => a
             .iter()
             .zip(b.iter())
-            .map(|(&x, &y)| (x - y).powi(2))
-            .sum::<f32>()
+            .map(|(&x, &y)| (f64::from(x) - f64::from(y)).powi(2))
+            .sum::<f64>()
             .sqrt(),
-        SimilarityMetric::Manhattan => a.iter().zip(b.iter()).map(|(&x, &y)| (x - y).abs()).sum(),
+        SimilarityMetric::Manhattan => a
+            .iter()
+            .zip(b.iter())
+            .map(|(&x, &y)| (f64::from(x) - f64::from(y)).abs())
+            .sum(),
     }
 }
 
-fn array_median(vals: &[f32]) -> f32 {
+fn array_median(vals: &[f64]) -> f64 {
     if vals.is_empty() {
         return 0.0;
     }
     let mut sorted = vals.to_vec();
-    sorted.sort_by(f32::total_cmp);
+    sorted.sort_by(f64::total_cmp);
     let mid = sorted.len() / 2;
     if sorted.len() % 2 == 0 {
-        f32::midpoint(sorted[mid - 1], sorted[mid])
+        f64::midpoint(sorted[mid - 1], sorted[mid])
     } else {
         sorted[mid]
     }
@@ -387,7 +413,7 @@ fn agglomerative_impl(data: &Array2<f32>, k: usize, metric: SimilarityMetric) ->
     let mut segs: Vec<(usize, usize)> = (0..n).map(|i| (i, i + 1)).collect();
 
     while segs.len() > k {
-        let mut best_sim = f32::NEG_INFINITY;
+        let mut best_sim = f64::NEG_INFINITY;
         let mut best_i = 0;
         for i in 0..segs.len() - 1 {
             let sim = seg_centroid_sim(data, segs[i], segs[i + 1], metric);
@@ -416,12 +442,12 @@ fn seg_centroid_sim(
     seg_a: (usize, usize),
     seg_b: (usize, usize),
     metric: SimilarityMetric,
-) -> f32 {
+) -> f64 {
     let nf = data.shape()[0];
-    let centroid = |seg: (usize, usize)| -> Vec<f32> {
-        let len = (seg.1 - seg.0) as f32;
+    let centroid = |seg: (usize, usize)| -> Vec<f64> {
+        let len = (seg.1 - seg.0) as f64;
         (0..nf)
-            .map(|f| (seg.0..seg.1).map(|t| data[[f, t]]).sum::<f32>() / len)
+            .map(|f| (seg.0..seg.1).map(|t| f64::from(data[[f, t]])).sum::<f64>() / len)
             .collect()
     };
     let ca = centroid(seg_a);
@@ -430,22 +456,26 @@ fn seg_centroid_sim(
     // For distance metrics, negate so "max sim" = "min dist"
     match metric {
         SimilarityMetric::Cosine => {
-            let dot: f32 = ca.iter().zip(&cb).map(|(&a, &b)| a * b).sum();
-            let na = ca.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-10);
-            let nb = cb.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-10);
-            dot / (na * nb)
+            let dot: f64 = ca.iter().zip(&cb).map(|(&a, &b)| a * b).sum();
+            let na = ca.iter().map(|&x| x * x).sum::<f64>().sqrt();
+            let nb = cb.iter().map(|&x| x * x).sum::<f64>().sqrt();
+            if na == 0.0 || nb == 0.0 {
+                0.0
+            } else {
+                (dot / (na * nb)).clamp(-1.0, 1.0)
+            }
         }
         SimilarityMetric::Euclidean => -ca
             .iter()
             .zip(&cb)
             .map(|(&a, &b)| (a - b).powi(2))
-            .sum::<f32>()
+            .sum::<f64>()
             .sqrt(),
         SimilarityMetric::Manhattan => -ca
             .iter()
             .zip(&cb)
             .map(|(&a, &b)| (a - b).abs())
-            .sum::<f32>(),
+            .sum::<f64>(),
     }
 }
 
@@ -622,21 +652,17 @@ fn path_enhance_impl(r: &Array2<f32>, n: usize) -> Array2<f32> {
     if rows == 0 || cols == 0 || n == 0 {
         return r.to_owned();
     }
-    let half = (n / 2) as isize;
+    let half = n / 2;
     let mut out = Array2::zeros((rows, cols));
     for i in 0..rows {
         for j in 0..cols {
-            let mut sum = 0.0_f32;
-            let mut cnt = 0_u32;
-            for k in -half..=half {
-                let ri = i as isize + k;
-                let ci = j as isize + k;
-                if ri >= 0 && ri < rows as isize && ci >= 0 && ci < cols as isize {
-                    sum += r[[ri as usize, ci as usize]];
-                    cnt += 1;
-                }
-            }
-            out[[i, j]] = if cnt > 0 { sum / cnt as f32 } else { 0.0 };
+            let before = half.min(i).min(j);
+            let after = half.min(rows - 1 - i).min(cols - 1 - j);
+            let count = before + after + 1;
+            let sum: f64 = (0..count)
+                .map(|k| f64::from(r[[i - before + k, j - before + k]]))
+                .sum();
+            out[[i, j]] = (sum / count as f64) as f32;
         }
     }
     out
@@ -694,7 +720,7 @@ fn timelag_filter_impl(r: &Array2<f32>, n_window: usize) -> Array2<f32> {
     if n == 0 {
         return r.to_owned();
     }
-    let half = (n_window / 2) as isize;
+    let half = n_window / 2;
     let mut out = Array2::zeros((n, n));
 
     // For each lag d (0..n), extract diagonal, median-filter, write back
@@ -706,8 +732,8 @@ fn timelag_filter_impl(r: &Array2<f32>, n_window: usize) -> Array2<f32> {
         // Median filter along this diagonal
         let filtered: Vec<f32> = (0..diag_len)
             .map(|idx| {
-                let lo = (idx as isize - half).max(0) as usize;
-                let hi = (idx as isize + half + 1).min(diag_len as isize) as usize;
+                let lo = idx.saturating_sub(half);
+                let hi = idx.saturating_add(half).saturating_add(1).min(diag_len);
                 let mut window = raw[lo..hi].to_vec();
                 window.sort_by(f32::total_cmp);
                 let mid = window.len() / 2;
@@ -818,6 +844,6 @@ mod tests {
             false,
             None,
         );
-        assert!(r.iter().all(|&v| v == 0.0 || v == 1.0));
+        assert!(r.iter().all(|v| [0.0, 1.0].contains(v)));
     }
 }

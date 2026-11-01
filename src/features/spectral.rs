@@ -979,12 +979,17 @@ pub fn melspectrogram(
             "n_fft, hop_length, and n_mels must be positive".to_string(),
         ));
     }
-    if fmin < 0.0 || fmax <= fmin || fmax > signal.sample_rate as f32 / 2.0 {
+    if !fmin.is_finite()
+        || !fmax.is_finite()
+        || fmin < 0.0
+        || fmax <= fmin
+        || fmax > signal.sample_rate as f32 / 2.0
+    {
         return Err(SpectralError::InvalidParameter(
             "fmin and fmax must satisfy 0 <= fmin < fmax <= sr/2".to_string(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if s.is_none() && signal.samples.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".to_string(),
         ));
@@ -1000,6 +1005,14 @@ pub fn melspectrogram(
             .mapv(|x| x.norm().powi(2)),
     };
 
+    validate_supplied_spectrum(&s, n_fft)?;
+    if n_mels.checked_add(2).is_none()
+        || n_mels
+            .checked_mul(s.ncols())
+            .is_none_or(|count| count > isize::MAX as usize / std::mem::size_of::<f32>())
+    {
+        return Err(SpectralError::InvalidSize("Mel dimensions overflow".into()));
+    }
     let mel_f = mel_frequencies_impl(n_mels + 2, fmin, fmax);
     let mut mel_s = Array2::zeros((n_mels, s.shape()[1]));
     let fft_f = fft_frequencies_impl(signal.sample_rate, n_fft);
@@ -1029,6 +1042,20 @@ pub fn melspectrogram(
     Ok(mel_s)
 }
 
+fn validate_supplied_spectrum(s: &Array2<f32>, n_fft: usize) -> Result<(), SpectralError> {
+    if s.nrows() != n_fft / 2 + 1 || s.ncols() == 0 {
+        return Err(SpectralError::InvalidSize(
+            "Spectrogram shape must match n_fft and contain frames".into(),
+        ));
+    }
+    if s.iter().any(|value| !value.is_finite() || *value < 0.0) {
+        return Err(SpectralError::InvalidParameter(
+            "Spectrogram values must be finite and nonnegative".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Internal wrapper for melspectrogram that takes &[f32] and sample rate.
 fn melspectrogram_impl(
     y: &[f32],
@@ -1045,7 +1072,9 @@ fn melspectrogram_impl(
 
 /// Computes Mel-frequency cepstral coefficients (MFCCs).
 ///
-/// Extracts MFCCs from a mel spectrogram using DCT.
+/// Applies an orthonormal type-II DCT to `ln(max(mel_power, 1e-10))`.
+/// Both `norm=None` and `norm=Some("ortho")` use orthonormal scaling.
+/// This natural-log convention differs from MFCC APIs that first convert to dB.
 ///
 /// # Arguments
 /// * `signal` - The input audio signal.
@@ -1104,6 +1133,24 @@ pub fn mfcc(
                 .map_err(SpectralError::Audio)?;
         melspectrogram(&temp_signal, None, None, None, None, None, None)?
     };
+    if s.is_empty() {
+        return Err(SpectralError::InvalidSize(
+            "Mel spectrum must contain bands and frames".into(),
+        ));
+    }
+    if s.iter().any(|value| !value.is_finite() || *value < 0.0) {
+        return Err(SpectralError::InvalidParameter(
+            "Mel powers must be finite and nonnegative".into(),
+        ));
+    }
+    if n_mfcc
+        .checked_mul(s.ncols())
+        .is_none_or(|count| count > isize::MAX as usize / std::mem::size_of::<f32>())
+    {
+        return Err(SpectralError::InvalidSize(
+            "MFCC dimensions overflow".into(),
+        ));
+    }
     let log_s = s.mapv(|x| x.max(1e-10).ln());
     let n_mels = s.shape()[0] as f32;
     let pi_over_n_mels = std::f32::consts::PI / n_mels;
@@ -1132,7 +1179,10 @@ pub fn mfcc(
 
 /// Computes root mean square (RMS) energy.
 ///
-/// Calculates RMS energy per frame from either the signal or a spectrogram.
+/// Calculates RMS amplitude per frame from either the signal or a spectrogram.
+/// Waveform frames are uncentered and unwindowed. Supplied one-sided magnitude
+/// spectra use Parseval normalization, including DC and Nyquist endpoint weights;
+/// their RMS therefore reflects whatever analysis window produced the spectrum.
 ///
 /// # Arguments
 /// * `signal` - The input audio signal.
@@ -1169,8 +1219,32 @@ pub fn rms(
     }
 
     if let Some(s) = s {
-        Ok(s.map_axis(Axis(0), |row| {
-            f32::sqrt(row.iter().map(|x| x.powi(2)).sum::<f32>() / row.len() as f32)
+        if s.nrows() != frame_len / 2 + 1 || s.ncols() == 0 {
+            return Err(SpectralError::InvalidSize(
+                "Magnitude spectrum must match frame_length and contain frames".into(),
+            ));
+        }
+        if s.iter().any(|value| !value.is_finite() || *value < 0.0) {
+            return Err(SpectralError::InvalidParameter(
+                "Spectrogram magnitudes must be finite and non-negative".into(),
+            ));
+        }
+        // Parseval's identity for the unnormalized one-sided real FFT: interior
+        // bins have conjugate partners; DC and an even-length Nyquist bin do not.
+        Ok(s.map_axis(Axis(0), |frame| {
+            let energy: f64 = frame
+                .iter()
+                .enumerate()
+                .map(|(bin, &value)| {
+                    let weight = if bin == 0 || (frame_len % 2 == 0 && bin == frame_len / 2) {
+                        1.0
+                    } else {
+                        2.0
+                    };
+                    weight * f64::from(value).powi(2)
+                })
+                .sum();
+            (energy.sqrt() / frame_len as f64) as f32
         }))
     } else {
         if signal.samples.len() < frame_len {
@@ -1183,7 +1257,12 @@ pub fn rms(
         for i in 0..n_frames {
             let start = i * hop;
             let slice = &signal.samples[start..(start + frame_len).min(signal.samples.len())];
-            rms[i] = f32::sqrt(slice.iter().map(|x| x.powi(2)).sum::<f32>() / slice.len() as f32);
+            rms[i] = (slice
+                .iter()
+                .map(|&value| f64::from(value).powi(2))
+                .sum::<f64>()
+                / slice.len() as f64)
+                .sqrt() as f32;
         }
         Ok(rms)
     }
@@ -1226,7 +1305,7 @@ pub fn spectral_centroid(
             "n_fft and hop_length must be positive".to_string(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if s.is_none() && signal.samples.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".to_string(),
         ));
@@ -1242,12 +1321,29 @@ pub fn spectral_centroid(
             .mapv(num_complex::Complex::norm),
     };
 
+    if s.nrows() != n_fft / 2 + 1 || s.ncols() == 0 {
+        return Err(SpectralError::InvalidSize(
+            "Spectrogram shape must match n_fft and contain at least one frame".into(),
+        ));
+    }
+    if s.iter().any(|v| !v.is_finite() || *v < 0.0) {
+        return Err(SpectralError::InvalidParameter(
+            "Spectrogram magnitudes must be finite and non-negative".into(),
+        ));
+    }
     let freqs = Array1::from_vec(fft_frequencies_impl(signal.sample_rate, n_fft));
     Ok(s.axis_iter(Axis(1))
         .map(|frame| {
-            let total = frame.sum();
-            if total > 1e-6 {
-                frame.dot(&freqs) / total
+            // A magnitude ratio is scale invariant, including for quiet audio.
+            // Accumulate in f64 to avoid underflow/overflow before normalization.
+            let total: f64 = frame.iter().map(|&value| f64::from(value)).sum();
+            if total > 0.0 {
+                (frame
+                    .iter()
+                    .zip(&freqs)
+                    .map(|(&value, &frequency)| f64::from(value) * f64::from(frequency))
+                    .sum::<f64>()
+                    / total) as f32
             } else {
                 0.0
             }
@@ -1305,9 +1401,6 @@ pub fn spectral_bandwidth(
             "p must be positive".to_string(),
         ));
     }
-    let temp_signal = AudioData::new(signal.samples.clone(), signal.sample_rate, signal.channels)
-        .map_err(SpectralError::Audio)?;
-    let centroid = spectral_centroid(&temp_signal, None, None, None)?;
     let n_fft = n_fft.unwrap_or(2048);
     let hop = hop_length.unwrap_or(n_fft / 4);
     let s = match s {
@@ -1319,19 +1412,22 @@ pub fn spectral_bandwidth(
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
             .mapv(num_complex::Complex::norm),
     };
+    let centroid = spectral_centroid(signal, Some(&s), Some(n_fft), Some(hop))?;
     let freqs = fft_frequencies_impl(signal.sample_rate, n_fft);
     Ok(s.axis_iter(Axis(1))
         .zip(centroid.iter())
         .map(|(frame, &c)| {
-            let total = frame.sum();
-            if total > 1e-6 {
+            let total: f64 = frame.iter().map(|&value| f64::from(value)).sum();
+            if total > 0.0 {
                 let dev = frame
                     .iter()
                     .zip(freqs.iter())
-                    .map(|(&s, &f)| s * (f - c).abs().powi(p))
-                    .fold(0.0, |acc, x| acc + x)
+                    .map(|(&value, &frequency)| {
+                        f64::from(value) * (f64::from(frequency) - f64::from(c)).abs().powi(p)
+                    })
+                    .sum::<f64>()
                     / total;
-                dev.powf(1.0 / p as f32)
+                dev.powf(1.0 / f64::from(p)) as f32
             } else {
                 0.0
             }
@@ -1342,6 +1438,9 @@ pub fn spectral_bandwidth(
 /// Computes spectral contrast across frequency bands.
 ///
 /// Calculates the difference between peaks and valleys in subbands.
+/// Uses inclusive octave bands anchored at 200 Hz and the mean upper/lower 2%
+/// ranks (rounded to nearest, at least one bin). Each mean has `1e-10` added
+/// before computing its 10-log ratio; the final band is not extended to Nyquist.
 ///
 /// # Arguments
 /// * `signal` - The input audio signal.
@@ -1387,7 +1486,7 @@ pub fn spectral_contrast(
             "n_fft, hop_length, and n_bands must be positive".to_string(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if s.is_none() && signal.samples.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".to_string(),
         ));
@@ -1403,6 +1502,15 @@ pub fn spectral_contrast(
             .mapv(num_complex::Complex::norm),
     };
 
+    validate_supplied_spectrum(&s, n_fft)?;
+    if n_bands.checked_add(2).is_none_or(|rows| {
+        rows.checked_mul(s.ncols())
+            .is_none_or(|count| count > isize::MAX as usize / std::mem::size_of::<f32>())
+    }) {
+        return Err(SpectralError::InvalidSize(
+            "Spectral contrast dimensions overflow".into(),
+        ));
+    }
     let freqs = fft_frequencies_impl(signal.sample_rate, n_fft);
     // Octave-doubling band edges anchored at `fmin`: [0, fmin, 2*fmin, 4*fmin, ...].
     let mut band_edges = vec![0.0f32; n_bands + 2];
@@ -1427,10 +1535,19 @@ pub fn spectral_contrast(
                 let idx = ((ALPHA * sorted.len() as f32).round() as usize)
                     .max(1)
                     .min(sorted.len());
-                let valley_mean = sorted[..idx].iter().sum::<f32>() / idx as f32;
-                let peak_mean = sorted[sorted.len() - idx..].iter().sum::<f32>() / idx as f32;
-                contrast[[b, t]] =
-                    10.0 * (peak_mean + EPS).log10() - 10.0 * (valley_mean + EPS).log10();
+                let valley_mean = sorted[..idx]
+                    .iter()
+                    .map(|&value| f64::from(value))
+                    .sum::<f64>()
+                    / idx as f64;
+                let peak_mean = sorted[sorted.len() - idx..]
+                    .iter()
+                    .map(|&value| f64::from(value))
+                    .sum::<f64>()
+                    / idx as f64;
+                contrast[[b, t]] = (10.0
+                    * ((peak_mean + f64::from(EPS)) / (valley_mean + f64::from(EPS))).log10())
+                    as f32;
             }
         }
     }
@@ -1439,7 +1556,9 @@ pub fn spectral_contrast(
 
 /// Computes spectral flatness.
 ///
-/// Measures the uniformity of the spectrum per frame (geometric mean / arithmetic mean).
+/// Measures magnitude flatness per frame (geometric mean / arithmetic mean).
+/// Magnitudes are floored at `1e-10` on both signal and precomputed-spectrum paths;
+/// unlike power-spectrum flatness, the magnitudes are not squared.
 ///
 /// # Arguments
 /// * `signal` - The input audio signal.
@@ -1474,7 +1593,7 @@ pub fn spectral_flatness(
             "n_fft and hop_length must be positive".to_string(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if s.is_none() && signal.samples.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".to_string(),
         ));
@@ -1487,15 +1606,30 @@ pub fn spectral_flatness(
             .hop_length(hop)
             .compute()
             .map_err(|e| SpectralError::TimeFrequency(e.to_string()))?
-            .mapv(|x| x.norm().max(1e-10)),
+            .mapv(num_complex::Complex::norm),
     };
 
+    if s.nrows() != n_fft / 2 + 1 || s.ncols() == 0 {
+        return Err(SpectralError::InvalidSize(
+            "Spectrogram shape must match n_fft and contain at least one frame".into(),
+        ));
+    }
+    if s.iter().any(|value| !value.is_finite() || *value < 0.0) {
+        return Err(SpectralError::InvalidParameter(
+            "Spectrogram magnitudes must be finite and non-negative".into(),
+        ));
+    }
     Ok(s.axis_iter(Axis(1))
         .map(|frame| {
-            let log_frame = frame.mapv(f32::ln);
-            let geo_mean = log_frame.sum() / frame.len() as f32;
-            let arith_mean = frame.sum() / frame.len() as f32;
-            f32::exp(geo_mean) / arith_mean
+            // Apply the same floor to supplied spectra and computed magnitudes.
+            let (log_sum, sum) = frame
+                .iter()
+                .fold((0.0_f64, 0.0_f64), |(logs, sum), &value| {
+                    let value = f64::from(value.max(1e-10));
+                    (logs + value.ln(), sum + value)
+                });
+            let count = frame.len() as f64;
+            ((log_sum / count).exp() / (sum / count)) as f32
         })
         .collect())
 }
@@ -1553,12 +1687,12 @@ pub fn spectral_rolloff(
             "n_fft and hop_length must be positive".to_string(),
         ));
     }
-    if roll_percent <= 0.0 || roll_percent > 1.0 {
+    if !roll_percent.is_finite() || roll_percent <= 0.0 || roll_percent > 1.0 {
         return Err(SpectralError::InvalidParameter(
             "roll_percent must be between 0 and 1".to_string(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if s.is_none() && signal.samples.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".to_string(),
         ));
@@ -1574,14 +1708,15 @@ pub fn spectral_rolloff(
             .mapv(num_complex::Complex::norm),
     };
 
+    validate_supplied_spectrum(&s, n_fft)?;
     let freqs = fft_frequencies_impl(signal.sample_rate, n_fft);
     Ok(s.axis_iter(Axis(1))
         .map(|frame| {
-            let total_energy = frame.sum();
-            let target_energy = total_energy * roll_percent;
-            let mut cum_energy = 0.0;
+            let total_energy: f64 = frame.iter().map(|&value| f64::from(value)).sum();
+            let target_energy = total_energy * f64::from(roll_percent);
+            let mut cum_energy = 0.0_f64;
             for (f, &s) in freqs.iter().zip(frame.iter()) {
-                cum_energy += s;
+                cum_energy += f64::from(s);
                 if cum_energy >= target_energy {
                     return *f;
                 }
@@ -1656,7 +1791,7 @@ pub fn poly_features(
             "n_fft and hop_length must be positive".to_string(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if s.is_none() && signal.samples.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".to_string(),
         ));
@@ -1788,7 +1923,7 @@ pub fn spectral_flux(
             "n_fft and hop_length must be positive".to_string(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if s.is_none() && signal.samples.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".to_string(),
         ));
@@ -1861,7 +1996,7 @@ pub fn spectral_entropy(
             "n_fft and hop_length must be positive".to_string(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if s.is_none() && signal.samples.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".to_string(),
         ));
@@ -1939,7 +2074,7 @@ pub fn pitch_chroma(
             "n_fft and hop_length must be positive".to_string(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if s.is_none() && signal.samples.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".to_string(),
         ));
@@ -2082,6 +2217,10 @@ fn cmvn_impl(
 /// Performs Harmonic-Percussive Source Separation (HPSS).
 ///
 /// Separates the spectrogram into harmonic and percussive components using median filtering.
+/// Waveform input produces power spectra. Neighborhoods have radius `window/2`,
+/// are clipped at matrix edges, and select the upper median for an even count.
+/// Masks use exponent one, and bins with two zero medians split equally, so the
+/// two output spectra sum to the supplied spectrum up to floating-point rounding.
 ///
 /// # Arguments
 /// * `signal` - The input audio signal.
@@ -2122,7 +2261,7 @@ pub fn hpss(
             "n_fft, hop_length, harm_win, and perc_win must be positive".to_string(),
         ));
     }
-    if signal.samples.len() < n_fft {
+    if s.is_none() && signal.samples.len() < n_fft {
         return Err(SpectralError::InvalidSize(
             "Signal length must be at least n_fft".to_string(),
         ));
@@ -2138,12 +2277,25 @@ pub fn hpss(
             .mapv(|x| x.norm().powi(2)),
     };
 
+    if s.is_empty() {
+        return Err(SpectralError::InvalidSize(
+            "Spectrogram must contain bins and frames".into(),
+        ));
+    }
+    if s.iter().any(|value| !value.is_finite() || *value < 0.0) {
+        return Err(SpectralError::InvalidParameter(
+            "Spectrogram values must be finite and non-negative".into(),
+        ));
+    }
     let mut harmonic = Array2::zeros(s.dim());
     for f in 0..s.shape()[0] {
         let row = s.index_axis(Axis(0), f);
         for t in 0..s.shape()[1] {
             let start = t.saturating_sub(harm_win / 2);
-            let end = (t + harm_win / 2 + 1).min(s.shape()[1]);
+            let end = t
+                .saturating_add(harm_win / 2)
+                .saturating_add(1)
+                .min(s.shape()[1]);
             let mut slice: Vec<f32> = row.slice(s![start..end]).to_vec();
             slice.sort_by(f32::total_cmp);
             harmonic[[f, t]] = slice[slice.len() / 2];
@@ -2155,19 +2307,29 @@ pub fn hpss(
         let col = s.index_axis(Axis(1), t);
         for f in 0..s.shape()[0] {
             let start = f.saturating_sub(perc_win / 2);
-            let end = (f + perc_win / 2 + 1).min(s.shape()[0]);
+            let end = f
+                .saturating_add(perc_win / 2)
+                .saturating_add(1)
+                .min(s.shape()[0]);
             let mut slice: Vec<f32> = col.slice(s![start..end]).to_vec();
             slice.sort_by(f32::total_cmp);
             percussive[[f, t]] = slice[slice.len() / 2];
         }
     }
 
-    // Compute total once and reuse for both masks
-    let total = &harmonic + &percussive;
-    let total_safe = total.mapv(|x| if x > 0.0 { x } else { 1.0 });
-    let harm_mask = &harmonic / &total_safe;
-    let perc_mask = &percussive / &total_safe;
-    Ok((s.to_owned() * &harm_mask, s.to_owned() * &perc_mask))
+    for ((h, p), &value) in harmonic.iter_mut().zip(percussive.iter_mut()).zip(&s) {
+        let total = f64::from(*h) + f64::from(*p);
+        // With no median evidence favoring either component, share the bin.
+        // This preserves isolated transients instead of silently discarding them.
+        let (harmonic_mask, percussive_mask) = if total > 0.0 {
+            (f64::from(*h) / total, f64::from(*p) / total)
+        } else {
+            (0.5, 0.5)
+        };
+        *h = (f64::from(value) * harmonic_mask) as f32;
+        *p = (f64::from(value) * percussive_mask) as f32;
+    }
+    Ok((harmonic, percussive))
 }
 
 /// Estimates pitch using autocorrelation.

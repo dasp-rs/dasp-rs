@@ -193,14 +193,211 @@ The following table describes supported WAV sample encodings:
 - FFTs via [`rustfft`]; resampling via [`rubato`]; linear algebra via pure-Rust
   [`nalgebra`].
 
+Run the release performance workloads on an idle machine:
+
+```sh
+python3 scripts/performance_benchmarks.py run --rss --output target/performance-baseline.json
+# After a change, repeat with --output target/performance-candidate.json, then:
+python3 scripts/performance_benchmarks.py compare target/performance-baseline.json target/performance-candidate.json
+```
+
+The 13 deterministic cases cover short/long STFTs, resampling, CQT/iCQT, and
+YIN/pYIN. Reports include warmed median/p95 latency, throughput, separate
+allocation counts/bytes, and optional whole-process peak RSS on Linux. Timing
+uses an uninstrumented executable; allocations use a separate executable with
+[`stats_alloc`](https://docs.rs/stats_alloc/0.1.10/stats_alloc/). Input preparation
+is excluded, while per-call planning/setup and output destruction are included.
+Allocated bytes measure cumulative traffic, not peak live memory.
+
+Comparisons require matching environments and workload definitions. Reports
+record source/binary hashes and reject source changes during measurement.
+Wall-clock results describe that machine and workload; they are not promises of
+real-time callback suitability or noisy shared-runner pass/fail thresholds.
+`cargo test --all-targets` compiles the benchmark targets without running them.
+
+CQT wavelets store only taps that can overlap the analyzed signal. Full-kernel
+phase and normalization are preserved, while stored support per filter is bounded
+by twice the signal length. This avoids allocating enormous full filters for
+very short inputs with low minimum frequencies.
+
 ## Contributing
 
-Issues and pull requests are welcome on [GitHub]. Please run `cargo test` before
-submitting.
+Issues and pull requests are welcome on [GitHub]. Before submitting, run:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
+cargo test --doc
+cargo test --release --all-targets
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+```
+
+CI also checks the minimum supported Rust version (1.85) and runs the test suite
+on Linux, macOS, and Windows. The integration suites in `tests/` use synthetic
+signals, analytic expectations, independent linear solves, exhaustive small
+sequence models, and checked-in numerical references; Python is not required to
+run the Rust tests. For a bug fix, add a regression that reproduces the failure
+before changing the implementation. Cover boundary conditions and numerical
+behavior, not just output dimensions.
+
+### Numerical reference benchmarks
+
+Run the independent accuracy comparisons and produce a JSON report with Python
+3 and Cargo (no Python packages required for this command):
+
+```sh
+python3 scripts/reference_benchmarks.py
+python3 scripts/reference_benchmarks.py --release --output target/reference-release.json
+python3 scripts/reference_benchmarks.py --self-test
+```
+
+The default report is `target/reference-report.json`, with the full Rust test log
+beside it. It records maximum absolute error, RMSE, declared error budgets, Rust
+version, source/test/generator/fixture hashes, and the tested revision. These are
+numerical accuracy measurements; runtime performance is not measured. Reports
+identify comparisons between different algorithms separately from parity tests.
+The input manifest audits fixture inputs, exact metadata, expected test counts,
+and metric counts. Missing observations, nonfinite metrics, or source changes
+during a run fail the report. The stdlib-only self-test checks these failure paths.
+
+The `tests/reference_*.rs` suites use NumPy 2.3.5, SciPy 1.18.1, and librosa
+0.11.0 fixtures. Generators never invoke the Rust implementation. Inputs are
+quantized to `f32` before the independent calculation; most reference arithmetic
+uses `f64`. Fixtures cover:
+
+| Area | Independent reference and checks |
+| --- | --- |
+| STFT, ISTFT, phase vocoder, time stretch | librosa; odd/even FFT sizes, window/padding conventions, endpoints, multiple rates |
+| Resampling | SciPy polyphase FIR; separate interior/boundary errors, impulse delay, DC gain, passband and stopband behavior |
+| Mel, MFCC, inverse DCT, spectral features | librosa and SciPy; individual mel weights, DCT types I–IV, deltas, centroid, bandwidth, rolloff, flatness, RMS, contrast, HPSS |
+| CQT/VQT and inverse | librosa wavelets with SciPy correlation; calibrated tones/impulses, independent NumPy SVD inverse, conditioning and reconstruction checks |
+| LPC, autocorrelation, magnitude, sequences | SciPy Toeplitz solves/correlation and librosa; dB, weighting, PCEN, mu-law, DTW costs/paths, Viterbi scores/paths |
+| IIR, reassignment, rhythm, recovery | SciPy SOS response/filtering; explicit reassignment raster; flux/tempograms/PLP; analytic pulse grids; matched Griffin–Lim iterations and NMF reconstruction objectives |
+| Pitch and recorded audio | Librosa YIN/pYIN with a declared 15-cent allowance and voicing checks; independent mel/MFCC summaries for the attributed corpus |
+
+To verify fixture regeneration without changing checked-in data, create a Python
+3.14 environment with the pinned dependencies:
+
+```sh
+python3.14 -m venv target/reference-python
+target/reference-python/bin/python -m pip install -r tests/fixtures/requirements-reference.txt
+python3 scripts/reference_benchmarks.py --check-fixtures --python target/reference-python/bin/python
+```
+
+Use the corresponding `Scripts/python.exe` path on Windows. `--regenerate`
+replaces fixtures intentionally; review the generator and resulting numerical
+changes together. CI regenerates fixtures in a temporary directory, rejects
+unexpected drift, runs the comparisons, and uploads the report on pushes and
+pull requests. The checked-in references also run in the ordinary Rust test
+matrix, including release builds and Rust 1.85.
+
+Reference settings match this crate's documented conventions: natural-log MFCCs,
+nearest-edge deltas, PCEN initialized from its first frame, and Viterbi scores
+without an initial uniform-state log prior. Waveform RMS uses complete,
+uncentered rectangular frames; spectrum RMS measures the supplied windowed
+signal. Contrast retains inclusive octave bands with an additive floor. HPSS
+uses clipped median neighborhoods and exponent-one masks over power spectra.
+The generator headers describe these choices and link their sources.
+
+Some differences remain intentional or limited by conditioning:
+
+- CQT/VQT use full-rate wavelet correlation. The calibrated tone fixtures differ
+  from librosa's recursive implementations by about 2.54%/4.72% relative L2,
+  respectively; tight parity assertions use the independent full-rate reference.
+  `hybrid_cqt` currently aliases full CQT; `pseudo_cqt` samples STFT bins.
+- Inverse CQT uses at most 32 conjugate-gradient iterations. It cannot recover
+  frequencies or time detail absent from its input. Ill-conditioned inverse
+  fixtures assert coefficient consistency and report waveform differences.
+  The inverse retains only candidates that improve the coefficient residual
+  after conversion to `f32`. This guard is not regularization: ill-conditioned
+  inputs can still produce large waveform magnitudes. The broader sweep includes
+  a 72-sample system where the iteration budget leaves a relative coefficient
+  residual around `3.58e-4`, versus an independent SVD optimum around `2.30e-8`.
+  Direct CQT and iterative inversion cost more than recursive implementations.
+- Rubato and SciPy use different resampling filters, so boundary and impulse
+  differences have separate budgets. Nearly zero Hann endpoints amplify
+  finite-precision spectrum errors; tests report these separately from
+  well-conditioned samples.
+- Time stretching rounds output length using Rust's halfway-away-from-zero rule;
+  NumPy's halfway-to-even rule can differ by one sample. D-weighting retains its
+  published coefficient convention, with a 0.03% relative allowance against
+  librosa's differently rounded coefficients.
+
+Passing these fixtures establishes accuracy for the tested signals and settings;
+it does not establish complete librosa API compatibility or cover every DSP
+algorithm in the crate.
+
+The extended CQT sweeps cover sample rates from 8 to 48 kHz, varied frequency
+grids/hops, one-sample and longer inputs, amplitudes from subnormal values to
+`1e20`, and tones, chirps, noise, and transients. Analytic tone checks measure
+gain, phase, and localization. Comparisons with recursive librosa also distinguish
+frames whose complete wavelet support fits inside the signal from boundary
+frames; measured gaps reach about 11.3% relative L2 for a boundary VQT chirp case.
+These measurements describe individual fixtures, not universal error bounds.
+To run just this area, pass `--group cqt --group cqt_sweep --group cqt_inverse`
+to the reference runner. Report observations have unique target/test identifiers
+so checks through different public entry points remain distinguishable.
+
+### Randomized and recorded-audio validation
+
+`tests/randomized_dsp.rs` and `tests/randomized_features.rs` exercise fixed-seed
+geometry, scale, channel, and sequence cases, including exhaustive small DTW and
+Viterbi oracles. Failure messages retain the seed and case settings. These are
+bounded property tests, not an exhaustive fuzzing campaign.
+
+`tests/real_audio_workflows.rs` uses three checked-in, four-second mono FLAC
+excerpts: speech, trumpet, and instrumental music with pitched percussion.
+Their approximately 190 KB of audio requires no network access in Rust tests.
+Workflows check decoding, resampling duration, STFT reconstruction, independent
+mel/MFCC summaries, HPSS conservation, and pitch/rhythm output validity.
+The corpus has no annotated pitch, beat, or separation ground truth.
+
+```sh
+python3 scripts/prepare_audio_corpus.py --verify
+# With the pinned reference environment, recompute the independent summaries:
+target/reference-python/bin/python scripts/prepare_audio_corpus.py --check-references
+```
+
+Source hashes, conversion settings, full license texts, attribution, and explicit
+corpus limits are retained in [the audio manifest](tests/fixtures/audio/manifest.json)
+and [attribution](tests/fixtures/audio/ATTRIBUTION.md). Regeneration requires an
+explicit `--prepare`; downloads additionally require `--download` and are checked
+against pinned source hashes.
+
+### Release validation
+
+[validation/release.json](validation/release.json) inventories public free
+functions, maps evidence by area, lists remaining independent-reference gaps,
+and defines local release gates. New public functions require an inventory review.
+This catalog is not a complete builder-method inventory or branch-coverage report.
+
+```sh
+python3 scripts/validate_release.py --check
+python3 scripts/validate_release.py --run --reference-python target/reference-python/bin/python
+```
+
+The full run checks the reference runner's failure paths, formatting, strict
+Clippy, debug/release tests, doctests,
+documentation warnings, Rust 1.85, corpus hashes, regenerated references, and
+performance workloads. It saves per-gate logs and `target/release-validation/report.json`.
+Use an idle machine for the final performance measurements. CI also checks
+Linux/macOS/Windows and uploads numerical/performance reports; a local run does
+not verify remote CI results or publish a release.
+
+Remaining independent-reference work includes FMT, chroma/CENS/tonnetz, formants,
+some higher-level spectral features, complete mel/MFCC-to-audio pipelines,
+end-to-end pitch shifting, and segmentation/harmonic utilities. Existing tests
+for these areas remain useful, but they do not establish external reference
+parity. Twenty existing ignored documentation examples also remain outside
+executed doctest coverage. Numerical/API changes require changelog and version
+review before publication.
 
 ## License
 
-Licensed under the MIT License. See [LICENSE](LICENSE).
+The software is licensed under the MIT License. See [LICENSE](LICENSE).
+The recorded-audio test fixtures retain their individual Creative Commons
+licenses; see [audio attribution](tests/fixtures/audio/ATTRIBUTION.md).
 
 ## Acknowledgements
 

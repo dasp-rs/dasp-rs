@@ -174,9 +174,9 @@ fn peak_pick_impl(
 
     for i in 0..n {
         let lo_max = i.saturating_sub(pre_max);
-        let hi_max = (i + post_max + 1).min(n);
+        let hi_max = i.saturating_add(post_max).saturating_add(1).min(n);
         let lo_avg = i.saturating_sub(pre_avg);
-        let hi_avg = (i + post_avg + 1).min(n);
+        let hi_avg = i.saturating_add(post_avg).saturating_add(1).min(n);
 
         // Local max check
         let local_max = x[lo_max..hi_max]
@@ -195,7 +195,7 @@ fn peak_pick_impl(
 
         // Mean threshold check
         let window = &x[lo_avg..hi_avg];
-        let mean = window.iter().sum::<f32>() / window.len() as f32;
+        let mean = (window.iter().map(|&v| f64::from(v)).sum::<f64>() / window.len() as f64) as f32;
         if x[i] < mean + delta {
             continue;
         }
@@ -440,7 +440,9 @@ fn aggregate_vals(vals: &[f32], mode: SyncAggregate) -> f32 {
         return 0.0;
     }
     match mode {
-        SyncAggregate::Mean => vals.iter().sum::<f32>() / vals.len() as f32,
+        SyncAggregate::Mean => {
+            (vals.iter().map(|&v| f64::from(v)).sum::<f64>() / vals.len() as f64) as f32
+        }
         SyncAggregate::Max => vals.iter().copied().fold(f32::NEG_INFINITY, f32::max),
         SyncAggregate::Min => vals.iter().copied().fold(f32::INFINITY, f32::min),
         SyncAggregate::Median => {
@@ -568,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_peak_pick_empty() {
-        assert!(peak_pick_impl(&[], 3, 3, 3, 3, 0.07, 5).is_empty());
+        assert_eq!(peak_pick_impl(&[], 3, 3, 3, 3, 0.07, 5), [] as [usize; 0]);
     }
 
     #[test]

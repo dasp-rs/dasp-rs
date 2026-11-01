@@ -2,6 +2,18 @@ use ndarray::Array2;
 use num_complex::Complex;
 use thiserror::Error;
 
+// A fixed integer generator gives reproducible broadband initial energy. A
+// single sinusoid leaves near-zero FFT bins whose phase is dominated by roundoff.
+fn initial_signal(length: usize) -> Vec<f32> {
+    let mut state = 0x1234_5678_u32;
+    (0..length)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            ((state >> 8) as f32 * (1.0 / 16_777_216.0) - 0.5) * 0.02
+        })
+        .collect()
+}
+
 /// Custom error types for phase recovery operations.
 #[derive(Error, Debug)]
 pub enum PhaseRecoveryError {
@@ -16,6 +28,8 @@ pub enum PhaseRecoveryError {
 /// Uses a centered, periodic Hann STFT with an inferred even FFT size. Output
 /// length is `hop_length * (n_frames - 1)`; the original trailing partial hop
 /// cannot be inferred from magnitudes alone. A single frame yields empty output.
+/// Initialization uses deterministic broadband noise. Recovered phase is not
+/// unique, and output need not match a differently initialized implementation.
 ///
 /// # Arguments
 /// * `s` - Magnitude spectrogram (shape: `[n_freqs, n_frames]`)
@@ -99,10 +113,11 @@ fn griffinlim_impl(
         .checked_mul(s.shape()[1] - 1)
         .filter(|&n| n <= isize::MAX as usize / std::mem::size_of::<f32>())
         .ok_or_else(|| PhaseRecoveryError::ComputationFailed("Signal length overflows".into()))?;
+    if signal_len == 0 {
+        return Ok(Vec::new());
+    }
     // Deterministic initialization keeps repeated reconstructions reproducible.
-    let mut y: Vec<f32> = (0..signal_len)
-        .map(|i| (i as f32 * 0.031_415_93).sin() * 0.01)
-        .collect();
+    let mut y = initial_signal(signal_len);
     for _ in 0..n_iter {
         let stft_y = crate::signal_processing::time_frequency::stft(&y)
             .n_fft(n_fft)
@@ -116,7 +131,7 @@ fn griffinlim_impl(
         let new_stft = Array2::from_shape_fn(s.dim(), |index| {
             let value = stft_y[index];
             let norm = value.norm();
-            let phase = if norm > 1e-10 {
+            let phase = if norm > 0.0 {
                 value / norm
             } else {
                 Complex::new(1.0, 0.0)
@@ -180,7 +195,9 @@ impl GriffinLimCqtBuilder<'_> {
 ///
 /// Uses the Griffin-Lim algorithm in the CQT domain: alternates between CQT
 /// analysis (enforcing the target magnitude) and iCQT synthesis until the
-/// signal converges.
+/// signal converges. The centered analysis frame grid implies an output length
+/// of `hop_length * (n_frames - 1)`; a single frame yields empty output.
+/// Initialization uses the same deterministic broadband noise as [`griffinlim`].
 ///
 /// # Arguments
 /// * `c_mag` - CQT magnitude spectrogram of shape `(n_bins, n_frames)`
@@ -222,12 +239,39 @@ fn griffinlim_cqt_impl(
         ));
     }
 
-    let n_samples = n_frames * hop_length;
+    if sr == 0
+        || hop_length == 0
+        || !fmin.is_finite()
+        || fmin <= 0.0
+        || fmin > sr as f32 / 2.0
+        || c_mag.iter().any(|v| !v.is_finite() || *v < 0.0)
+    {
+        return Err(PhaseRecoveryError::ComputationFailed(
+            "Require valid sample rate/hop/fmin and finite non-negative magnitudes".into(),
+        ));
+    }
+    // Centered CQT analysis uses the same frame grid as STFT. Preserve that
+    // geometry every iteration instead of accumulating one new frame each time.
+    let n_samples = (n_frames - 1)
+        .checked_mul(hop_length)
+        .filter(|&n| n <= isize::MAX as usize / std::mem::size_of::<f32>())
+        .ok_or_else(|| PhaseRecoveryError::ComputationFailed("Signal length overflows".into()))?;
+    if n_samples == 0 || n_iter == 0 {
+        // Skipping iteration must not skip the transform's passband validation.
+        // A one-sample zero probe uses bounded support regardless of fmin.
+        cqt(&[0.0], sr)
+            .hop_length(hop_length)
+            .fmin(fmin)
+            .n_bins(n_bins)
+            .compute()
+            .map_err(|e| PhaseRecoveryError::ComputationFailed(e.to_string()))?;
+    }
+    if n_samples == 0 {
+        return Ok(Vec::new());
+    }
 
     // Deterministic pseudo-random initialization avoids phase-lock artifacts.
-    let mut y: Vec<f32> = (0..n_samples)
-        .map(|i| (i as f32 * 0.031_415_93).sin() * 0.01)
-        .collect();
+    let mut y = initial_signal(n_samples);
 
     for _ in 0..n_iter {
         let c = cqt(&y, sr)
@@ -241,7 +285,7 @@ fn griffinlim_cqt_impl(
 
         // Replace magnitude with the target while keeping the current phase.
         let (nk, nf) = (n_bins.min(phase.shape()[0]), n_frames.min(phase.shape()[1]));
-        let mut c_new = Array2::from_elem(phase.raw_dim(), Complex::new(0.0_f32, 0.0));
+        let mut c_new = Array2::from_elem(c_mag.raw_dim(), Complex::new(0.0_f32, 0.0));
         for k in 0..nk {
             for t in 0..nf {
                 c_new[[k, t]] = phase[[k, t]] * c_mag[[k, t]];
@@ -254,6 +298,7 @@ fn griffinlim_cqt_impl(
             .fmin(fmin)
             .compute()
             .map_err(|e| PhaseRecoveryError::ComputationFailed(e.to_string()))?;
+        y.resize(n_samples, 0.0);
     }
 
     Ok(y)
@@ -279,6 +324,6 @@ mod tests {
             result.err()
         );
         let y = result.unwrap();
-        assert!(!y.is_empty());
+        assert_eq!(y.len(), 19 * 512);
     }
 }

@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compute a magnitude spectrogram to factorize (NMF requires non-negative input).
     let spec = proc::stft(&y).n_fft(2048).hop_length(512).compute()?;
-    let mag = spec.mapv(|c| c.norm());
+    let mag = spec.mapv(num_complex::Complex::norm);
     println!("Input magnitude: {:?}", mag.shape());
 
     // ── NMF decomposition ─────────────────────────────────────────────────────
@@ -47,8 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
-            .map(|(i, _)| i)
-            .unwrap_or(0);
+            .map_or(0, |(i, _)| i);
         println!(
             "  Component {k}: peak at bin {peak_bin} ({:.1} Hz)",
             peak_bin as f32 * bin_hz

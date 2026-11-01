@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Compute a power spectrogram to work with.
     let spec = proc::stft(&y).n_fft(2048).hop_length(512).compute()?;
     let power = spec.mapv(|c| c.norm_sqr()); // |S|²
-    let amplitude = spec.mapv(|c| c.norm()); // |S|
+    let amplitude = spec.mapv(num_complex::Complex::norm); // |S|
 
     // ── Amplitude → dB ───────────────────────────────────────────────────────
     // amplitude_to_db(A) ≈ 20 log₁₀(A / ref)

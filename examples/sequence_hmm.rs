@@ -46,9 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n_frames = 20_usize;
     let log_prob = Array2::from_shape_fn((n, n_frames), |(s, t)| {
         // State 0 active in first half, state 2 active in second half.
-        if s == 0 && t < n_frames / 2 {
-            -0.1
-        } else if s == 2 && t >= n_frames / 2 {
+        if (s == 0 && t < n_frames / 2) || (s == 2 && t >= n_frames / 2) {
             -0.1
         } else {
             -5.0
@@ -70,9 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Discriminative Viterbi ────────────────────────────────────────────────
     // Takes POSTERIOR probabilities P(state|obs), not log-likelihoods.
     let posteriors = Array2::from_shape_fn((n, n_frames), |(s, t)| {
-        if s == 0 && t < n_frames / 2 {
-            0.8
-        } else if s == 2 && t >= n_frames / 2 {
+        if (s == 0 && t < n_frames / 2) || (s == 2 && t >= n_frames / 2) {
             0.8
         } else {
             0.05

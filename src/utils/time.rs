@@ -69,9 +69,18 @@ pub fn get_duration_from_path<P: AsRef<std::path::Path>>(
 /// let samples = frames_to_samples(&frames, None);
 /// assert_eq!(samples, vec![0, 512, 1024]);
 /// ```
+///
+/// # Panics
+/// Panics if a resulting sample index exceeds `usize::MAX`.
 pub fn frames_to_samples(frames: &[usize], hop_length: Option<usize>) -> Vec<usize> {
     let hop = hop_length.unwrap_or(512);
-    frames.iter().map(|&f| f * hop).collect()
+    frames
+        .iter()
+        .map(|&f| {
+            f.checked_mul(hop)
+                .expect("frame sample index exceeds usize::MAX")
+        })
+        .collect()
 }
 
 /// Converts frame indices to time values in seconds.
@@ -149,8 +158,12 @@ impl FramesToTimeBuilder<'_> {
 /// let frames = samples_to_frames(&samples, None);
 /// assert_eq!(frames, vec![0, 1, 2]);
 /// ```
+///
+/// # Panics
+/// Panics if `hop_length` is zero, including when `samples` is empty.
 pub fn samples_to_frames(samples: &[usize], hop_length: Option<usize>) -> Vec<usize> {
     let hop = hop_length.unwrap_or(512);
+    assert!(hop > 0, "hop_length must be positive");
     samples.iter().map(|&s| s / hop).collect()
 }
 
@@ -230,7 +243,11 @@ impl TimeToFramesBuilder<'_> {
     }
 
     /// Convert times in seconds to frame indices.
+    ///
+    /// # Panics
+    /// Panics if `hop_length` is zero.
     pub fn compute(self) -> Vec<usize> {
+        assert!(self.hop_length > 0, "hop_length must be positive");
         self.times
             .iter()
             .map(|&t| (t * self.sr as f32 / self.hop_length as f32) as usize)
@@ -280,8 +297,17 @@ pub fn time_to_samples(times: &[f32], sr: Option<u32>) -> Vec<usize> {
 /// let frames = blocks_to_frames(&blocks, 10);
 /// assert_eq!(frames, vec![0, 10, 20]);
 /// ```
+///
+/// # Panics
+/// Panics if a resulting frame index exceeds `usize::MAX`.
 pub fn blocks_to_frames(blocks: &[usize], block_length: usize) -> Vec<usize> {
-    blocks.iter().map(|&b| b * block_length).collect()
+    blocks
+        .iter()
+        .map(|&b| {
+            b.checked_mul(block_length)
+                .expect("block frame index exceeds usize::MAX")
+        })
+        .collect()
 }
 
 /// Converts block indices to sample indices.
@@ -302,13 +328,24 @@ pub fn blocks_to_frames(blocks: &[usize], block_length: usize) -> Vec<usize> {
 /// let samples = blocks_to_samples(&blocks, 2, None);
 /// assert_eq!(samples, vec![0, 1024]); // 2 frames * 512 hop
 /// ```
+///
+/// # Panics
+/// Panics if either an intermediate frame index or a resulting sample index
+/// exceeds `usize::MAX`.
 pub fn blocks_to_samples(
     blocks: &[usize],
     block_length: usize,
     hop_length: Option<usize>,
 ) -> Vec<usize> {
     let hop = hop_length.unwrap_or(512);
-    blocks.iter().map(|&b| b * block_length * hop).collect()
+    blocks
+        .iter()
+        .map(|&b| {
+            b.checked_mul(block_length)
+                .and_then(|f| f.checked_mul(hop))
+                .expect("block sample index exceeds usize::MAX")
+        })
+        .collect()
 }
 
 /// Converts block indices to time values in seconds.
@@ -389,9 +426,17 @@ impl BlocksToTimeBuilder<'_> {
 /// let samples = samples_like(&x, None);
 /// assert_eq!(samples, vec![0, 512]);
 /// ```
+///
+/// # Panics
+/// Panics if a resulting sample index exceeds `usize::MAX`.
 pub fn samples_like(x: &Array2<f32>, hop_length: Option<usize>) -> Vec<usize> {
     let hop = hop_length.unwrap_or(512);
-    (0..x.shape()[1]).map(|i| i * hop).collect()
+    (0..x.shape()[1])
+        .map(|i| {
+            i.checked_mul(hop)
+                .expect("column sample index exceeds usize::MAX")
+        })
+        .collect()
 }
 
 /// Generates time values corresponding to the columns of a 2D array.

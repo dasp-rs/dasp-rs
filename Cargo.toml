@@ -33,6 +33,15 @@ log = "0.4.27"
 [dev-dependencies]
 approx = "0.5.1"
 tempfile = "3.20.0"
+stats_alloc = "=0.1.10"
+
+[[bench]]
+name = "dsp_timing"
+harness = false
+
+[[bench]]
+name = "dsp_allocations"
+harness = false
 
 [lints.rust]
 unsafe_code = "deny"

@@ -137,6 +137,21 @@ pub struct AudioData {
 }
 
 impl AudioData {
+    /// Validate metadata and complete interleaved frames at fallible processing boundaries.
+    pub(crate) fn validate(&self) -> Result<(), AudioError> {
+        if self.sample_rate == 0 || self.channels == 0 {
+            return Err(AudioError::InvalidInput(
+                "Sample rate and channel count must be positive".into(),
+            ));
+        }
+        if self.samples.len() % usize::from(self.channels) != 0 {
+            return Err(AudioError::InvalidInput(
+                "Sample length must be a multiple of channels".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Constructs an `AudioData` instance from raw components with validation.
     ///
     /// # Parameters
@@ -230,11 +245,7 @@ impl AudioData {
     /// Returns an error if the input is invalid (e.g., empty signal or
     /// out-of-range parameters) or if the computation cannot be completed.
     pub fn split_channels(&self) -> Result<Vec<Vec<f32>>, AudioError> {
-        if self.samples.len() % self.channels as usize != 0 {
-            return Err(AudioError::InvalidInput(
-                "Sample length must be a multiple of channels".into(),
-            ));
-        }
+        self.validate()?;
         let frame_count = self.samples.len() / self.channels as usize;
         let mut channels = vec![Vec::with_capacity(frame_count); self.channels as usize];
         for (i, &sample) in self.samples.iter().enumerate() {

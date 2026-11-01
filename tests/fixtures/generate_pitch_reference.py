@@ -8,8 +8,9 @@ YIN intentionally reports zero for silence instead of a fallback frequency.
 """
 import librosa
 import numpy as np
+import scipy
 from pathlib import Path
-assert librosa.__version__ == "0.11.0", "Use librosa==0.11.0 to regenerate this fixture"
+assert (np.__version__, scipy.__version__, librosa.__version__) == ("2.3.5", "1.18.1", "0.11.0"), "Use requirements-reference.txt"
 sr, frame, hop, length = 8000, 512, 128, 2048
 t = np.arange(length, dtype=np.float64) / sr
 cases = {
