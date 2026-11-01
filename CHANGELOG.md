@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-01
+
 ### Breaking changes
 
 - `istft(...).compute()` now returns `Result<Vec<f32>, AudioError>` rather than

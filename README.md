@@ -2,72 +2,136 @@
 
 [![Crates.io](https://img.shields.io/crates/v/dasp-rs.svg)](https://crates.io/crates/dasp-rs)
 [![Documentation](https://docs.rs/dasp-rs/badge.svg)](https://docs.rs/dasp-rs)
+[![CI](https://github.com/dasp-rs/dasp-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dasp-rs/dasp-rs/actions/workflows/ci.yml)
+[![MSRV: 1.85](https://img.shields.io/badge/rustc-1.85%2B-blue.svg)](Cargo.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22871122.svg)](https://doi.org/10.5281/zenodo.22871122)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22871121.svg)](https://doi.org/10.5281/zenodo.22871121)
 
-`dasp-rs` is a pure-Rust library for digital audio signal processing, analysis, and
-synthesis as a fast, dependency-light crate that builds with no
-system libraries. It is aimed at developers, audio/ML researchers, phoneticians, and music-information-retrieval work.
+**Audio analysis, processing, and synthesis in Rust.** `dasp-rs` provides audio
+file I/O, time–frequency transforms, spectral features, pitch tracking, rhythm
+analysis, and music-notation utilities for speech, music, and general DSP workflows.
+Its decoding, FFT, resampling, and linear-algebra backends are implemented in
+Rust; building the crate requires no external BLAS or audio libraries.
 
-## Highlights
+Use it to turn recordings into feature matrices, experiment with signal
+transformations, or assemble analysis pipelines. Common operations expose builder
+APIs, while numerical conventions and independent-reference coverage are documented
+below. The library allocates during processing; suitability for a real-time audio
+callback must be evaluated for your application.
 
-- **Pure Rust, no system dependencies.** No OpenBLAS, `pkg-config`, or C toolchain
-  required (unlike earlier versions). Builds out of the box on Linux, macOS, and Windows.
-- **Standards-based STFT**: periodic Hann window and centered (reflect-padded) framing
-  by default, the conventional choices for spectral analysis.
-- **Ergonomic builder APIs** for the common entry points (`Decoder`, `stft`, `istft`,
-  `spectral`, `yin`/`pyin`, `cqt`, `tempo`, `griffinlim`, `clicks`, …).
-- **WAV I/O** for 8/16/24/32-bit PCM and 32-bit float, with segment loading, on-load
-  resampling / mono conversion, and streaming readers for large files.
-- **Broad feature set**: time–frequency transforms, spectral/MIR features, pitch &
-  tuning, magnitude scaling & loudness weighting, signal generation, and extensive
-  music/phonetics notation utilities.
-- **Parallelized** with `rayon` where it helps.
+[Quick start](#quick-start) · [API guide](#api-guide) · [Examples](#examples) ·
+[Numerical conventions](#numerical-conventions) · [Migration](#migrating-from-05) ·
+[Validation](#validation) · [Performance](#performance) · [Contributing](#contributing)
 
 ## Installation
 
 ```toml
 [dependencies]
-dasp-rs = "0.5"
+dasp-rs = "0.6"
 ```
 
-No additional system packages are required.
+Or run `cargo add dasp-rs@0.6`. Import the crate as `dasp_rs` in Rust code.
+The minimum supported Rust version is **1.85**; the crate uses Rust edition 2024.
+CI checks Linux, macOS, and Windows. No Python environment is needed to use the
+library or run its Rust tests; Python is used by the optional validation and
+performance-reporting tools.
+
+See the [API documentation](https://docs.rs/dasp-rs),
+[changelog](CHANGELOG.md), and [GitHub releases](https://github.com/dasp-rs/dasp-rs/releases).
 
 ## Quick start
 
+This complete example generates its own input, extracts features, and reconstructs
+the waveform. Save it as `src/main.rs` in a project with the dependency above and
+run `cargo run`.
+
 ```rust
-use dasp_rs::io::Decoder;
-use dasp_rs::proc::stft;
-use dasp_rs::feat::spectral;
+use dasp_rs::{feat, generate, proc};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load a WAV file as mono at 22.05 kHz
-    let audio = Decoder::new("input.wav")
-        .sample_rate(22_050)
-        .mono()
-        .load()?;
+    let sr = 16_000;
+    let y = generate::tone(440.0, sr).duration(1.0).compute();
 
-    // Short-Time Fourier Transform
-    let spec = stft(&audio.samples).n_fft(2048).hop_length(512).compute()?;
-    println!("STFT: {} bins x {} frames", spec.nrows(), spec.ncols());
+    let spectrum = proc::stft(&y)
+        .n_fft(1024)
+        .hop_length(256)
+        .compute()?;
 
-    // MFCCs via the spectral-feature builder
-    let cc = spectral(&audio.samples, audio.sample_rate)
-        .n_fft(2048)
-        .hop_length(512)
+    let mfcc = feat::spectral(&y, sr)
+        .n_fft(1024)
+        .hop_length(256)
+        .n_mels(40)
         .mfcc()?;
-    println!("MFCC: {:?}", cc.shape());
 
+    let reconstructed = proc::istft(&spectrum)
+        .n_fft(1024)
+        .hop_length(256)
+        .length(y.len())
+        .compute()?;
+
+    println!("STFT: {:?} (frequency bins, frames)", spectrum.dim());
+    println!("MFCC: {:?} (coefficients, frames)", mfcc.dim());
+    println!("Reconstructed {} samples", reconstructed.len());
     Ok(())
 }
 ```
 
-The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `feat`,
-`pitch`, `mag`, `generate`, `util`, and a `prelude`.
+### Analyze an audio file
 
-## Features
+Load a supported recording, explicitly convert it to mono, and estimate pitch.
+This example expects an `input.flac` file in the working directory.
+
+```rust
+use dasp_rs::{io::Decoder, pitch};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let audio = Decoder::new("input.flac")
+        .sample_rate(16_000)
+        .mono()
+        .load()?;
+
+    let tracked = pitch::pyin(&audio.samples, 65.0, 1_200.0)
+        .sample_rate(audio.sample_rate)
+        .frame_length(1024)
+        .hop_length(256)
+        .compute_with_voicing()?;
+
+    let voiced = tracked.voiced_flag.iter().filter(|&&v| v).count();
+    println!("{voiced} voiced frames out of {}", tracked.f0.len());
+    Ok(())
+}
+```
+
+`tracked.f0` contains frequency estimates in Hz, with zero for unvoiced frames.
+`voiced_prob` contains frame-local model scores, not calibrated confidence in the
+final pitch. Supply at least one complete analysis frame and choose a frame long
+enough for two periods at the requested minimum frequency.
+
+## API guide
+
+The public API is grouped by concern. Transforms and feature matrices use
+`ndarray`; complex spectra use `num_complex::Complex<f32>`. Import modules
+explicitly, as above, or use `dasp_rs::prelude::*` for common entry points.
+
+| Public module | What it provides | Representative entry points |
+| --- | --- | --- |
+| [`types`](https://docs.rs/dasp-rs/latest/dasp_rs/types/index.html) | Audio containers and shared errors | `AudioData`, `AudioError` |
+| [`io`](https://docs.rs/dasp-rs/latest/dasp_rs/io/index.html) | Decode files, select segments, stream blocks, export WAV | `Decoder`, `load`, `stream_lazy`, `export` |
+| [`proc`](https://docs.rs/dasp-rs/latest/dasp_rs/proc/index.html) | Transforms, resampling, filtering, channels, effects | `stft`, `istft`, `cqt`, `icqt`, `resample`, `iirt`, `time_stretch` |
+| [`feat`](https://docs.rs/dasp-rs/latest/dasp_rs/feat/index.html) | Spectral/MIR features, rhythm, separation, reconstruction, sequences | `spectral`, `onset_detect`, `tempo`, `hpss`, `griffinlim`, `dtw`, `viterbi` |
+| [`pitch`](https://docs.rs/dasp-rs/latest/dasp_rs/pitch/index.html) | Fundamental frequency, voicing, spectral pitch, tuning | `yin`, `pyin`, `piptrack`, `estimate_tuning` |
+| [`mag`](https://docs.rs/dasp-rs/latest/dasp_rs/mag/index.html) | Decibel conversion, perceptual weighting, normalization | `power_to_db`, `amplitude_to_db`, `a_weighting`, `pcen` |
+| [`generate`](https://docs.rs/dasp-rs/latest/dasp_rs/generate/index.html) | Synthetic signals | `tone`, `chirp`, `clicks` |
+| [`ops`](https://docs.rs/dasp-rs/latest/dasp_rs/ops/index.html) | Sample-wise arithmetic | `mix_signals`, `multiply_signals`, `scalar_operation` |
+| [`util`](https://docs.rs/dasp-rs/latest/dasp_rs/util/index.html) | Framing, time/frequency conversion, array operations, notation | `frame`, `frames_to_time`, `hz_to_midi`, `note_to_hz`, `key_to_notes` |
+| [`prelude`](https://docs.rs/dasp-rs/latest/dasp_rs/prelude/index.html) | Common imports | `Decoder`, `AudioData`, `stft`, `spectral`, pitch utilities |
+
+<details>
+<summary><strong>Browse the detailed feature catalog</strong></summary>
+
 
 ### Audio I/O — `io` / `types`
+
 - `AudioData` — `f32` sample container (`samples`, `sample_rate`,
   `channels`) with `to_mono`, `split_channels`, `duration`, `frame_count`, `to_raw`.
 - `Decoder` — builder for loading: `.sample_rate()`, `.mono()`, `.offset()`,
@@ -80,10 +144,12 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
 - Reads 8/16/24/32-bit PCM and 32-bit float WAV.
 
 ### Sample-wise operations — `ops`
+
 - `mix_signals`, `subtract_signals`, `multiply_signals`, `divide_signals`,
   `scalar_operation`.
 
 ### Signal processing — `proc`
+
 - **Channels / amplitude**: `to_mono`, `amplify`, `attenuate`, `normalize`.
 - **Mixing**: `stereo_mix`, `multi_channel_mix`, `dry_wet_mix`.
 - **Panning**: `stereo_pan`, `multi_channel_pan`.
@@ -92,9 +158,10 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
   `autocorrelate`, `lpc`, `zero_crossings`, `mu_compress`, `mu_expand`, `log_energy`.
 - **Time–frequency**: `stft` / `istft`, `cqt` / `icqt`, `vqt`, `pseudo_cqt`,
   `hybrid_cqt`, `fmt`, `iirt`, `reassigned_spectrogram`, `magphase`, `phasor`.
-- **Effects**: `trim`, `split_silence`, `time_stretch`, `pitch_shift`, `remix`.
+- **Effects**: `trim`, `split`, `time_stretch`, `pitch_shift`, `remix`.
 
 ### Feature extraction — `feat`
+
 - **Spectral / MIR** via the `spectral(&y, sr)` builder with terminal methods:
   `.melspectrogram()`, `.mfcc()`, `.rms()`, `.chroma_cqt()`, `.chroma_cens()`,
   `.spectral_centroid()`, `.spectral_bandwidth()`, `.spectral_contrast()`,
@@ -103,8 +170,8 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
   `.hpss()`, `.pitch_autocorr()`, `.vad_features()`, `.spectral_subband_centroids()`,
   `.formant_frequencies()`. Also `chroma_stft`, `chroma_vqt`, and `cmvn(&feats)` builders.
 - **Harmonics**: `interp_harmonics`, `salience`, `f0_harmonics`, `phase_vocoder`.
-- **Rhythm**: `tempo`, `tempogram`, ratio tempogram, `fourier_tempogram`,
-  `onset_strength_multi`.
+- **Rhythm**: `tempo`, `tempogram`, `tempogram_ratio`, `fourier_tempogram`,
+  `onset_strength`, `onset_detect`, `beat_track`, `beat_sync`, `plp`, and `onset_strength_multi`.
 - **Manipulation**: `stack_memory`, `temporal_kurtosis`, `zero_crossing_rate`.
 - **Masks & normalisation**: `softmask`, `normalize` (L1/L2/L∞), `sparsify_rows`.
 - **Phase reconstruction**: `griffinlim`, `griffinlim_cqt`.
@@ -119,6 +186,7 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
 - **NMF decomposition**: `decompose` (Lee–Seung multiplicative updates).
 
 ### Pitch & tuning — `pitch`
+
 - `yin(&y, fmin, fmax)`, `pyin(&y, fmin, fmax)` — fundamental-frequency estimation
   (builders: `.sample_rate()`, `.frame_length()`, `.hop_length()`, `.compute()`).
 - YIN selects the first acceptable trough with parabolic interpolation;
@@ -135,15 +203,18 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
 - `estimate_tuning(&y)` (builder), `pitch_tuning` — tuning-deviation estimation.
 
 ### Magnitude & loudness — `mag`
+
 - `amplitude_to_db`, `db_to_amplitude`, `power_to_db`, `db_to_power`.
 - `perceptual_weighting`, `frequency_weighting`, `multi_frequency_weighting`.
 - `a_weighting`, `b_weighting`, `c_weighting`, `d_weighting`.
 - `pcen` — per-channel energy normalization.
 
 ### Signal generation — `generate`
+
 - `tone` (sine), `chirp` (linear sweep), `clicks`.
 
 ### Utilities — `util`
+
 - **Time / framing**: `get_duration`, `get_duration_from_path`, `get_samplerate`,
   `frames_to_samples`, `frames_to_time`, `samples_to_frames`, `samples_to_time`,
   `time_to_frames`, `time_to_samples`, `blocks_to_frames`, `blocks_to_samples`,
@@ -167,10 +238,12 @@ The crate root re-exports the API by concern: `types`, `io`, `ops`, `proc`, `fea
 Full item-level documentation, with signatures and examples, is on
 [docs.rs](https://docs.rs/dasp-rs).
 
+</details>
+
 ## Audio format support
 
-`dasp-rs` reads audio via [`symphonia`] and writes WAV via [`hound`]. Internally
-all audio is `f32`. Enabled decoders include WAV, MP3, FLAC, Ogg/Vorbis, and AAC/M4A.
+`dasp-rs` reads audio via [`symphonia`] and writes WAV via [`hound`]. Public audio samples
+are `f32`; algorithms may use higher-precision intermediates. Enabled decoders include WAV, MP3, FLAC, Ogg/Vorbis, and AAC/M4A.
 The following table describes supported WAV sample encodings:
 
 | Format | Read | Write |
@@ -184,62 +257,74 @@ The following table describes supported WAV sample encodings:
 `export` writes 32-bit float WAV without clipping, preserving samples outside
 `[-1.0, 1.0]`. Apply limiting explicitly if you need it.
 
-## Performance
+For multichannel streams, block and hop lengths count interleaved scalar samples,
+not per-channel frames. `stream` collects a requested number of blocks;
+`stream_lazy` delivers `Result` items through a bounded queue and surfaces
+mid-stream decode errors. See [the streaming API](https://docs.rs/dasp-rs/latest/dasp_rs/io/fn.stream_lazy.html)
+for shutdown and buffering behavior.
 
-- `rayon`-based parallelism for large workloads.
-- `stream_lazy` retains only a bounded queue, the current block, and codec packet
-  buffers; storage does not grow with file duration. `stream` additionally retains
-  the requested output blocks in its returned collection.
-- FFTs via [`rustfft`]; resampling via [`rubato`]; linear algebra via pure-Rust
-  [`nalgebra`].
+## Examples
 
-Run the release performance workloads on an idle machine:
+The [examples directory](examples) contains complete programs. From a repository
+checkout, run an example with `cargo run --example <name>`:
 
-```sh
-python3 scripts/performance_benchmarks.py run --rss --output target/performance-baseline.json
-# After a change, repeat with --output target/performance-candidate.json, then:
-python3 scripts/performance_benchmarks.py compare target/performance-baseline.json target/performance-candidate.json
+| Workflow | Examples |
+| --- | --- |
+| First pipeline and audio files | [`getting_started`](examples/getting_started.rs), [`audio_io`](examples/audio_io.rs) |
+| Transforms and effects | [`time_frequency`](examples/time_frequency.rs), [`effects`](examples/effects.rs) |
+| Spectral features and separation | [`spectral_features`](examples/spectral_features.rs), [`harmonic_percussive`](examples/harmonic_percussive.rs), [`decomposition`](examples/decomposition.rs) |
+| Pitch and rhythm | [`pitch_detection`](examples/pitch_detection.rs), [`rhythm_analysis`](examples/rhythm_analysis.rs) |
+| Signals and magnitude | [`signal_generation`](examples/signal_generation.rs), [`magnitude_scaling`](examples/magnitude_scaling.rs) |
+| Sequences and segmentation | [`sequence_hmm`](examples/sequence_hmm.rs), [`segmentation`](examples/segmentation.rs) |
+| Arrays, features, and notation | [`array_utilities`](examples/array_utilities.rs), [`feature_utilities`](examples/feature_utilities.rs), [`utilities`](examples/utilities.rs) |
+
+For signatures, defaults, and function-specific errors, consult
+[docs.rs](https://docs.rs/dasp-rs). Examples illustrate usage; they are not substitutes
+for the numerical-reference tests described below.
+
+## Numerical conventions
+
+These choices affect feature values, alignment, and compatibility with other libraries.
+
+| Area | Convention |
+| --- | --- |
+| Audio and channels | Public samples are `f32`; `AudioData` stores interleaved channels. Slice-based analysis generally operates on one channel: use `Decoder::mono()` or `AudioData::split_channels()` explicitly. |
+| STFT | Frequency-bin × frame matrices; periodic Hann and reflect-centered frames by default. Frame centers are `frame_index * hop_length`. |
+| ISTFT | Fallible overlap-add reconstruction. Supply the matching `n_fft` for odd FFT sizes and `.length(original_len)` when the original sample count matters. |
+| Mel and MFCC | Slaney mel spacing and area normalization. MFCCs use an orthonormal DCT-II of **natural-log mel power**, rather than a default decibel transform. |
+| Pitch | YIN/pYIN use complete, uncentered frames; silence/unvoiced output is zero. Pitch-frame counts can therefore differ from centered spectral features. |
+| HPSS | Harmonic and percussive outputs are power spectra. Clipped median neighborhoods and exponent-one masks preserve their summed input power. |
+| Resampling | Band-limited FFT conversion with startup delay removed and the filter flushed; output length is `ceil(input_len * target_sr / original_sr)`. |
+| CQT/VQT | Direct, full-rate wavelet analysis with 12 bins per octave; VQT uses a fixed 24 Hz bandwidth offset. These are not drop-in replicas of librosa's recursive transforms. |
+| Reassignment | A nearest-grid **magnitude raster**, not arrays of reassigned frequencies and times. Quiet coefficients are retained; the API documents its tie and boundary rules. |
+
+Algorithms expose different parameter constraints and error types; follow the
+individual API documentation rather than assuming every function accepts arbitrary
+geometry or scale. Inverse CQT is iterative and can remain ill-conditioned. Several
+higher-level features have less independent-reference coverage than the core
+transforms. The [validation section](#validation) records tested conventions,
+known differences, and remaining gaps without claiming universal accuracy or
+complete librosa compatibility.
+
+## Migrating from 0.5
+
+Update your dependency to `dasp-rs = "0.6"`. Inverse STFT now returns a
+`Result`; propagate or handle reconstruction errors:
+
+```rust
+let reconstructed = dasp_rs::proc::istft(&spectrum).compute()?;
 ```
 
-The 13 deterministic cases cover short/long STFTs, resampling, CQT/iCQT, and
-YIN/pYIN. Reports include warmed median/p95 latency, throughput, separate
-allocation counts/bytes, and optional whole-process peak RSS on Linux. Timing
-uses an uninstrumented executable; allocations use a separate executable with
-[`stats_alloc`](https://docs.rs/stats_alloc/0.1.10/stats_alloc/). Input preparation
-is excluded, while per-call planning/setup and output destruction are included.
-Allocated bytes measure cumulative traffic, not peak live memory.
+Numerical outputs also change for CQT/VQT, IIRT, resampling, phase recovery,
+pitch tracking, and several features. Recompute stored feature baselines and
+review the [0.6.0 changelog](CHANGELOG.md) for input-validation and channel
+conventions. The minimum supported Rust version remains 1.85.
 
-Comparisons require matching environments and workload definitions. Reports
-record source/binary hashes and reject source changes during measurement.
-Wall-clock results describe that machine and workload; they are not promises of
-real-time callback suitability or noisy shared-runner pass/fail thresholds.
-`cargo test --all-targets` compiles the benchmark targets without running them.
+## Validation
 
-CQT wavelets store only taps that can overlap the analyzed signal. Full-kernel
-phase and normalization are preserved, while stored support per filter is bounded
-by twice the signal length. This avoids allocating enormous full filters for
-very short inputs with low minimum frequencies.
-
-## Contributing
-
-Issues and pull requests are welcome on [GitHub]. Before submitting, run:
-
-```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test --all-targets
-cargo test --doc
-cargo test --release --all-targets
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
-```
-
-CI also checks the minimum supported Rust version (1.85) and runs the test suite
-on Linux, macOS, and Windows. The integration suites in `tests/` use synthetic
-signals, analytic expectations, independent linear solves, exhaustive small
-sequence models, and checked-in numerical references; Python is not required to
-run the Rust tests. For a bug fix, add a regression that reproduces the failure
-before changing the implementation. Cover boundary conditions and numerical
-behavior, not just output dimensions.
+The repository combines analytic regressions, independent numerical references,
+fixed-seed property tests, and attributed recordings. Each provides different
+evidence; the commands and limitations below make those distinctions explicit.
 
 ### Numerical reference benchmarks
 
@@ -393,11 +478,75 @@ parity. Twenty existing ignored documentation examples also remain outside
 executed doctest coverage. Numerical/API changes require changelog and version
 review before publication.
 
+## Performance
+
+- Selected operations use `rayon`; benchmark the actual workload and thread configuration.
+- `stream_lazy` retains only a bounded queue, the current block, and codec packet
+  buffers; storage does not grow with file duration. `stream` additionally retains
+  the requested output blocks in its returned collection.
+- FFTs via [`rustfft`]; resampling via [`rubato`]; linear algebra via pure-Rust
+  [`nalgebra`].
+
+Run the release performance workloads on an idle machine:
+
+```sh
+python3 scripts/performance_benchmarks.py run --rss --output target/performance-baseline.json
+# After a change, repeat with --output target/performance-candidate.json, then:
+python3 scripts/performance_benchmarks.py compare target/performance-baseline.json target/performance-candidate.json
+```
+
+The 13 deterministic cases cover short/long STFTs, resampling, CQT/iCQT, and
+YIN/pYIN. Reports include warmed median/p95 latency, throughput, separate
+allocation counts/bytes, and optional whole-process peak RSS on Linux. Timing
+uses an uninstrumented executable; allocations use a separate executable with
+[`stats_alloc`](https://docs.rs/stats_alloc/0.1.10/stats_alloc/). Input preparation
+is excluded, while per-call planning/setup and output destruction are included.
+Allocated bytes measure cumulative traffic, not peak live memory.
+
+Comparisons require matching environments and workload definitions. Reports
+record source/binary hashes and reject source changes during measurement.
+Wall-clock results describe that machine and workload; they are not promises of
+real-time callback suitability or noisy shared-runner pass/fail thresholds.
+`cargo test --all-targets` compiles the benchmark targets without running them.
+
+CQT wavelets store only taps that can overlap the analyzed signal. Full-kernel
+phase and normalization are preserved, while stored support per filter is bounded
+by twice the signal length. This avoids allocating enormous full filters for
+very short inputs with low minimum frequencies.
+
+## Contributing
+
+Issues and pull requests are welcome on [GitHub]. Before submitting, run:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
+cargo test --doc
+cargo test --release --all-targets
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+```
+
+CI also checks the minimum supported Rust version (1.85) and runs the test suite
+on Linux, macOS, and Windows. The integration suites in `tests/` use synthetic
+signals, analytic expectations, independent linear solves, exhaustive small
+sequence models, and checked-in numerical references; Python is not required to
+run the Rust tests. For a bug fix, add a regression that reproduces the failure
+before changing the implementation. Cover boundary conditions and numerical
+behavior, not just output dimensions.
+
 ## License
 
 The software is licensed under the MIT License. See [LICENSE](LICENSE).
 The recorded-audio test fixtures retain their individual Creative Commons
 licenses; see [audio attribution](tests/fixtures/audio/ATTRIBUTION.md).
+
+## Citation
+
+If you use `dasp-rs` in research, cite the software using [CITATION.cff](CITATION.cff)
+or GitHub’s **Cite this repository** action. The
+[Zenodo concept DOI](https://doi.org/10.5281/zenodo.22871121) identifies the project
+across versions; include the exact crate version used in your experiments.
 
 ## Acknowledgements
 
